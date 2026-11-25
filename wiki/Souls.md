@@ -72,7 +72,7 @@ a Claude account, DeepSeek or OpenCode Go; the details, keys, quotas and limits 
 
 Since 2.18.0 a Soul can make an image as part of its reply. It asks for it with a line in its closing block, which
 never counts as memory; the turn does not wait for it. The image is queued before the reply goes out, and arrives
-when it is ready: Telegram sends it as a photo (`🖼️ <n>`), the terminal shows it under the reply. The footer says
+when it is ready: Telegram sends it as a photo (`🖼️ <n> · <case>`), the terminal shows it under the reply. The footer says
 «🖼️ va a hacer una imagen», or why it did not («🖼️ no hizo la imagen: …»).
 
 - **Who makes it:** an ordered list of providers, `comfyui` then `antigravity` by default. A local ComfyUI (see the
@@ -87,6 +87,8 @@ when it is ready: Telegram sends it as a photo (`🖼️ <n>`), the terminal sho
 - **When it does not:** with images off (globally or for that Soul), in a reaction or a scheduled job, in an isolated
   turn, more than once per reply, or in a thread that already carries outside content unless you asked for an image
   in that message.
+- **From an image:** replying with text to an image of hers, or asking for «otra parecida», starts from it; ComfyUI can be
+  started on its own when it is needed: [[Image Models]].
 - **Safe photos:** a photo marked safe (`#segura` in the Telegram caption, the «Es segura» box in the terminal) or
   recognised as one of the Soul's own images (by `sha256`, also of the JPEG Telegram returned) does not mark the thread as outside content: memory and
   the board stay open, and a vision model describes it in full. The risk of a hidden instruction in a marked photo is
@@ -96,8 +98,8 @@ when it is ready: Telegram sends it as a photo (`🖼️ <n>`), the terminal sho
   refining, the Soul seeing its image, safe photos, recognising your images (also through Telegram), another version,
   inpainting, its zone check, LoRAs and editing.
 
-At most four images per turn (another version counts) and four waiting in the queue; each Soul keeps its last 500,
-the oldest deleted first.
+At most four images per turn (another version counts) and four waiting in the queue; each Soul keeps its last 500
+(`tope_por_alma`), the oldest deleted first.
 
 ## Export and import
 

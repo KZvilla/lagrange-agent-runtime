@@ -15,19 +15,23 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const path = require('node:path');
 const almasRutas = require('../almas/rutas.js');
 const perfiles = require('../imagenes/perfiles.js');
 const flujosLib = require('../imagenes/flujos.js');
 const migracion = require('../imagenes/migracion.js');
 const catalogos = require('../imagenes/catalogo.js');
 const { esLoopback } = require('../imagenes/loopback.js');
+const flagsComfyui = require('../imagenes/comfyui-flags.js');
 // La hoja, no ajustes-general.js: config.js lee esta sección y ajustes-general.js lee config.js.
 const { ErrorAjuste } = require('./error-ajuste.js');
 
 const PROVEEDORES = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 const REMOTOS = Object.freeze({ openai: 'openai_imagen', gemini: 'gemini_imagen' });
-const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram']);
-const CAMPOS = Object.freeze([...BOOLEANOS, 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram',
+  // FEAT-213 — Partir de una imagen.
+  'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica']);
+const CAMPOS = Object.freeze([...BOOLEANOS, 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
 const MAX_LORAS = 20;
@@ -42,7 +46,11 @@ const RE_NODO = /^[A-Za-z0-9_:.-]{1,40}$/;
 const RANGOS = Object.freeze({
   pasos: { min: 1, max: 150 },
   tiempo_s: { min: 10, max: 3600, defecto: 300 },
-  tope_prompt: { min: 100, max: 2000 }
+  tope_prompt: { min: 100, max: 2000 },
+  // FEAT-213 — 0 = sin tope, y 0 = nunca se apaga solo.
+  tope_por_alma: { min: 0, max: 10000, defecto: 500 },
+  apagar_min: { min: 0, max: 1440, defecto: 20 },
+  espera_s: { min: 10, max: 600, defecto: 120 }
 });
 const NUMEROS = Object.freeze(['tiempo_s']);
 const MODELO_POR_DEFECTO = 'sd_xl_base_1.0.safetensors';
@@ -58,11 +66,17 @@ function defectos() {
     fotos_seguras: true,
     reconocer_propias: true,
     reconocer_telegram: true,
+    responder_usa_imagen: true,
+    usar_ultima: true,
+    foto_cuenta: true,
+    fuerza_automatica: true,
+    tope_por_alma: RANGOS.tope_por_alma.defecto,
     perfiles_propios: {},
     comfyui: {
       url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, flujos: {},
       mascara: 'florence2', retoque: 'crop-stitch', chequeo_zona: true, loras: [], loras_activos: true,
-      tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true
+      tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true,
+      arranque: { carpeta: null, automatico: true, apagar_min: RANGOS.apagar_min.defecto, espera_s: RANGOS.espera_s.defecto, flags: [] }
     },
     openai_imagen: { url: null, modelo: null, key_env: null },
     gemini_imagen: { url: null, modelo: null, key_env: null }
@@ -125,6 +139,36 @@ function validarEntradaDeFlujo(e, { denyPaths = [] } = {}) {
   return { ok: true, entrada: { archivo: forma.ruta, salida } };
 }
 
+/** FEAT-213 — La carpeta de ComfyUI: absoluta y local. `null` si vale, o el motivo. */
+function formaDeCarpeta(v) {
+  if (typeof v !== 'string' || !v.trim() || v.length > 260 || CONTROLES.test(v)) return 'no es una carpeta válida';
+  const c = v.trim();
+  if (/^[\\/]{2}/.test(c)) return 'tiene que ser local (sin carpetas de red)';
+  if (!path.isAbsolute(c) || (process.platform === 'win32' && !/^[A-Za-z]:[\\/]/.test(c))) return 'tiene que ser una ruta completa';
+  return null;
+}
+
+/** FEAT-213 — `comfyui.arranque`, tolerante. */
+function normalizarArranque(a, d, avisos) {
+  if (a === undefined || a === null) return;
+  if (!esObjeto(a)) { avisos.push('imagenes.comfyui.arranque tiene que ser un objeto; se ignora'); return; }
+  if (a.carpeta) {
+    const m = formaDeCarpeta(a.carpeta);
+    if (m) avisos.push(`imagenes.comfyui.arranque.carpeta ${m}; se ignora`); else d.carpeta = a.carpeta.trim();
+  }
+  if (typeof a.automatico === 'boolean') d.automatico = a.automatico;
+  else if (a.automatico !== undefined && a.automatico !== null) avisos.push('imagenes.comfyui.arranque.automatico tiene que ser true o false; se ignora');
+  for (const k of ['apagar_min', 'espera_s']) {
+    if (a[k] === undefined || a[k] === null) continue;
+    d[k] = rangoTolerante(a[k], k);
+    if (d[k] !== a[k]) avisos.push(`imagenes.comfyui.arranque.${k} tiene que ser un entero entre ${RANGOS[k].min} y ${RANGOS[k].max}; se usa ${RANGOS[k].defecto}`);
+  }
+  if (a.flags !== undefined && a.flags !== null) {
+    const v = flagsComfyui.validarForma(a.flags);
+    if (v.ok) d.flags = v.flags; else avisos.push(`imagenes.comfyui.arranque.flags${v.campo} ${v.motivo}; no se usa ninguna`);
+  }
+}
+
 function rangoTolerante(v, campo) {
   const r = RANGOS[campo];
   return Number.isInteger(v) && v >= r.min && v <= r.max ? v : r.defecto;
@@ -161,6 +205,10 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
     if (crudo[k] === undefined) continue;
     if (typeof crudo[k] === 'boolean') d[k] = crudo[k];
     else avisos.push(`imagenes.${k} tiene que ser true o false; se usa ${d[k]}`);
+  }
+  if (crudo.tope_por_alma !== undefined && crudo.tope_por_alma !== null) {
+    d.tope_por_alma = rangoTolerante(crudo.tope_por_alma, 'tope_por_alma');
+    if (d.tope_por_alma !== crudo.tope_por_alma) avisos.push(`imagenes.tope_por_alma tiene que ser un entero entre 0 y ${RANGOS.tope_por_alma.max}; se usa ${RANGOS.tope_por_alma.defecto}`);
   }
   if (crudo.orden !== undefined) {
     if (Array.isArray(crudo.orden) && crudo.orden.every((p) => PROVEEDORES.includes(p)) && new Set(crudo.orden).size === crudo.orden.length) d.orden = [...crudo.orden];
@@ -239,6 +287,7 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
         d.comfyui[k] = rangoTolerante(c[k], k);
         if (d.comfyui[k] !== c[k]) avisos.push(`imagenes.comfyui.${k} tiene que ser un entero entre ${RANGOS[k].min} y ${RANGOS[k].max}; se usa ${RANGOS[k].defecto}`);
       }
+      normalizarArranque(c.arranque, d.comfyui.arranque, avisos);
       if (typeof c.liberar_gpu === 'boolean') d.comfyui.liberar_gpu = c.liberar_gpu;
       else if (c.liberar_gpu !== undefined && c.liberar_gpu !== null) avisos.push('imagenes.comfyui.liberar_gpu tiene que ser true o false; se ignora');
     }
@@ -365,6 +414,13 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     if (typeof pedido[k] !== 'boolean') throw new ErrorAjuste(`imagenes.${k} tiene que ser true o false`, `imagenes.${k}`);
     nuevo[k] = pedido[k];
   }
+  if (pedido.tope_por_alma !== undefined) {
+    const v = pedido.tope_por_alma;
+    const rg = RANGOS.tope_por_alma;
+    if (v === null || v === '') delete nuevo.tope_por_alma;
+    else if (!Number.isInteger(v) || v < rg.min || v > rg.max) throw new ErrorAjuste(`El tope por alma tiene que ser un entero de ${rg.min} a ${rg.max} (0 = sin tope)`, 'imagenes.tope_por_alma');
+    else nuevo.tope_por_alma = v;
+  }
   if (pedido.orden !== undefined) {
     const o = pedido.orden;
     if (!Array.isArray(o) || !o.every((p) => PROVEEDORES.includes(p)) || new Set(o).size !== o.length) {
@@ -402,7 +458,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
   if (pedido.comfyui !== undefined) {
     const c = pedido.comfyui;
     if (!esObjeto(c)) throw new ErrorAjuste('imagenes.comfyui tiene que ser un objeto', 'imagenes.comfyui');
-    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', ...migracion.LEGADAS];
+    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque', ...migracion.LEGADAS];
     for (const k of Object.keys(c)) if (!permitidos.includes(k)) throw new ErrorAjuste(`imagenes.comfyui.${k} no está permitido`, `imagenes.comfyui.${k}`);
     let sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
     const quitar = (k) => { delete sal[k]; };
@@ -446,6 +502,43 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       if (c[k] === null || c[k] === '') { quitar(k); continue; }
       if (!Number.isInteger(c[k]) || c[k] < rg.min || c[k] > rg.max) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser un entero de ${rg.min} a ${rg.max}`, `imagenes.comfyui.${k}`);
       sal[k] = c[k];
+    }
+    // FEAT-213 — Se funde campo por campo; `flags` va entera. Que la carpeta tenga un ComfyUI y que la flag exista en su versión lo
+    // mira la ruta v2, que puede esperar.
+    if (c.arranque !== undefined) {
+      const a = c.arranque;
+      const campo = 'imagenes.comfyui.arranque';
+      if (a === null) quitar('arranque');
+      else {
+        if (!esObjeto(a)) throw new ErrorAjuste('imagenes.comfyui.arranque tiene que ser un objeto', campo);
+        for (const k of Object.keys(a)) if (!['carpeta', 'automatico', 'apagar_min', 'espera_s', 'flags'].includes(k)) throw new ErrorAjuste(`arranque.${k} no está permitido`, `${campo}.${k}`);
+        const arr = esObjeto(sal.arranque) ? { ...sal.arranque } : {};
+        if (a.carpeta !== undefined) {
+          if (a.carpeta === null || a.carpeta === '') delete arr.carpeta;
+          else {
+            const m = formaDeCarpeta(a.carpeta);
+            if (m) throw new ErrorAjuste(`La carpeta de ComfyUI ${m}`, `${campo}.carpeta`);
+            arr.carpeta = a.carpeta.trim();
+          }
+        }
+        if (a.automatico !== undefined) {
+          if (a.automatico === null || a.automatico === '') delete arr.automatico;
+          else if (typeof a.automatico !== 'boolean') throw new ErrorAjuste('arranque.automatico tiene que ser true o false', `${campo}.automatico`);
+          else arr.automatico = a.automatico;
+        }
+        for (const k of ['apagar_min', 'espera_s']) {
+          if (a[k] === undefined) continue;
+          if (a[k] === null || a[k] === '') { delete arr[k]; continue; }
+          if (!Number.isInteger(a[k]) || a[k] < RANGOS[k].min || a[k] > RANGOS[k].max) throw new ErrorAjuste(`arranque.${k} tiene que ser un entero de ${RANGOS[k].min} a ${RANGOS[k].max}`, `${campo}.${k}`);
+          arr[k] = a[k];
+        }
+        if (a.flags !== undefined) {
+          const v = flagsComfyui.validarForma(a.flags === null ? [] : a.flags);
+          if (!v.ok) throw new ErrorAjuste(`Las flags de ComfyUI: ${v.motivo}`, `${campo}.flags${v.campo}`);
+          if (v.flags.length) arr.flags = v.flags; else delete arr.flags;
+        }
+        if (Object.keys(arr).length) sal.arranque = arr; else quitar('arranque');
+      }
     }
     if (c.perfil_de !== undefined) {
       if (c.perfil_de !== null && !esObjeto(c.perfil_de)) throw new ErrorAjuste('imagenes.comfyui.perfil_de tiene que ser un objeto { modelo: perfil }', 'imagenes.comfyui.perfil_de');
@@ -546,6 +639,6 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
 
 module.exports = {
   PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, RANGOS, MASCARAS, RETOQUES, MAX_LORAS, URL_COMFYUI, MODELO_POR_DEFECTO,
-  defectos, esLoopback, esHttps, formaDeFlujo: flujosLib.formaDeFlujo, leerFlujo: flujosLib.leerFlujo, marcadoresDe: flujosLib.marcadoresDe, resolverFlujo: flujosLib.resolverFlujo,
+  defectos, esLoopback, esHttps, formaDeCarpeta, formaDeFlujo: flujosLib.formaDeFlujo, leerFlujo: flujosLib.leerFlujo, marcadoresDe: flujosLib.marcadoresDe, resolverFlujo: flujosLib.resolverFlujo,
   normalizar, denyDe, migrarDatos, leerSeccion, leerImagenes, crudoImagenes, aplicarImagenes
 };

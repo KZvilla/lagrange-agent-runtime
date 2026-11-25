@@ -280,7 +280,7 @@ export function rutasLecturaV2({ nucleo, estadoDeCarriles, recorte, extras = nul
  * pausa a los 5 minutos sin suscriptores. Claude remoto se compara cada 5 s.
  */
 export function crearProductoresLectura({
-  almacen, recolector = null, nucleo, arranque, version = null, secretos = null,
+  almacen, recolector = null, nucleo, arranque, version = null, secretos = null, comfy = null,
   pausaMs = PAUSA_SALUD_MS, intervaloSaludMs = INTERVALO_SALUD_MS, intervaloClaudeMs = INTERVALO_CLAUDE_MS
 }) {
   let relojSalud = null;
@@ -288,7 +288,22 @@ export function crearProductoresLectura({
   let relojClaude = null;
   let previas = null;
 
-  const publicarSalud = () => almacen.publicar('salud', 'salud', saludV2({ recolector, arranque, version, secretos }));
+  // FEAT-213 — El estado de ComfyUI viaja en el tema `salud`: en el ciclo si cambió, y en el acto al levantar o apagar.
+  let comfyPrevio = null;
+  let comfyEnVuelo = false;
+  const publicarComfy = async () => {
+    if (!comfy || comfyEnVuelo || !almacen.hayInteres('salud')) return;
+    comfyEnVuelo = true;
+    try {
+      const e = await comfy.estado();
+      const firma = JSON.stringify(e);
+      if (firma !== comfyPrevio) { comfyPrevio = firma; almacen.publicar('salud', 'comfyui.estado', e); }
+    } catch {} finally { comfyEnVuelo = false; }
+  };
+  const publicarSalud = () => {
+    almacen.publicar('salud', 'salud', saludV2({ recolector, arranque, version, secretos }));
+    publicarComfy();
+  };
   const compararClaude = async () => {
     let v;
     try { v = await nucleo.claude(); } catch { return; }
@@ -313,6 +328,7 @@ export function crearProductoresLectura({
     } else if (relojSalud) {
       clearInterval(relojSalud);
       relojSalud = null;
+      comfyPrevio = null;
       if (recolector && !relojPausa) {
         relojPausa = setTimeout(() => { relojPausa = null; recolector.pausar(); }, pausaMs);
         relojPausa.unref?.();
@@ -329,6 +345,7 @@ export function crearProductoresLectura({
 
   return {
     compararClaude,
+    publicarComfy,
     cerrar() {
       baja();
       for (const r of [relojSalud, relojClaude]) if (r) clearInterval(r);

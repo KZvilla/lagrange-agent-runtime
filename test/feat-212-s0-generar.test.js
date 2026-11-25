@@ -242,13 +242,13 @@ async function main() {
   await group('Probar: lo de antes más el catálogo y los casos', async () => {
     const info = { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['sd_xl_base_1.0.safetensors']] } } }, KSampler: { input: { required: { sampler_name: [['euler']], scheduler: [['karras']] } } } };
     for (const n of ['CLIPTextEncode', 'EmptyLatentImage', 'VAEDecode', 'VAEEncode', 'SaveImage', 'LoadImage', 'ImageScale']) info[n] = {};
-    const fetchImpl = async (u) => (new URL(u).pathname === '/system_stats' ? new Response(JSON.stringify({ devices: [{ vram_free: 5 }] })) : new Response(JSON.stringify(info)));
+    const fetchImpl = async (u) => (new URL(u).pathname === '/system_stats' ? new Response(JSON.stringify({ system: {}, devices: [{ vram_free: 5 }] })) : new Response(JSON.stringify(info)));
     require('../mcp-server/imagenes/catalogo.js').olvidarParaTests();
     const r = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl, config: config() });
     check('ok, codigo, mensaje y vramLibre como antes', r.ok && r.codigo === 'ok' && r.mensaje === 'ComfyUI responde.' && r.vramLibre === 5);
     check('el estado de cada caso', r.casos.nueva.estado === 'disponible' && r.casos.retoque.estado === 'faltan' && r.casos.retoque.faltan.nodos.includes('Florence2Run') && r.casos.edicion.motivo === 'falta el modelo');
     check('el catálogo, sin los nodos', r.catalogo.checkpoints[0].valor === 'sd_xl_base_1.0.safetensors' && !('nodos' in r.catalogo));
-    const sin = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl: async (u) => { if (new URL(u).pathname === '/system_stats') return new Response('{}'); throw new Error('x'); }, config: config() });
+    const sin = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl: async (u) => { if (new URL(u).pathname === '/system_stats') return new Response('{"system":{},"devices":[]}'); throw new Error('x'); }, config: config() });
     check('sin /object_info: sin-catalogo, nunca «faltan»', sin.ok && sin.catalogo === null && Object.values(sin.casos).every((c) => c.estado === 'sin-catalogo' && c.faltan.nodos.length === 0));
     require('../mcp-server/imagenes/catalogo.js').olvidarParaTests();
     const cae = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl: async () => { throw new Error('x'); }, config: config() });

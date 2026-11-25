@@ -49,10 +49,26 @@ function clausulas(texto) {
   return normalizar(texto).split(/[.,;?!¿¡]|\bpero\b|\bbut\b/);
 }
 
-/** `true` si alguna cláusula pide una imagen sin una negación antes del pedido. */
-function pideImagen(texto) {
+// FEAT-213 — Al responder a una imagen, un verbo de cambio la pide con cualquier objeto: con su clítico en cualquier parte
+// («cambiale el faro», «hacela de noche»), o pelado si abre la cláusula («poné una luna»: «me pone contento» no es un pedido).
+const CAMBIAN = '(?:cambia|saca|quita|pone|agrega|suma|borra|move|pinta|aclara|oscurece|agranda|achica|reemplaza|recorta|anadi|anade|elimina|deja|modifica|convert[ei]|volve)';
+const CLITICO = '(?:le|les|la|lo|las|los|me|mela|melo|sela|selo)';
+const CON_CLITICO = new RegExp(`\\b(?:${CAMBIAN}|cambiar|sacar|quitar|poner|agregar|sumar|borrar|mover|pintar|aclarar|oscurecer|agrandar|achicar|reemplazar|eliminar|dejar|modificar|convertir|hace|haz|hacer)${CLITICO}\\b`, 'g');
+const AL_ABRIR = new RegExp(`^\\s*(?:(?:y|ahora|che|dale|ok|bueno|por favor|porfa|mejor|entonces)\\s+)*(?:${CAMBIAN}|cambie|saque|ponga|agregue|change|remove|add|replace|make it|make the|turn)\\b`, 'g');
+const PODES = /\b(?:podes|podras|podrias|puedes|quiero|quisiera|me gustaria|can you|could you)\s+(?:me\s+)?(?:cambiar|sacar|quitar|poner|agregar|sumar|borrar|mover|pintar|aclarar|oscurecer|agrandar|achicar|reemplazar|eliminar|modificar|convertir|change|remove|add|replace|make)/g;
+// Con `usar_ultima`: pedir otra como la que está.
+const OTRA = /\b(?:otra|otras|una|another)\s+(?:imagen\s+|foto\s+)?(?:mas\s+)?(?:parecida|parecidas|igual|iguales|similar|similares|asi|like (?:it|that))\b|\botra version\b/g;
+const LA_ANTERIOR = new RegExp(`\\b(?:${VERBOS}|repeti|repetir|como|desde|a partir de|parecida a|igual a|basada en)\\s+(?:a\\s+)?la (?:imagen |foto )?(?:anterior|ultima)\\b`, 'g');
+
+/**
+ * `true` si alguna cláusula pide una imagen sin una negación antes del pedido. FEAT-213 — `respondeImagen`: el mensaje
+ * responde a una imagen; `usarUltima`: puede partir de la última del hilo.
+ */
+function pideImagen(texto, { respondeImagen = false, usarUltima = false } = {}) {
+  const extras = [...(respondeImagen ? [CON_CLITICO, AL_ABRIR, PODES, OTRA] : []), ...(usarUltima ? [OTRA, LA_ANTERIOR] : [])];
   for (const c of clausulas(texto)) {
     const hallados = [];
+    for (const re of extras) for (const m of c.matchAll(re)) hallados.push(m.index);
     for (const m of c.matchAll(CON_OBJETO)) {
       // Con «foto» como objeto, solo si es una nueva («una foto», «otra foto», «una nueva foto»).
       if (RE_FOTO.test(m[0]) && !RE_FOTO_NUEVA.test(m[0])) continue;

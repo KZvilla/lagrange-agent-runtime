@@ -120,6 +120,14 @@
             "imagenes": {
               "type": "boolean",
               "description": "FEAT-210 — true si imagenes.activas y algún proveedor del orden puede andar. Un daemon con soporte siempre la manda; uno viejo no."
+            },
+            "galeria": {
+              "type": "boolean",
+              "description": "FEAT-213 — true si este daemon tiene GET /imagenes (la galería desde el índice). Un nodo, false."
+            },
+            "comfyuiProceso": {
+              "type": "boolean",
+              "description": "FEAT-213 — true si este daemon puede levantar y apagar ComfyUI (GET /comfyui)."
             }
           }
         },
@@ -448,6 +456,11 @@
                     "pasada-descartada",
                     "aislado"
                   ]
+                },
+                "detalle": {
+                  "type": "string",
+                  "maxLength": 40,
+                  "description": "FEAT-213 — El motivo cuando no está en el enum de rechazo (sin-foto, sin-anterior); rechazo va en null."
                 }
               },
               "description": "FEAT-210 — Lo que pidió el alma (pedida) o el primer motivo por el que no se hizo (rechazo). El estado de la imagen vive en turno.imagenes."
@@ -603,6 +616,21 @@
               },
               "sinChequeoZona": {
                 "type": "boolean"
+              },
+              "cambio": {
+                "type": "string",
+                "enum": [
+                  "leve",
+                  "medio",
+                  "fuerte"
+                ],
+                "description": "FEAT-213 — Cuánto cambia una variación, si la fuerza se ajustó."
+              },
+              "fuerza": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "FEAT-213 — La fuerza que llevó esa variación."
               }
             }
           },
@@ -1078,6 +1106,8 @@
             "turno.cancelado",
             "turno.error",
             "turno.imagen",
+            "imagenes.cambio",
+            "comfyui.estado",
             "memoria.cambio",
             "consolidacion.fin",
             "carriles",
@@ -1652,6 +1682,79 @@
           }
         }
       }
+    },
+    "comfyui": {
+      "type": "object",
+      "required": [
+        "estado",
+        "nuestro",
+        "otraConfiguracion",
+        "desde",
+        "cola",
+        "mensaje",
+        "sePuede",
+        "motivo",
+        "instalacion"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "estado": {
+          "type": "string",
+          "enum": [
+            "apagado",
+            "levantando",
+            "encendido",
+            "apagando",
+            "error"
+          ]
+        },
+        "nuestro": {
+          "type": "boolean",
+          "description": "FEAT-213 — Lo levantó Lagrange: solo ese se puede apagar."
+        },
+        "otraConfiguracion": {
+          "type": "boolean",
+          "description": "FEAT-213 — El nuestro es de otra url o carpeta que las de ahora."
+        },
+        "desde": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 64
+        },
+        "cola": {
+          "type": "integer",
+          "nullable": true,
+          "minimum": 0
+        },
+        "mensaje": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 300
+        },
+        "sePuede": {
+          "type": "boolean",
+          "description": "FEAT-213 — Se puede levantar desde acá; si no, motivo dice por qué."
+        },
+        "motivo": {
+          "type": "string",
+          "nullable": true,
+          "maxLength": 300
+        },
+        "instalacion": {
+          "type": "string",
+          "nullable": true,
+          "enum": [
+            "portable",
+            "entorno"
+          ]
+        }
+      }
     }
   },
   "eventos": {
@@ -1831,6 +1934,22 @@
             "type": "string",
             "maxLength": 128
           }
+        }
+      }
+    },
+    "comfyui.estado": {
+      "$ref": "#/agregados/comfyui"
+    },
+    "imagenes.cambio": {
+      "type": "object",
+      "required": [
+        "alma"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "alma": {
+          "type": "string",
+          "maxLength": 64
         }
       }
     }

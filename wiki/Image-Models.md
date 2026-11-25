@@ -95,6 +95,48 @@ ComfyUI; until then Ajustes lists which ones are missing and the case is lowered
   the part. Retrying then makes a variation. It turns off with
   `comfyui.chequeo_zona: false`.
 
+## Starting from an image
+
+Since 2.20.0. Each one has its own switch in the `imagenes` section, on by default.
+
+- **`responder_usa_imagen`:** replying with text to an image the bot sent gives it to its Soul as the photo of the turn,
+  with the original file. It is found by bot, chat and message, so it still works after a restart. In a thread with
+  outside content the reply has to ask for a change («cambiale el faro»); «qué linda» does not.
+- **`usar_ultima`:** «otra parecida» without replying starts from the last image of that thread. The Soul writes
+  `imagen-desde-anterior:`. A thread that expired by itself still counts; `/charla nuevo` starts from zero.
+- **`foto_cuenta`:** with a photo in the turn, the base is never lost: if nobody can start from it now, the image fails
+  (`sin-base`) instead of coming out as a new one.
+- **`fuerza_automatica`:** a variation changes as much as the request does. The refiner says `leve`, `medio` or
+  `fuerte`, and the strength is the profile's one −0.15, +0 or +0.2 (0.45, 0.6 or 0.8 with SDXL).
+
+An image made from an outside photo is never safe again by itself, through any of these roads. Your own mark
+(`#segura`, the box in the terminal) still decides.
+
+## The gallery
+
+`GET /api/v2/imagenes` lists every image from the private index, also the ones whose turn left the registry; with it, the
+bytes, deleting (it says which ones are in use) and sending an image to a Soul by reference. `tope_por_alma` is how
+many each Soul keeps (500 by default, 0 for no limit). Deleting does not touch what was sent through Telegram, nor the
+copies ComfyUI keeps in its `output` and `input` folders.
+
+## Starting and stopping ComfyUI
+
+With a folder in `comfyui.arranque.carpeta` (Windows), the daemon can start ComfyUI. Without it, nothing changes.
+
+| Option | What it does |
+|---|---|
+| `carpeta` | the portable folder, or one with `.venv` or `venv` next to `main.py`. The Python is not configurable |
+| `automatico` | start it when a Soul asks for an image and it does not answer. Other images do not wait for it |
+| `apagar_min` | minutes without use before stopping it; 0 = never. What runs in its web page counts; editing without running does not |
+| `espera_s` | how long an image waits for it. A slower start goes on, up to 30 minutes |
+| `flags` | `{ flag, valor }`, checked against its own `main.py --help`. The network ones are the plugin's |
+
+- **Only its own:** a ComfyUI that was already answering is used and never stopped. Ours is the process with the same
+  start time, address and folder that `~/.claude/lagrange-comfyui` says.
+- A separate guardian owns it, so restarting the daemon does not touch it; if the guardian dies, another one adopts it.
+- It runs with a whitelisted environment: no key or token of the daemon reaches a custom node.
+- `GET /api/v2/comfyui/registro` hides paths, credentials and the command line.
+
 ## Recognising an image that came back through Telegram
 
 Telegram recompresses photos, so the file you resend is not the one the bot made. After sending one, the bot downloads

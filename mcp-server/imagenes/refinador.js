@@ -31,7 +31,7 @@ const ESTILOS = Object.freeze({
 const QUE_ES = Object.freeze({
   nueva: 'a new image from scratch (no photo is used)',
   variacion: 'another image based on the attached photo: same idea, freely redrawn',
-  retoque: 'change only one part of the attached photo and leave the rest untouched; "zona" names that part and "prompt" describes what must appear there and right around it, only as it has to look at the end: never name the old look it replaces. Choose it only if the photo, or its description, shows that part: if what must change is not there, choose "variacion" instead',
+  retoque: 'change only one part of the attached photo and leave the rest untouched; "zona" names that part, the one that was asked for, and "prompt" describes only the thing that fills that part, with its own shape, size, material and color, as it has to look at the end. Nothing else: no other object of the photo (what it rests on, what holds it, what is next to it), no place, no background, and never the old look it replaces. A cup on a saucer is only the cup: write "red ceramic cup, glossy glaze, small handle", without the saucer. Choose it only if the photo, or its description, shows that part: if what must change is not there, choose "variacion" instead',
   edicion: 'change the attached photo by following one instruction, keeping its identity; the instruction goes in "instruccion"'
 });
 
@@ -44,9 +44,19 @@ const BASE = Object.freeze([
   'Choose "caso" by what was asked, even if it is marked as not available: the system lowers it by itself. Fill "prompt" always, also for "edicion".'
 ]);
 
-/** La consigna: la base y, por cada caso disponible, el estilo, las reglas completas y el tope de su perfil. */
-function consigna(disponibles) {
-  const lineas = [...BASE, '', 'Cases:'];
+/** FEAT-213 — Cuánto cambia una variación, para la consigna. */
+const SOBRE_CAMBIO = 'Add "cambio" to the JSON only for "variacion": "leve" if a detail or a color changes, "medio" if it is a similar scene, "fuerte" if the time of day, the weather, the style or most of the picture changes.';
+
+/**
+ * La consigna: la base y, por cada caso disponible, el estilo, las reglas completas y el tope de su perfil.
+ * FEAT-213 — `base`: `'fija'` (parte de la foto, nunca `nueva`), `'opcional'` (la foto vino en el turno y puede no usarse) o `null`.
+ */
+function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
+  const lineas = [...BASE];
+  if (fuerzaAutomatica && casos.estaDisponible(disponibles, 'variacion')) lineas.push(SOBRE_CAMBIO);
+  if (base === 'fija') lineas.push('The image has to start from the attached photo: never choose "nueva".');
+  if (base === 'opcional') lineas.push('A photo came with the message, but the request may not be about it: choose "nueva" unless the request asks to start from that photo.');
+  lineas.push('', 'Cases:');
   for (const caso of CASOS) {
     const d = disponibles[caso];
     const hay = casos.estaDisponible(disponibles, caso);
@@ -82,38 +92,40 @@ function parsearSalida(texto) {
 const texto = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /** La salida del refinador, con su caso bajado y cada campo limpio. `null` si no queda prompt; `{ sinCaso }` si no hay ningún caso. */
-function sanear(o, { disponibles, desdeFoto = false }) {
-  const casoPedido = CASOS.includes(o.caso) ? o.caso : desdeFoto ? 'variacion' : 'nueva';
+function sanear(o, { disponibles, desdeFoto = false, base = null, fuerzaAutomatica = false }) {
+  const elegido = CASOS.includes(o.caso) ? o.caso : desdeFoto && base !== 'opcional' ? 'variacion' : 'nueva';
+  const casoPedido = base === 'fija' && elegido === 'nueva' ? 'variacion' : elegido;
   const campos = { zona: texto(o.zona), instruccion: texto(o.instruccion), prompt: texto(o.prompt) };
   if (!campos.prompt && !campos.instruccion) return null;
-  const caso = casos.bajarCaso(casoPedido, disponibles, campos);
+  const caso = casos.bajarCaso(casoPedido, disponibles, campos, { base: base === 'fija' });
   if (!caso) return { sinCaso: true, casoPedido };
-  const r = casos.ajustarAlCaso(o, caso, disponibles[caso]);
+  // FEAT-213 — La fuerza la calcula el código: de la salida solo vale `cambio`, y solo con el interruptor prendido.
+  const r = casos.ajustarAlCaso({ ...o, fuerza: undefined, cambio: fuerzaAutomatica ? o.cambio : undefined }, caso, disponibles[caso]);
   return r ? { ...r, caso, casoPedido } : null;
 }
 
 /** Sin refinador: el texto del alma, con la misma limpieza por perfil. `motivo`, por qué (al log de la cola). */
-function sinRefinar(pedido, { disponibles, desdeFoto = false, motivo = null }) {
-  const casoPedido = desdeFoto && casos.estaDisponible(disponibles, 'variacion') ? 'variacion' : 'nueva';
+function sinRefinar(pedido, { disponibles, desdeFoto = false, base = null, motivo = null }) {
+  const casoPedido = base === 'fija' || (desdeFoto && base !== 'opcional' && casos.estaDisponible(disponibles, 'variacion')) ? 'variacion' : 'nueva';
   const extra = { refinado: false, ...(motivo ? { motivo } : {}) };
-  const caso = casos.bajarCaso(casoPedido, disponibles, { prompt: texto(pedido) });
+  const caso = casos.bajarCaso(casoPedido, disponibles, { prompt: texto(pedido) }, { base: base === 'fija' });
   if (!caso) return { sinCaso: true, casoPedido, ...extra };
   const r = casos.ajustarAlCaso({ prompt: pedido, proporcion: '1:1' }, caso, disponibles[caso]);
-  return { ...(r || { prompt: '', negativo: '', proporcion: '1:1', zona: '', instruccion: '', loras: [] }), caso, casoPedido, ...extra };
+  return { ...(r || { prompt: '', negativo: '', proporcion: '1:1', zona: '', instruccion: '', loras: [], cambio: null, fuerza: null }), caso, casoPedido, ...extra };
 }
 
 /**
  * `refinar({ pedido, mensaje, foto, disponibles, desdeFoto, signal, … })` → `{ prompt, negativo, proporcion, zona, instruccion, loras,
  * caso, casoPedido, refinado, conFoto }`. `foto = { ruta, descripcion: { ok, texto } }`. Nunca lanza; un cancelado devuelve `{ cancelado: true }`.
  */
-async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFoto = Boolean(foto), signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
-  const sistema = consigna(disponibles);
-  const base = [`Assistant's request: ${String(pedido || '').slice(0, 300)}`, `User's message: ${String(mensaje || '').slice(0, 1000)}`];
+async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFoto = Boolean(foto), base = null, fuerzaAutomatica = false, signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
+  const sistema = consigna(disponibles, { base, fuerzaAutomatica });
+  const lineas = [`Assistant's request: ${String(pedido || '').slice(0, 300)}`, `User's message: ${String(mensaje || '').slice(0, 1000)}`];
   const intentos = [];
   let motivo = null;
-  if (foto && foto.ruta) intentos.push({ partes: { texto: [...base, 'The photo is attached.'].join('\n'), imagen: { ruta: foto.ruta } }, conFoto: true });
+  if (foto && foto.ruta) intentos.push({ partes: { texto: [...lineas, 'The photo is attached.'].join('\n'), imagen: { ruta: foto.ruta } }, conFoto: true });
   const descripcion = foto && foto.descripcion && foto.descripcion.ok ? foto.descripcion.texto : null;
-  intentos.push({ partes: { texto: [...base, ...(descripcion ? [`Description of the photo (written by another model): ${descripcion}`] : [])].join('\n') }, conFoto: false });
+  intentos.push({ partes: { texto: [...lineas, ...(descripcion ? [`Description of the photo (written by another model): ${descripcion}`] : [])].join('\n') }, conFoto: false });
   for (const intento of intentos) {
     const inicio = Date.now();
     let r;
@@ -128,12 +140,12 @@ async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFo
       registrarUso({ tool: 'refinador_imagen', motor: 'opencode-go', rol: clave ? `alma:${clave}` : 'imagen', modelo: r.modelo || null, modeloReal: r.modelo || null, esfuerzo: null, conversationId: null, duracion: (Date.now() - inicio) / 1000, usage: r.uso || null, error: null, costoUsd: null, origen, cuota: null });
     } catch {}
     const o = parsearSalida(r.texto);
-    const limpio = o && sanear(o, { disponibles, desdeFoto });
+    const limpio = o && sanear(o, { disponibles, desdeFoto, base, fuerzaAutomatica });
     if (limpio) return { ...limpio, refinado: true, conFoto: intento.conFoto };
     motivo = 'el refinador respondió algo que no es el JSON pedido';
     break; // respondió pero no parsea: el texto del alma
   }
-  return sinRefinar(pedido, { disponibles, desdeFoto, motivo });
+  return sinRefinar(pedido, { disponibles, desdeFoto, base, motivo });
 }
 
 module.exports = { PROPORCIONES, ESTILOS, consigna, parsearSalida, sanear, sinRefinar, refinar };
