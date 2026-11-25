@@ -1,0 +1,174 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{semilla}}",
+      "steps": "{{pasos}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": "{{fuerza}}",
+      "model": [
+        "104",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "{{modelo}}"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": [
+        "104",
+        1
+      ]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{negativo}}",
+      "clip": [
+        "104",
+        1
+      ]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "lagrange",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{foto}}"
+    }
+  },
+  "11": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "12",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    }
+  },
+  "12": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": "{{ancho}}",
+      "height": "{{alto}}",
+      "crop": "center",
+      "image": [
+        "10",
+        0
+      ]
+    }
+  },
+  "101": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ],
+      "lora_name": "{{lora_1}}",
+      "strength_model": "{{lora_1_fuerza}}",
+      "strength_clip": "{{lora_1_fuerza}}"
+    }
+  },
+  "102": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "101",
+        0
+      ],
+      "clip": [
+        "101",
+        1
+      ],
+      "lora_name": "{{lora_2}}",
+      "strength_model": "{{lora_2_fuerza}}",
+      "strength_clip": "{{lora_2_fuerza}}"
+    }
+  },
+  "103": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "102",
+        0
+      ],
+      "clip": [
+        "102",
+        1
+      ],
+      "lora_name": "{{lora_3}}",
+      "strength_model": "{{lora_3_fuerza}}",
+      "strength_clip": "{{lora_3_fuerza}}"
+    }
+  },
+  "104": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "103",
+        0
+      ],
+      "clip": [
+        "103",
+        1
+      ],
+      "lora_name": "{{lora_4}}",
+      "strength_model": "{{lora_4_fuerza}}",
+      "strength_clip": "{{lora_4_fuerza}}"
+    }
+  }
+}

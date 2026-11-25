@@ -16,6 +16,7 @@
 **Agents and memory**
 - [[Persistent Agents]]
 - [[Souls]]
+- [[Image Models]]
 
 **Voice**
 - [[Voice]]

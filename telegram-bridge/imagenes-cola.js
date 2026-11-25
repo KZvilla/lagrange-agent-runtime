@@ -4,13 +4,18 @@
  * Aparte de `CARRILES`: un consumidor propio que hace una imagen por vez. El
  * turno no espera: el bot encola la imagen y la entrada `generando` queda en la
  * tarea; el trabajo hace, en orden, revisar que siga habilitada, refinar,
- * generar (probando cada proveedor del orden), guardar y mirar.
+ * generar (probando cada proveedor que puede con ese caso), guardar y mirar.
+ *
+ * FEAT-212 — Cada pedido tiene un caso (`nueva`, `variacion`, `retoque` o
+ * `edicion`). Lo disponible se calcula al empezar y otra vez justo antes de
+ * generar, y el caso pasa por `bajarCaso` las dos veces.
  *
  * Toda transición de una entrada pasa por `transicionImagen` (un `actualizar`
  * de la tarea, que avisa con `cambioImagen`). Lo privado (rutas, hilo, vista)
  * va al índice del alma, nunca a la tarea.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -23,6 +28,8 @@ const codigos = perezoso('../mcp-server/imagenes/codigos.js');
 const disponible = perezoso('../mcp-server/imagenes/disponible.js');
 const refinadorReal = perezoso('../mcp-server/imagenes/refinador.js');
 const visionReal = perezoso('../mcp-server/imagenes/vision.js');
+const casosLib = perezoso('../mcp-server/imagenes/casos.js');
+const catalogos = perezoso('../mcp-server/imagenes/catalogo.js');
 
 export const TOPE_COLA_IMAGENES = 4;
 export const TOPE_IMAGENES_TURNO = 4;
@@ -35,16 +42,18 @@ const EXT = Object.freeze({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp
  * - `registro`: el módulo de tareas (`tarea(id)` y `actualizar`);
  * - `proveedor(id, imagenes)`: el proveedor con la config vigente (ComfyUI, agy, los remotos);
  * - `leerConfig()`: la sección `imagenes` normalizada, leída ahora;
+ * - `catalogoDe(url)`: el catálogo de ComfyUI (de su caché) o `null`;
  * - `refinador`, `vision`, `registrarUso`, `log`, `env` (para las rutas de las almas).
  */
 export function crearColaImagenes({
   registro, proveedor, leerConfig = () => disponible.leerImagenes(), refinador = refinadorReal, vision = visionReal,
-  registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined
+  catalogoDe = (url) => catalogos.catalogoDe(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined
 }) {
   const pendientes = [];
   let enCurso = null;
   let colgadoHasta = 0;
   let mapaSha = null;
+  let mapaTelegram = null;
   const opcionesManual = manual ? { manual } : {};
 
   const tareaDe = (id) => registro.tarea(id);
@@ -79,6 +88,21 @@ export function crearColaImagenes({
     try { return mapa().get(indice.sha256(bytes)) || null; } catch { return null; }
   }
 
+  function mapaDeTelegram() {
+    if (!mapaTelegram) {
+      try { mapaTelegram = indice.construirMapaTelegram(env); } catch { mapaTelegram = new Map(); }
+    }
+    return mapaTelegram;
+  }
+
+  /** FEAT-212 §7 — ¿Estos bytes son el JPEG con que Telegram devolvió una imagen que hizo un alma? */
+  function reconocerTelegram(bytes) {
+    try { return mapaDeTelegram().get(indice.sha256(bytes)) || null; } catch { return null; }
+  }
+
+  /** Los dos mapas se vuelven a armar en la próxima consulta. */
+  function invalidarMapas() { mapaSha = null; mapaTelegram = null; }
+
   /**
    * Encola una imagen de un turno. `{ ok, n }` o `{ ok: false, codigo }`. `job`:
    * `{ tareaId, clave, hilo, pedido, mensaje, desdeFoto, foto, externo, envio, origen, semilla?, prompt?, negativo?, intento?, n? }`.
@@ -89,10 +113,12 @@ export function crearColaImagenes({
     const lista = entradas(pedidoJob.tareaId);
     const n = pedidoJob.n || (lista.reduce((m, e) => Math.max(m, e.n), 0) + 1);
     if (!pedidoJob.n && lista.length >= TOPE_IMAGENES_TURNO) return { ok: false, codigo: 'tope-turno' };
-    const job = { intento: 1, ...pedidoJob, n, control: new AbortController() };
+    const job = { intento: 1, ...pedidoJob, n, control: new AbortController(), idEnvio: crypto.randomUUID() };
+    if (job.crearEnvio) job.envio = job.crearEnvio(job.clave, n);
     const base = {
       estado: 'generando', pedido: String(job.pedido || '').slice(0, 300), desdeFoto: Boolean(job.desdeFoto), intento: job.intento,
       ancho: 1024, alto: 1024, creada: ahora().toISOString(), terminada: null, codigo: null, mensaje: null,
+      sinChequeoZona: undefined, loras: undefined,
       ...(job.prompt ? { prompt: job.prompt, negativo: job.negativo || '' } : {})
     };
     transicionImagen(job.tareaId, n, base);
@@ -102,11 +128,14 @@ export function crearColaImagenes({
       indice.actualizar(job.clave, job.tareaId, n, (p) => ({
         ...(p || {}), hilo: job.hilo || (p && p.hilo) || null, externo: Boolean(job.externo),
         fotoRuta: job.foto ? job.foto.ruta : (p && p.fotoRuta) || null, fotoSegura: Boolean(job.foto && job.foto.segura),
+        // FEAT-212 §7 — El id de este intento: una descarga vieja no le pega su sha a la imagen nueva.
+        telegram: { sha256: null, envio: job.idEnvio },
         creada: (p && p.creada) || ahora().toISOString()
       }), env);
     } catch (err) {
       log(`[imagenes] no se pudo anotar ${job.tareaId}#${n} en el índice: ${err.message}`);
     }
+    mapaTelegram = null;
     if (pendientes.length >= TOPE_COLA_IMAGENES) {
       error(job, 'cola-llena');
       return { ok: false, codigo: 'cola-llena', n };
@@ -141,55 +170,87 @@ export function crearColaImagenes({
     if (!habilitada(config, job.clave)) return error(job, 'apagadas');
     if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
 
-    // 1. Refinar (salvo que la entrada ya traiga su prompt: «otra versión» y reintentar).
-    let prompt = job.prompt;
-    let negativo = job.negativo || '';
-    let proporcion = job.proporcion || '1:1';
-    if (!prompt) {
-      const tope = disponible.topeDelPrompt(config, opcionesManual);
-      const r = config.refinar
-        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, tope, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
-        : refinador.sinRefinar(job.pedido, tope);
+    const conFoto = Boolean(job.desdeFoto && job.foto);
+    const disponiblesDe = async (c) => casosLib.disponiblesDe(c, {
+      desdeFoto: conFoto, catalogo: c.orden.includes('comfyui') ? await catalogoDe(c.comfyui.url) : null, ...opcionesManual
+    });
+    const sinCaso = (d) => error(job, 'sin-caso', { motivo: d.nueva.motivo || '' });
+
+    // 1. Refinar (salvo que la entrada ya traiga su prompt: «otra versión» y reintentar). Todo pasa por `bajarCaso`.
+    let disponibles = await disponiblesDe(config);
+    if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
+    let r;
+    if (job.prompt || job.instruccion) {
+      const pedido = { prompt: job.prompt || '', negativo: job.negativo || '', proporcion: job.proporcion || '1:1', zona: job.zona || '', instruccion: job.instruccion || '', loras: job.loras || [] };
+      // Una entrada de antes de 2.19 no tiene caso: sale de si lleva foto.
+      const casoPedido = job.caso || (conFoto ? 'variacion' : 'nueva');
+      const caso = casosLib.bajarCaso(casoPedido, disponibles, pedido);
+      if (!caso) return sinCaso(disponibles);
+      r = { ...(casosLib.ajustarAlCaso(pedido, caso, disponibles[caso]) || pedido), caso, casoPedido: job.casoPedido || casoPedido };
+    } else {
+      r = config.refinar
+        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, desdeFoto: conFoto, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
+        : refinador.sinRefinar(job.pedido, { disponibles, desdeFoto: conFoto });
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
-      // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo genérico).
+      // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo del perfil).
       if (config.refinar && r.refinado === false) log(`[imagenes] ${job.tareaId}/${job.n}: sin refinar (${String(r.motivo || 'sin motivo').slice(0, 200)}); va el texto del alma`);
-      prompt = r.prompt; negativo = r.negativo; proporcion = r.proporcion;
-      job.prompt = prompt; job.negativo = negativo; job.proporcion = proporcion;
-      // La proporción queda en el índice ya: reintentar una que falló la conserva.
-      try { indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? { ...p, proporcion } : null), env); } catch {}
-      const d = dimsDe(config, proporcion);
-      transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho: d.ancho, alto: d.alto });
+      if (r.sinCaso) return sinCaso(disponibles);
     }
 
-    // 2. Generar: cada proveedor del orden; los que no pueden pasan al siguiente.
+    // 2. Generar. Lo disponible se vuelve a mirar: lo que se apagó mientras refinaba vale para esta imagen.
     config = leerConfig();
     if (!habilitada(config, job.clave)) return error(job, 'apagadas');
+    disponibles = await disponiblesDe(config);
+    if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
+    const caso = casosLib.bajarCaso(r.caso, disponibles, r);
+    if (!caso) return sinCaso(disponibles);
+    const d = disponibles[caso];
+    const hecha = casosLib.ajustarAlCaso(r, caso, d) || r;
+    const { prompt, negativo, proporcion, zona, instruccion, loras } = hecha;
+    const casoPedido = r.casoPedido || caso;
+    const [ancho, alto] = d.perfil.medidas[proporcion];
+    const conComfy = d.proveedores.includes('comfyui');
+    // Lo que hace falta para repetirla queda en el índice antes de generar: una que falla también se puede repetir.
+    try {
+      indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? {
+        ...p, prompt, negativo, proporcion, caso, casoPedido, zona, instruccion, loras: loras.map((l) => l.clave), perfil: conComfy ? d.perfil.id : null
+      } : null), env);
+    } catch {}
+    transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null });
     const tmp = indice.dirTmp(job.clave, env);
     fs.mkdirSync(tmp, { recursive: true });
     const intentos = [];
     let hecho = null;
-    for (const id of config.orden) {
+    for (const id of d.proveedores) {
       if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
       const p = proveedor(id, config);
       if (!p) continue;
-      const d = p.dimensiones(proporcion);
-      transicionImagen(job.tareaId, job.n, { proveedor: id, ancho: d.ancho, alto: d.alto });
+      transicionImagen(job.tareaId, job.n, { proveedor: id, ancho, alto });
       const destino = path.join(tmp, `${job.tareaId}-${job.n}-${job.intento}-${id}`);
-      let r;
+      let g;
       try {
-        r = await p.generar({ prompt, negativo, ancho: d.ancho, alto: d.alto, semilla: job.semilla, foto: job.desdeFoto && job.foto ? job.foto.ruta : null, fuerza: 0.6, signal, destino, origen: job.origen, rol: `alma:${job.clave}` });
+        g = await p.generar({
+          caso, modelo: d.modelo, perfil: d.perfil, prompt: id === 'antigravity' ? casosLib.recortarParaAgy(prompt) : prompt, negativo, ancho, alto, semilla: job.semilla,
+          foto: caso !== 'nueva' && job.foto ? job.foto.ruta : null, zona, instruccion, loras, signal, destino, origen: job.origen, rol: `alma:${job.clave}`
+        });
       } catch (err) {
         log(`[imagenes] ${id} lanzó: ${err.message}`);
-        r = { ok: false, codigo: 'error' };
+        g = { ok: false, codigo: 'error' };
       }
-      if (r.colgado) colgadoHasta = Date.now() + ESPERA_COLGADO_MS;
-      if (r.ok) { hecho = { ...r, proveedor: id }; break; }
+      if (g.colgado) colgadoHasta = Date.now() + ESPERA_COLGADO_MS;
+      if (g.ok) { hecho = { ...g, proveedor: id }; break; }
       limpiarTmp(destino);
-      if (r.codigo === 'cancelada') return error(job, job.codigoCorte || 'cancelada');
-      if (!SIGUE_CON_EL_PROXIMO.has(r.codigo)) return error(job, r.codigo || 'error');
-      intentos.push({ proveedor: id, codigo: r.codigo });
+      if (g.codigo === 'cancelada') return error(job, job.codigoCorte || 'cancelada');
+      if (!SIGUE_CON_EL_PROXIMO.has(g.codigo)) return error(job, g.codigo || 'error', g.extra || {});
+      intentos.push({ proveedor: id, codigo: g.codigo });
     }
-    if (!hecho) return error(job, 'sin-proveedor', { intentos });
+    if (!hecho) {
+      const otro = config.orden.some((id) => id !== 'comfyui' && casosLib.declara(id, caso));
+      if (!otro && intentos.some((i) => i.proveedor === 'comfyui' && i.codigo === 'no-responde')) return error(job, 'solo-comfyui');
+      // Los que ni se probaron (agy en manual, un remoto) también se nombran, en el orden del usuario.
+      const todos = [...intentos, ...d.afuera].sort((a, b) => config.orden.indexOf(a.proveedor) - config.orden.indexOf(b.proveedor));
+      return error(job, 'sin-proveedor', { intentos: todos });
+    }
     // Cortada mientras el proveedor terminaba: lo que devolvió no se guarda ni se manda.
     if (signal.aborted || job.cerrado) { limpiarTmp(hecho.ruta); try { fs.rmSync(hecho.ruta, { force: true }); } catch {} return error(job, job.codigoCorte || 'cancelada'); }
 
@@ -206,6 +267,7 @@ export function crearColaImagenes({
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
       ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
       hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
+      perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
       // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
       lista: true, vista: null, vistaOrden: false, vistaEntregada: false,
       vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, vistaDesde: ahora().toISOString(),
@@ -217,10 +279,11 @@ export function crearColaImagenes({
     mapa().set(sha, { clave: job.clave, tareaId: job.tareaId, n: job.n });
     transicionImagen(job.tareaId, job.n, {
       estado: 'lista', tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
-      semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada), codigo: null, mensaje: null, terminada: ahora().toISOString()
+      semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
+      loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString()
     });
     podar(job.clave, job);
-    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
+    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo, idEnvio: job.idEnvio })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
 
     // 4. Mirar (§2.1): lo que salió, para el turno siguiente del mismo hilo.
     if (config.alma_la_ve && !signal.aborted) await mirar(job, final, prompt);
@@ -277,16 +340,15 @@ export function crearColaImagenes({
     for (let i = 0; i < sobran; i++) {
       const e = todas[i];
       try { fs.rmSync(e.archivo, { force: true }); } catch {}
+      const borrada = indice.borrar(clave, e.tareaId, e.n, { sha256: e.sha256 || null, envio: (e.telegram && e.telegram.envio) || null, env });
+      // Un Reintento pudo haber escrito otra en la misma `n`: esa no se toca.
+      const sigue = borrada ? null : indice.leer(clave, e.tareaId, e.n, env);
+      if (!borrada && sigue && sigue.archivo !== e.archivo) continue;
+      if (!borrada) log(`[imagenes] no se pudo borrar la entrada de ${e.tareaId}#${e.n} (ocupada); queda para la próxima poda`);
       if (e.sha256) mapa().delete(e.sha256);
-      indice.borrar(clave, e.tareaId, e.n, env);
+      if (e.telegram && e.telegram.sha256) mapaDeTelegram().delete(e.telegram.sha256);
       if (tareaDe(e.tareaId)) transicionImagen(e.tareaId, e.n, { estado: 'borrada', codigo: null, mensaje: 'La imagen ya no está (se borró por el tope).' });
     }
-  }
-
-  function dimsDe(config, proporcion) {
-    const id = disponible.primeroQuePuede(config, opcionesManual);
-    const p = id ? proveedor(id, config) : null;
-    return p ? p.dimensiones(proporcion) : { ancho: 1024, alto: 1024 };
   }
 
   /**
@@ -316,8 +378,18 @@ export function crearColaImagenes({
   /** ¿Tiene imágenes en la cola o en curso este turno? */
   const tieneAbiertas = (tareaId) => pendientes.some((j) => j.tareaId === tareaId) || Boolean(enCurso && enCurso.tareaId === tareaId);
 
+  /** Lo que hace falta para repetir una imagen: lo que guardó el índice (o la entrada, si es de antes de 2.19). */
+  function repetir(e, priv) {
+    const prompt = e.prompt || priv.prompt || '';
+    if (!prompt && !priv.instruccion) return {};
+    return {
+      prompt: priv.prompt || prompt, negativo: priv.negativo ?? e.negativo ?? '', proporcion: priv.proporcion || '1:1',
+      ...(priv.caso ? { caso: priv.caso, casoPedido: priv.casoPedido || priv.caso, zona: priv.zona || '', instruccion: priv.instruccion || '', loras: priv.loras || [] } : {})
+    };
+  }
+
   /** §5 — «Otra versión»: la misma imagen con otra semilla, como `n` nueva. `{ ok, n }` o `{ ok: false, codigo }`. */
-  function otra(tareaId, n, { envio = null } = {}) {
+  function otra(tareaId, n, { envio = null, crearEnvio = null } = {}) {
     const config = leerConfig();
     if (!config.otra_version) return { ok: false, codigo: 'apagada' };
     const t = tareaDe(tareaId);
@@ -331,7 +403,7 @@ export function crearColaImagenes({
     return encolar({
       tareaId, clave, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto,
       foto: e.desdeFoto ? { ruta: priv.fotoRuta, segura: Boolean(priv.fotoSegura) } : null, externo: Boolean(priv.externo),
-      prompt: e.prompt || priv.prompt, negativo: e.negativo || priv.negativo || '', proporcion: priv.proporcion || '1:1', semilla: undefined, envio, origen: 'usuario'
+      ...repetir(e, priv), semilla: undefined, envio, crearEnvio, origen: 'usuario'
     });
   }
 
@@ -348,7 +420,9 @@ export function crearColaImagenes({
     return encolar({
       tareaId, clave, n, intento: (e.intento || 1) + 1, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto,
       foto: e.desdeFoto ? { ruta: fotoRuta, segura: Boolean(priv.fotoSegura) } : null, externo: Boolean(priv.externo),
-      ...(e.prompt ? { prompt: e.prompt, negativo: e.negativo || '', proporcion: priv.proporcion || '1:1' } : {}), envio, origen: 'usuario'
+      ...repetir(e, priv),
+      // FEAT-212 §5 — Sin la zona no hay qué retocar: va como variación, con el mismo prompt.
+      ...(e.codigo === 'zona-no-encontrada' ? { caso: 'variacion', casoPedido: 'retoque', zona: '' } : {}), envio, origen: 'usuario'
     });
   }
 
@@ -378,7 +452,7 @@ export function crearColaImagenes({
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, cancelarImagenes, tieneAbiertas, otra, reintentar, bytesDe, reconocer, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes };
+  return { encolar, cancelarImagenes, tieneAbiertas, otra, reintentar, bytesDe, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes };
 }
 
 /** La clave del alma de una tarea de charla. */

@@ -1,0 +1,52 @@
+{
+  "id": "flux-kontext",
+  "nombre": "Flux.1 Kontext (edición)",
+  "plantillas": "flux-kontext",
+  "carga": {
+    "tipo": "unet",
+    "clip1": "clip_l.safetensors",
+    "clip2": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae": "ae.safetensors"
+  },
+  "prompt": {
+    "estilo": "instruccion",
+    "reglas": "Flux Kontext edits the input photo from one instruction. Say what changes and, explicitly, what stays the same.\nUse precise verbs: change, replace, add, remove. Avoid \"transform\", which changes the whole identity.\nName the subject directly (\"the woman with short black hair\"), never \"her\" or \"it\".\nTo keep a person, add \"while maintaining the same facial features, hairstyle and expression\". To keep the framing, add \"keep the same pose, camera angle and composition\".\nTo edit written text, quote it: Replace \"joy\" with \"BFL\".\nThere is no negative prompt and no weights.",
+    "tope": 1800,
+    "negativo": "no",
+    "negativoPorDefecto": "",
+    "pesos": false
+  },
+  "muestreo": {
+    "pasos": 25,
+    "cfg": 1,
+    "guia": 2.5,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "fuerza": 1
+  },
+  "medidas": {
+    "1:1": [
+      1024,
+      1024
+    ],
+    "3:4": [
+      896,
+      1152
+    ],
+    "4:3": [
+      1152,
+      896
+    ],
+    "16:9": [
+      1344,
+      768
+    ],
+    "9:16": [
+      768,
+      1344
+    ]
+  },
+  "casos": [
+    "edicion"
+  ]
+}

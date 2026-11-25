@@ -1,0 +1,51 @@
+{
+  "id": "sdxl-rapido",
+  "nombre": "SDXL rápido (Lightning, Turbo, Hyper)",
+  "plantillas": "sdxl",
+  "carga": {
+    "tipo": "checkpoint"
+  },
+  "prompt": {
+    "estilo": "etiquetas",
+    "reglas": "This is a distilled SDXL (Lightning, Turbo or Hyper): few steps and almost no guidance, so the prompt must be short and direct, about 40 words or less.\nUse comma separated tags, subject first, one clear style. Contradicting tags blur the image.\nThe negative prompt barely works at this guidance: leave it empty unless something specific must be avoided.",
+    "tope": 450,
+    "negativo": "opcional",
+    "negativoPorDefecto": "blurry, low quality, distorted, deformed, watermark, text artifacts",
+    "pesos": true
+  },
+  "muestreo": {
+    "pasos": 6,
+    "cfg": 1.5,
+    "guia": null,
+    "sampler": "euler",
+    "scheduler": "sgm_uniform",
+    "fuerza": 0.6
+  },
+  "medidas": {
+    "1:1": [
+      1024,
+      1024
+    ],
+    "3:4": [
+      896,
+      1152
+    ],
+    "4:3": [
+      1152,
+      896
+    ],
+    "16:9": [
+      1344,
+      768
+    ],
+    "9:16": [
+      768,
+      1344
+    ]
+  },
+  "casos": [
+    "nueva",
+    "variacion",
+    "retoque"
+  ]
+}

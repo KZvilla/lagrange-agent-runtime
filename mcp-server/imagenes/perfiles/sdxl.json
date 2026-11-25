@@ -1,0 +1,51 @@
+{
+  "id": "sdxl",
+  "nombre": "SDXL",
+  "plantillas": "sdxl",
+  "carga": {
+    "tipo": "checkpoint"
+  },
+  "prompt": {
+    "estilo": "etiquetas",
+    "reglas": "SDXL reads the prompt through CLIP: only about the first 77 tokens (roughly 60 words) count, so put the subject first, then the action and setting, then light and framing, then style and quality.\nUse concrete visual nouns and adjectives separated by commas. Do not write full sentences, stories or abstract ideas.\nName the medium explicitly (photo, oil painting, anime illustration, 3d render) so the style is not left to chance.\nThe negative prompt lists only what must not appear, as short tags. Never repeat in it something the request asks for.\nUse a weight like (red scarf:1.2) only for a detail that must not be lost; stay between 0.8 and 1.4.",
+    "tope": 450,
+    "negativo": "si",
+    "negativoPorDefecto": "blurry, low quality, distorted, deformed, watermark, text artifacts",
+    "pesos": true
+  },
+  "muestreo": {
+    "pasos": 30,
+    "cfg": 7,
+    "guia": null,
+    "sampler": "dpmpp_2m",
+    "scheduler": "karras",
+    "fuerza": 0.6
+  },
+  "medidas": {
+    "1:1": [
+      1024,
+      1024
+    ],
+    "3:4": [
+      896,
+      1152
+    ],
+    "4:3": [
+      1152,
+      896
+    ],
+    "16:9": [
+      1344,
+      768
+    ],
+    "9:16": [
+      768,
+      1344
+    ]
+  },
+  "casos": [
+    "nueva",
+    "variacion",
+    "retoque"
+  ]
+}

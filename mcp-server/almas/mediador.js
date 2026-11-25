@@ -56,11 +56,12 @@ function formatoDeImagen(buffer) {
 /**
  * Lo que vuelve del mediador, listo para el alma: sin invisibles ni etiquetas,
  * sin secretos, sin URLs, recortado. `orden: true` si parece traer una orden
- * (se avisa, pero pasa: el hilo queda contaminado igual).
+ * (se avisa, pero pasa: el hilo queda contaminado igual). `max`, el largo (FEAT-212: el refinador escribe prompts más
+ * largos, campo por campo).
  */
-function limpiarSalida(texto) {
+function limpiarSalida(texto, max = MAX_SALIDA) {
   const sinUrls = String(texto || '').replace(/\bhttps?:\/\/\S+|\bwww\.\S+/gi, '[enlace]');
-  const limpio = redactarSecretos(sanearParaInyeccion(sinUrls)).texto.replace(/\s+/g, ' ').trim().slice(0, MAX_SALIDA);
+  const limpio = redactarSecretos(sanearParaInyeccion(sinUrls)).texto.replace(/\s+/g, ' ').trim().slice(0, max);
   return { texto: limpio, orden: hallazgosDeOrden(limpio).length > 0 };
 }
 

@@ -49,8 +49,11 @@ function leer(clave, tareaId, n, env = process.env) {
   }
 }
 
-/** Leer-modificar-escribir bajo el lock de ese archivo. `fn(previo)` devuelve lo nuevo (o `null` para no escribir). */
-function actualizar(clave, tareaId, n, fn, env = process.env) {
+/**
+ * Leer-modificar-escribir bajo el lock de ese archivo. `fn(previo)` devuelve lo nuevo (o `null` para no escribir).
+ * `esperaMs: 0` no espera el lock (que duerme el proceso): lanza `ErrorLock` en el acto.
+ */
+function actualizar(clave, tareaId, n, fn, env = process.env, { esperaMs } = {}) {
   const ruta = rutaIndice(clave, tareaId, n, env);
   fs.mkdirSync(path.dirname(ruta), { recursive: true });
   return conLock(ruta, () => {
@@ -59,11 +62,25 @@ function actualizar(clave, tareaId, n, fn, env = process.env) {
     if (!nuevo) return previo;
     escribirAtomico(ruta, `${JSON.stringify({ ...nuevo, tareaId, n }, null, 2)}\n`);
     return nuevo;
-  });
+  }, esperaMs === undefined ? {} : { esperaMs });
 }
 
-function borrar(clave, tareaId, n, env = process.env) {
-  try { fs.rmSync(rutaIndice(clave, tareaId, n, env), { force: true }); } catch {}
+/**
+ * FEAT-212 — Borra la entrada, bajo su lock y solo si sigue siendo la que se eligió (`sha256` y `envio`): una que un
+ * Reintento escribió en la misma `n` no se toca. No espera el lock; `false` si no se borró.
+ */
+function borrar(clave, tareaId, n, { sha256: sha, envio, env = process.env } = {}) {
+  const ruta = rutaIndice(clave, tareaId, n, env);
+  try {
+    return conLock(ruta, () => {
+      const e = leer(clave, tareaId, n, env);
+      if (e && ((sha !== undefined && (e.sha256 || null) !== (sha || null)) || (envio !== undefined && ((e.telegram && e.telegram.envio) || null) !== (envio || null)))) return false;
+      fs.rmSync(ruta, { force: true });
+      return true;
+    }, { esperaMs: 0 });
+  } catch {
+    return false;
+  }
 }
 
 /** Todas las entradas de un alma, de la más vieja a la más nueva (por `creada`). */
@@ -88,6 +105,19 @@ function construirMapa(env = process.env) {
   try { claves = fs.readdirSync(rutas.dirAlmas(env)).filter((c) => rutas.CLAVE_VALIDA.test(c)); } catch { return mapa; }
   for (const clave of claves) {
     for (const e of listar(clave, env)) if (e.sha256 && e.archivo) mapa.set(e.sha256, { clave, tareaId: e.tareaId, n: e.n });
+  }
+  return mapa;
+}
+
+/** FEAT-212 §7 — El mapa del `sha256` del JPEG que devolvió Telegram → la imagen. */
+function construirMapaTelegram(env = process.env) {
+  const mapa = new Map();
+  let claves = [];
+  try { claves = fs.readdirSync(rutas.dirAlmas(env)).filter((c) => rutas.CLAVE_VALIDA.test(c)); } catch { return mapa; }
+  for (const clave of claves) {
+    for (const e of listar(clave, env)) {
+      if (e.archivo && e.telegram && typeof e.telegram.sha256 === 'string') mapa.set(e.telegram.sha256, { clave, tareaId: e.tareaId, n: e.n });
+    }
   }
   return mapa;
 }
@@ -117,5 +147,5 @@ function vaciarTmp(clave, env = process.env) {
 
 module.exports = {
   TOPE_POR_ALMA, RE_TAREA, dirImagenes, dirIndice, dirTmp, rutaIndice, rutaArchivo, leer, actualizar, borrar, listar, sha256,
-  construirMapa, vistasPendientes, marcarEntregadas, vaciarTmp
+  construirMapa, construirMapaTelegram, vistasPendientes, marcarEntregadas, vaciarTmp
 };

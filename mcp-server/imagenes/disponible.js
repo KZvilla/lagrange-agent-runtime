@@ -10,19 +10,17 @@
  */
 
 const configMotores = require('../motores/config-motores.js');
+const casos = require('./casos.js');
 const { enModoManual } = require('../motores/antigravity/modo.js');
 const ajustesImagenes = require('../lib/ajustes-imagenes.js');
 
-/** Los proveedores que, por su forma, nunca generan: cableados pero no funcionales. */
-const NO_IMPLEMENTADOS = Object.freeze(['openai', 'gemini']);
-/** El tope del prompt de cada proveedor (§2): el refinador escribe para el primero que puede andar. */
-const TOPE_AGY = 900;
+const { NO_IMPLEMENTADOS, TOPE_AGY } = casos;
 
-/** La sección `imagenes` normalizada, leída de la config global ahora. Un archivo ilegible da los valores por defecto. */
+/** La sección `imagenes` (migrada y normalizada), leída de la config global ahora. Un archivo ilegible da los valores por defecto. */
 function leerImagenes({ homeDir = configMotores.homeDeConfig() } = {}) {
   const leido = configMotores.leerParaModificar(configMotores.rutaConfigGlobal(homeDir));
   // Los flujos pasan por `deny_paths` también acá: el daemon lee lo que se editó a mano.
-  return ajustesImagenes.normalizar(leido.ok ? leido.datos.imagenes : undefined, { denyPaths: ajustesImagenes.denyDe(leido.ok ? leido.datos : null) }).imagenes;
+  return ajustesImagenes.leerSeccion(leido.ok ? leido.datos : {}).imagenes;
 }
 
 /** ¿Puede andar este proveedor, sin preguntarle? (no es de los no implementados, y agy no está en modo manual). */
@@ -42,13 +40,6 @@ function primeroQuePuede(imagenes, opciones = {}) {
   return (imagenes.orden || []).find((p) => puedeAndar(p, opciones)) || null;
 }
 
-/** El tope del prompt para el refinador: el del primer proveedor que puede andar. */
-function topeDelPrompt(imagenes, opciones = {}) {
-  const p = primeroQuePuede(imagenes, opciones);
-  if (p === 'antigravity') return TOPE_AGY;
-  return imagenes.comfyui.tope_prompt;
-}
-
 /** ¿Las imágenes están habilitadas para esta alma? (activas, no apagada en `por_alma`, y algún proveedor puede andar). */
 function habilitadaPara(imagenes, clave, opciones = {}) {
   if (!imagenes.activas) return false;
@@ -56,4 +47,4 @@ function habilitadaPara(imagenes, clave, opciones = {}) {
   return algunoPuedeAndar(imagenes, opciones);
 }
 
-module.exports = { NO_IMPLEMENTADOS, TOPE_AGY, leerImagenes, puedeAndar, algunoPuedeAndar, primeroQuePuede, topeDelPrompt, habilitadaPara };
+module.exports = { NO_IMPLEMENTADOS, TOPE_AGY, leerImagenes, puedeAndar, algunoPuedeAndar, primeroQuePuede, topeDelPrompt: casos.topeDelPrompt, habilitadaPara };

@@ -25,6 +25,7 @@ const contaminados = require('../mcp-server/almas/contaminados.js');
 const { pideImagen } = require('../mcp-server/almas/pide-imagen.js');
 const codigos = require('../mcp-server/imagenes/codigos.js');
 const ajustesImagenes = require('../mcp-server/lib/ajustes-imagenes.js');
+const perfilesLib = require('../mcp-server/imagenes/perfiles.js');
 const disponible = require('../mcp-server/imagenes/disponible.js');
 const sondaVision = require('../mcp-server/imagenes/sonda-vision.js');
 const vision = require('../mcp-server/imagenes/vision.js');
@@ -187,11 +188,11 @@ async function main() {
 
   await group('la sección imagenes: valores por defecto, lectura tolerante y escritura estricta', () => {
     const d = ajustesImagenes.normalizar(undefined).imagenes;
-    check('por defecto: activas, ComfyUI y después agy', d.activas && d.orden.join() === 'comfyui,antigravity' && d.comfyui.url === 'http://127.0.0.1:8188' && d.comfyui.tope_prompt === 300);
-    const r = ajustesImagenes.normalizar({ comfyui: { url: 'http://10.0.0.2:8188', pasos: 9999 }, orden: ['x'], activas: 'si' });
-    check('lo inválido cae al defecto con aviso', r.imagenes.comfyui.url === 'http://127.0.0.1:8188' && r.imagenes.comfyui.pasos === 30 && r.imagenes.orden.join() === 'comfyui,antigravity' && r.imagenes.activas === true && r.avisos.length >= 3);
+    check('por defecto: activas, ComfyUI y después agy', d.activas && d.orden.join() === 'comfyui,antigravity' && d.comfyui.url === 'http://127.0.0.1:8188' && d.comfyui.tope_prompt === undefined && d.comfyui.pasos === undefined);
+    const r = ajustesImagenes.normalizar({ comfyui: { url: 'http://10.0.0.2:8188', tiempo_s: 9999 }, orden: ['x'], activas: 'si' });
+    check('lo inválido cae al defecto con aviso', r.imagenes.comfyui.url === 'http://127.0.0.1:8188' && r.imagenes.comfyui.tiempo_s === 300 && r.imagenes.orden.join() === 'comfyui,antigravity' && r.imagenes.activas === true && r.avisos.length >= 3);
     // Un aviso por cada campo de ComfyUI o remoto que no vale.
-    const campos = [['modelo', 5], ['pasos', 9999], ['tiempo_s', 'x'], ['tope_prompt', 9999], ['liberar_gpu', 'false']];
+    const campos = [['modelo', 5], ['modelo_edicion', '../x.safetensors'], ['tiempo_s', 'x'], ['mascara', 'otro'], ['chequeo_zona', 'si'], ['liberar_gpu', 'false']];
     for (const [k, v] of campos) {
       const a = ajustesImagenes.normalizar({ comfyui: { [k]: v } });
       check(`comfyui.${k} inválido: su aviso`, a.avisos.some((x) => x.startsWith(`imagenes.comfyui.${k}`)), JSON.stringify(a.avisos));
@@ -204,23 +205,24 @@ async function main() {
     check('key_env es un nombre, no la key', tira(() => ajustesImagenes.aplicarImagenes({}, { openai_imagen: { key_env: 'sk-abc123' } })));
     check('por_alma: un alma que no existe', tira(() => ajustesImagenes.aplicarImagenes({}, { por_alma: { nadie: false } }, { almas: ['alya'] })));
     const ok = ajustesImagenes.aplicarImagenes({ otra: 1 }, { activas: false, por_alma: { alya: false }, comfyui: { url: 'http://localhost:8188', tope_prompt: 900 } }, { almas: ['alya'] });
-    check('se aplica y conserva lo demás', ok.otra === 1 && ok.imagenes.activas === false && ok.imagenes.por_alma.alya === false && ok.imagenes.comfyui.tope_prompt === 900);
+    check('se aplica y conserva lo demás', ok.otra === 1 && ok.imagenes.activas === false && ok.imagenes.por_alma.alya === false && ok.imagenes.comfyui.tope_prompt === undefined && ok.imagenes.perfiles_propios.sdxl.prompt.tope === 900, JSON.stringify(ok));
     const flujoMalo = path.join(home, 'malo.json');
     fs.writeFileSync(flujoMalo, JSON.stringify({ 1: { inputs: { text: 'sin marcador' } } }));
     check('un flujo sin {{prompt}} se rechaza al guardar', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: flujoMalo } })));
     check('un flujo relativo se rechaza', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: 'flujo.json' } })));
     const flujoDeny = path.join(home, 'x.key.json');
     fs.writeFileSync(flujoDeny, JSON.stringify({ 1: { inputs: { text: '{{prompt}}' } } }));
-    const tolerante = ajustesImagenes.normalizar({ comfyui: { flujo_txt2img: flujoDeny } }, { denyPaths: ['*.key.json'] });
-    check('lectura tolerante: un flujo en deny_paths no se usa, con aviso', !tolerante.imagenes.comfyui.flujo_txt2img && tolerante.avisos.some((a) => a.includes('deny_paths')), JSON.stringify(tolerante.avisos));
+    const tolerante = ajustesImagenes.leerSeccion({ permissions: { deny_paths: ['*.key.json'] }, imagenes: { comfyui: { flujo_txt2img: flujoDeny } } });
+    check('lectura tolerante: un flujo en deny_paths no se usa, con aviso', Object.keys(tolerante.imagenes.comfyui.flujos).length === 0 && tolerante.avisos.some((a) => a.includes('deny_paths')), JSON.stringify(tolerante.avisos));
     const leida = ajustesImagenes.leerImagenes({ permissions: { deny_paths: ['*.key.json'] }, imagenes: { comfyui: { flujo_txt2img: flujoDeny } } });
     check('leerImagenes toma deny_paths de la config', !leida.imagenes.comfyui.flujo_txt2img);
     check('denyDe: sin permissions, los de siempre', ajustesImagenes.denyDe({}).includes('**/*.key'));
     check('un flujo en deny_paths se rechaza', tira(() => ajustesImagenes.aplicarImagenes({}, { comfyui: { flujo_txt2img: path.join(home, 'x.key.json') } }, { denyPaths: ['*.key.json'] })));
-    const plantillas = ajustesImagenes.leerFlujo(ajustesImagenes.PLANTILLA_TXT2IMG);
-    check('la plantilla de txt2img del plugin sirve', plantillas.ok && plantillas.marcadores.includes('prompt'), JSON.stringify(plantillas));
-    const img2img = ajustesImagenes.leerFlujo(ajustesImagenes.PLANTILLA_IMG2IMG, { img2img: true });
-    check('la de img2img tiene {{foto}}', img2img.ok && img2img.marcadores.includes('foto'), JSON.stringify(img2img));
+    const sdxl = perfilesLib.PERFILES.get('sdxl');
+    const plantillas = ajustesImagenes.resolverFlujo(d, sdxl, 'nueva');
+    check('la plantilla de una imagen nueva del plugin sirve', plantillas.ok && plantillas.marcadores.includes('prompt'), plantillas.motivo);
+    const img2img = ajustesImagenes.resolverFlujo(d, sdxl, 'variacion');
+    check('la de variación tiene {{foto}}', img2img.ok && img2img.marcadores.includes('foto'), img2img.motivo);
   });
 
   await group('disponible: quién puede andar', () => {
@@ -230,7 +232,9 @@ async function main() {
     check('con ComfyUI en el orden, puede', disponible.algunoPuedeAndar(d, manual));
     check('solo agy en manual: no', !disponible.algunoPuedeAndar({ ...d, orden: ['antigravity'] }, manual) && disponible.algunoPuedeAndar({ ...d, orden: ['antigravity'] }, auto));
     check('openai y gemini nunca', !disponible.algunoPuedeAndar({ ...d, orden: ['openai', 'gemini'] }, auto));
-    check('el tope: 300 con ComfyUI, 900 con agy primero', disponible.topeDelPrompt(d, auto) === 300 && disponible.topeDelPrompt({ ...d, orden: ['antigravity', 'comfyui'] }, auto) === 900);
+    const sdxl = perfilesLib.PERFILES.get('sdxl');
+    const flux = perfilesLib.PERFILES.get('flux');
+    check('el tope: el del perfil con ComfyUI, 900 como mucho con agy primero', disponible.topeDelPrompt(['comfyui', 'antigravity'], sdxl) === 450 && disponible.topeDelPrompt(['comfyui', 'antigravity'], flux) === 1800 && disponible.topeDelPrompt(['antigravity', 'comfyui'], flux) === 900 && disponible.topeDelPrompt(['antigravity'], sdxl) === 450);
     check('apagadas o apagada para el alma', !disponible.habilitadaPara({ ...d, activas: false }, 'alya', auto) && !disponible.habilitadaPara({ ...d, por_alma: { alya: false } }, 'alya', auto) && disponible.habilitadaPara(d, 'alya', auto));
   });
 
@@ -247,7 +251,11 @@ async function main() {
     check('y la sonda sale en segundo plano y pasa (nombró el rojo)', sondaVision.vigente({ homeDir: home }).ok, JSON.stringify(sondaVision.vigente({ homeDir: home })));
     const conSonda = await vision.llamar({ partes: { texto: 'x', imagen: { ruta: rutaFoto } }, modo: 'mirar', homeDir: home, ejecutar });
     check('con la sonda vigente, manda los bytes', conSonda.ok && /data:image\/png;base64,/.test(JSON.stringify(specs[specs.length - 1].cuerpo)));
-    const texto = await vision.llamar({ partes: { texto: 'solo texto' }, modo: 'refinar', homeDir: home, ejecutar });
+    const antes = specs.length;
+    const sinConsigna = await vision.llamar({ partes: { texto: 'solo texto' }, modo: 'refinar', homeDir: home, ejecutar });
+    check('refinar sin consigna no llama a Go', sinConsigna.ok === false && specs.length === antes);
+    const texto = await vision.llamar({ partes: { texto: 'solo texto' }, modo: 'refinar', sistema: 'La consigna.', homeDir: home, ejecutar });
+    check('la consigna viaja como system', specs[specs.length - 1].cuerpo.messages[0].content === 'La consigna.');
     check('sin imagen no hace falta la sonda', texto.ok && typeof specs[specs.length - 1].cuerpo.messages[1].content === 'string');
     check('el testigo de la sonda es propio', sondaVision.TESTIGO === 'opencode-go-vision' && sondaVision.PERFIL === 'vision');
   });

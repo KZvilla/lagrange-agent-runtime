@@ -5,6 +5,10 @@
  * marcadores (`{{prompt}}`, `{{semilla}}`…) que se reemplazan sobre el JSON ya
  * parseado, valor por valor: un prompt con comillas o llaves no rompe nada.
  *
+ * FEAT-212 — El flujo lo resuelve `resolverFlujo` (el propio del perfil o la
+ * plantilla del plugin para ese caso), y los datos salen del perfil del modelo.
+ * Los huecos de LoRA sin usar se puentean, y en un retoque se chequea la máscara.
+ *
  * Cancelar nunca interrumpe a ciegas: primero `GET /queue`, y solo se corta el
  * prompt que es nuestro (en la cola, `delete`; corriendo, `/interrupt` con su
  * `prompt_id`, confirmado después).
@@ -13,11 +17,16 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { sinRutas } from './sanear-texto.js';
+import { chequearMascara, TOPE_MASCARA } from './mascara.js';
 
 const require = createRequire(import.meta.url);
 // Perezoso: importar bot.js no carga la config del MCP (BE-176).
-let libAjustes = null;
-const ajustesImagenes = new Proxy({}, { get: (_, k) => (libAjustes ||= require('../../mcp-server/lib/ajustes-imagenes.js'))[k] });
+const perezoso = (ruta) => { let m = null; return new Proxy({}, { get: (_, k) => (m ||= require(ruta))[k] }); };
+const ajustesImagenes = perezoso('../../mcp-server/lib/ajustes-imagenes.js');
+const flujosLib = perezoso('../../mcp-server/imagenes/flujos.js');
+const casosLib = perezoso('../../mcp-server/imagenes/casos.js');
+const catalogos = perezoso('../../mcp-server/imagenes/catalogo.js');
 
 const ESPERA_HISTORIA_MS = 1000;
 const ESPERA_COLA_MS = 500;
@@ -26,49 +35,16 @@ const PRUEBA_MS = 5000;
 // Cada pedido HTTP tiene su tope: un ComfyUI que acepta la conexión y no contesta no deja la cola trabada.
 const PEDIDO_MS = 30 * 1000;
 const TOPE_BYTES = 20 * 1024 * 1024;
-const NUMERICOS = new Set(['semilla', 'ancho', 'alto', 'pasos']);
-
-/** Las dimensiones de una proporción, en múltiplos de 64 alrededor de 1 megapíxel. */
-const DIMENSIONES = Object.freeze({
-  '1:1': [1024, 1024], '3:4': [896, 1152], '4:3': [1152, 896], '16:9': [1344, 768], '9:16': [768, 1344]
-});
-function dimensiones(proporcion) {
-  const [ancho, alto] = DIMENSIONES[proporcion] || DIMENSIONES['1:1'];
-  return { ancho, alto };
-}
-
-/** Reemplaza los marcadores sobre el flujo parseado. Un valor que es exactamente `{{numérico}}` queda como número. */
-function aplicarMarcadores(valor, datos) {
-  if (typeof valor === 'string') {
-    const solo = /^\{\{(\w+)\}\}$/.exec(valor);
-    if (solo && solo[1] in datos) {
-      const v = datos[solo[1]];
-      if (NUMERICOS.has(solo[1])) return Math.round(Number(v));
-      if (solo[1] === 'fuerza') return Number(v);
-      return v == null ? '' : String(v);
-    }
-    return valor.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in datos ? String(datos[k] ?? '') : m));
-  }
-  if (Array.isArray(valor)) return valor.map((v) => aplicarMarcadores(v, datos));
-  if (valor && typeof valor === 'object') return Object.fromEntries(Object.entries(valor).map(([k, v]) => [k, aplicarMarcadores(v, datos)]));
-  return valor;
-}
-
-/** El nodo de salida: el configurado, o el primer `SaveImage` del flujo enviado. */
-function nodoDeSalida(flujo, configurado) {
-  if (configurado) return String(configurado);
-  for (const [id, nodo] of Object.entries(flujo)) if (nodo && nodo.class_type === 'SaveImage') return id;
-  return null;
-}
 
 const tipoDe = (nombre) => (/\.png$/i.test(nombre) ? 'image/png' : /\.webp$/i.test(nombre) ? 'image/webp' : /\.jpe?g$/i.test(nombre) ? 'image/jpeg' : 'image/png');
 const extDe = (tipo) => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' })[tipo] || 'png';
 
 /**
- * Crea el proveedor. `config` es `imagenes.comfyui` normalizada; `flujos` los efectivos (`flujosEfectivos`).
- * `fetchImpl`, `esperar` y `log` se inyectan en los tests.
+ * Crea el proveedor. `config` es la sección `imagenes` entera (normalizada); `resolverFlujo(config, perfil, caso)`, quien
+ * dice qué flujo se usa. `fetchImpl`, `esperar` y `log` se inyectan en los tests.
  */
-export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS }) {
+export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), catalogoDe = (url) => catalogos.enCache(url), fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS }) {
+  const config = seccion.comfyui;
   const base = String(config.url || ajustesImagenes.URL_COMFYUI).replace(/\/+$/, '');
   // El `signal` del trabajo (si viene) más el tope del pedido.
   const pedir = async (ruta, { signal, ...opciones } = {}) => fetchImpl(`${base}${ruta}`, {
@@ -80,10 +56,6 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     return r.json();
   };
   const post = (ruta, cuerpo, signal) => json(ruta, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo), signal });
-  // El detalle de un error de ComfyUI va al log sin rutas (un checkpoint o un modelo las traen).
-  const sinRutas = (t) => String(t)
-    .replace(/[A-Za-z]:(?:[\\/]+[^\\/"'\n]+)+/g, '<ruta>')
-    .replace(/(?:[\\/]+[^\\/"'\n:]+){2,}/g, '<ruta>');
 
   /** ¿En qué parte de la cola está `id`? `'pendiente'`, `'corriendo'` o `null`. */
   async function dondeEsta(id) {
@@ -136,17 +108,66 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     } catch (err) { log(`[imagenes] ComfyUI /free falló: ${err.message}`); }
   }
 
-  /** `generar({ prompt, negativo, ancho, alto, semilla, foto, fuerza, signal, destino })` → la interfaz de §3. */
-  async function generar({ prompt, negativo = '', ancho, alto, semilla, foto = null, fuerza = 0.6, signal, destino }) {
-    const fin = (codigo, extra = {}) => ({ ok: false, codigo, proveedor: 'comfyui', modelo: config.modelo, ...extra });
+  /** El error que dio ComfyUI al correr un flujo: `{ nodo, clase, mensaje }` o `null`. Nunca viaja: va al log. */
+  function errorDe(entrada) {
+    const m = entrada && entrada.status && Array.isArray(entrada.status.messages) ? entrada.status.messages : [];
+    const e = m.find((x) => Array.isArray(x) && x[0] === 'execution_error' && x[1] && typeof x[1] === 'object');
+    return e ? { nodo: String(e[1].node_id ?? ''), clase: String(e[1].node_type || ''), mensaje: String(e[1].exception_message || '') } : null;
+  }
+
+  /** Baja la máscara que dejó el flujo y mira si marca algo: `'ok'`, `'vacia'`, `'cubre'`, `'ilegible'` o `null` si no hay. */
+  async function mirarMascara(resultado, nodo, signal) {
+    const img = resultado.outputs && resultado.outputs[nodo] && Array.isArray(resultado.outputs[nodo].images) ? resultado.outputs[nodo].images[0] : null;
+    if (!img || !img.filename) return null;
+    try {
+      const q = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: img.type || 'temp' });
+      const v = await pedir(`/view?${q}`, { signal });
+      if (!v.ok) return 'ilegible';
+      const bytes = Buffer.from(await v.arrayBuffer());
+      return bytes.length > TOPE_MASCARA ? 'ilegible' : chequearMascara(bytes);
+    } catch (err) {
+      if (signal && signal.aborted) throw err;
+      return 'ilegible';
+    }
+  }
+
+  /**
+   * `generar({ caso, modelo, perfil, prompt, negativo, ancho, alto, semilla, foto, zona, instruccion, loras, signal, destino })` → la interfaz de §3.
+   * `loras`: `[{ clave, archivo, fuerza }]`, en el orden de los huecos.
+   */
+  async function generar({ caso = 'nueva', modelo, perfil, prompt, negativo = '', ancho, alto, semilla, foto = null, zona = '', instruccion = '', loras = [], signal, destino }) {
+    const fin = (codigo, extra = {}) => ({ ok: false, codigo, proveedor: 'comfyui', modelo, ...extra });
     if (!ajustesImagenes.esLoopback(base)) return fin('error');
     if (signal && signal.aborted) return fin('cancelada');
-    // El flujo: img2img con una foto y un flujo para eso; si no, txt2img (y la foto se ignora, anotado).
-    const usaFoto = Boolean(foto && flujos.img2img);
-    const leido = ajustesImagenes.leerFlujo(usaFoto ? flujos.img2img : flujos.txt2img, { img2img: usaFoto });
-    if (!leido.ok) return fin('fallo-del-flujo', { detalle: leido.motivo });
+    const usaFoto = caso !== 'nueva';
+    if (usaFoto && !foto) return fin('error');
+    const resuelto = resolverFlujo(seccion, perfil, caso);
+    if (!resuelto.ok) return fin('fallo-del-flujo', { detalle: resuelto.motivo });
     const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
-    const datos = { prompt, negativo, modelo: config.modelo, semilla: seed, ancho, alto, pasos: config.pasos, fuerza };
+    const m = perfil.muestreo;
+    const datos = {
+      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: m.fuerza,
+      ...casosLib.valoresDeCarga(modelo, perfil)
+    };
+    if (caso === 'retoque') datos.zona = zona;
+    if (caso === 'edicion') {
+      datos.instruccion = instruccion;
+      // Un flujo de edición que solo tiene {{prompt}} recibe la instrucción ahí.
+      if (!resuelto.marcadores.includes('instruccion')) datos.prompt = instruccion;
+    }
+    // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
+    const catalogo = catalogoDe(base);
+    const usadas = [];
+    for (const l of loras.slice(0, resuelto.huecos.length)) {
+      if (catalogo && !catalogo.loras.some((a) => a.valor === l.archivo)) { log(`[imagenes] El LoRA "${l.clave}" no está en ComfyUI; se saltea.`); continue; }
+      usadas.push(l);
+    }
+    usadas.forEach((l, i) => { datos[`lora_${i + 1}`] = l.archivo; datos[`lora_${i + 1}_fuerza`] = l.fuerza; });
+    const armado = flujosLib.puentear(resuelto.flujo, resuelto.huecos, usadas.length);
+    const falta = flujosLib.marcadorFaltante(armado, usaFoto ? { ...datos, foto: 'x' } : datos);
+    if (falta) return fin('flujo-marcador', { extra: { marcador: falta } });
+    const retoque = caso === 'retoque' && resuelto.salidaMascara && config.chequeo_zona !== false;
+    const zonaFallida = (estado) => fin('zona-no-encontrada', { extra: { zona, cubre: estado === 'cubre' } });
     let id = null;
     // Desde que el flujo sale para /prompt, ComfyUI pudo haberlo aceptado aunque no conteste.
     let enviado = false;
@@ -162,8 +183,8 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
         const subida = await json('/upload/image', { method: 'POST', body: form, signal });
         datos.foto = subida.subfolder ? `${subida.subfolder}/${subida.name}` : subida.name;
       }
-      const flujo = aplicarMarcadores(leido.flujo, datos);
-      const salida = nodoDeSalida(flujo, config.nodo_salida);
+      const flujo = flujosLib.aplicarMarcadores(armado, datos);
+      const salida = resuelto.salida;
       enviado = true;
       const r = await post('/prompt', { prompt: flujo, client_id: `lagrange-${crypto.randomBytes(4).toString('hex')}` }, signal);
       if ((r.node_errors && Object.keys(r.node_errors).length) || r.error) {
@@ -177,9 +198,22 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
         if (ahora() > tope) { const c = await cancelarPrompt(id); return fin('tiempo', { colgado: c.colgado }); }
         const h = await json(`/history/${encodeURIComponent(id)}`, { signal });
         const entrada = h && h[id];
-        if (entrada && entrada.status && entrada.status.status_str === 'error') return fin('fallo-del-flujo');
+        if (entrada && entrada.status && entrada.status.status_str === 'error') {
+          const e = errorDe(entrada);
+          if (e) log(`[imagenes] ComfyUI falló en el nodo ${e.nodo} (${e.clase.replace(/[^A-Za-z0-9_ ]/g, '').slice(0, 40)}): ${sinRutas(e.mensaje).slice(0, 300)}`);
+          // Un retoque que falla después de la máscara: si la máscara quedó vacía, esa es la causa.
+          if (retoque) { const estado = await mirarMascara(entrada, resuelto.salidaMascara, signal); if (estado === 'vacia' || estado === 'cubre') return zonaFallida(estado); }
+          if (e && caso === 'retoque' && flujosLib.ramaDeMascara(resuelto.flujo, resuelto.salidaMascara).has(e.nodo)) return fin('mascara-fallo', { extra: { clase: e.clase } });
+          return fin('fallo-del-flujo');
+        }
         if (entrada && entrada.status && entrada.status.completed) { resultado = entrada; break; }
         await esperar(ESPERA_HISTORIA_MS);
+      }
+      let sinChequeoZona = false;
+      if (retoque) {
+        const estado = await mirarMascara(resultado, resuelto.salidaMascara, signal);
+        if (estado === 'vacia' || estado === 'cubre') return zonaFallida(estado);
+        if (estado !== 'ok') { sinChequeoZona = true; log('[imagenes] No se pudo leer la máscara del retoque: sigue sin chequeo de zona.'); }
       }
       const imagenes = salida && resultado.outputs && resultado.outputs[salida] ? resultado.outputs[salida].images || [] : [];
       const img = imagenes.find((i) => i.type === 'output');
@@ -192,7 +226,7 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
       const tipo = tipoDe(img.filename);
       const ruta = `${destino}.${extDe(tipo)}`;
       fs.writeFileSync(ruta, bytes);
-      return { ok: true, ruta, tipo, ancho, alto, semilla: seed, proveedor: 'comfyui', modelo: config.modelo, fotoIgnorada: Boolean(foto && !usaFoto) };
+      return { ok: true, ruta, tipo, ancho, alto, semilla: seed, proveedor: 'comfyui', modelo, fotoIgnorada: false, loras: usadas.map((l) => ({ clave: l.clave, fuerza: l.fuerza })), ...(sinChequeoZona ? { sinChequeoZona: true } : {}) };
     } catch (err) {
       // Cortado a mitad de un pedido: si ya estaba en la cola de ComfyUI, se corta ahí también.
       if (signal && signal.aborted) {
@@ -230,14 +264,30 @@ export function crearComfyui({ config, flujos, fetchImpl = globalThis.fetch, esp
     }
   }
 
-  return { id: 'comfyui', generar, dimensiones, cancelarPrompt };
+  return { id: 'comfyui', generar, cancelarPrompt };
 }
 
 /**
  * `POST /api/v2/imagenes:probar`: `GET /system_stats` (5 s). `{ ok, codigo, mensaje, vramLibre? }` con textos fijos.
- * La `url` tiene que ser loopback.
+ * La `url` tiene que ser loopback. FEAT-212 — Con `config` (la sección guardada) suma `catalogo` y `casos`, pidiendo el catálogo de nuevo.
  */
-export async function probarComfyui({ url, fetchImpl = globalThis.fetch }) {
+export async function probarComfyui({ url, fetchImpl = globalThis.fetch, config = null }) {
+  const r = await probarConexion({ url, fetchImpl });
+  if (!r.ok || !config) return r;
+  const catalogo = await catalogos.catalogoDe(url, { forzar: true, fetchImpl });
+  const casos = {};
+  for (const caso of casosLib.CASOS) {
+    const e = casosLib.estadoComfyui(config, caso, catalogo);
+    const faltan = [...e.faltan.archivos, ...e.faltan.nodos];
+    casos[caso] = {
+      estado: !catalogo ? 'sin-catalogo' : e.puede ? 'disponible' : 'faltan', faltan: e.faltan, faltanLoras: e.faltanLoras,
+      motivo: e.motivo && !faltan.length ? e.motivo : null, modelo: e.modelo, perfil: e.perfil.id, nombre: e.resuelto ? e.resuelto.nombre : null
+    };
+  }
+  return { ...r, catalogo: catalogos.publico(catalogo), casos };
+}
+
+async function probarConexion({ url, fetchImpl }) {
   if (!ajustesImagenes.esLoopback(url)) return { ok: false, codigo: 'no-loopback', mensaje: 'La URL de ComfyUI tiene que ser de esta máquina (127.0.0.1, localhost o [::1]).' };
   const control = new AbortController();
   const reloj = setTimeout(() => control.abort(), PRUEBA_MS);
@@ -255,4 +305,4 @@ export async function probarComfyui({ url, fetchImpl = globalThis.fetch }) {
   }
 }
 
-export { DIMENSIONES, dimensiones, aplicarMarcadores, nodoDeSalida };
+export const aplicarMarcadores = (valor, datos) => flujosLib.aplicarMarcadores(valor, datos);

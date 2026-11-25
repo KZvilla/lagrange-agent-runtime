@@ -1,0 +1,52 @@
+{
+  "id": "flux-fill",
+  "nombre": "Flux.1 Fill (retoque)",
+  "plantillas": "flux-fill",
+  "carga": {
+    "tipo": "unet",
+    "clip1": "clip_l.safetensors",
+    "clip2": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae": "ae.safetensors"
+  },
+  "prompt": {
+    "estilo": "natural",
+    "reglas": "This model repaints only the masked zone and sees the rest of the picture: describe what must appear inside the zone and how it blends with the surroundings (same light, same style).\nOne or two sentences. Do not describe the whole image.\nThere is no negative prompt. To remove something, describe what should be in its place (for example, \"bare brick wall\").",
+    "tope": 1800,
+    "negativo": "no",
+    "negativoPorDefecto": "",
+    "pesos": false
+  },
+  "muestreo": {
+    "pasos": 25,
+    "cfg": 1,
+    "guia": 30,
+    "sampler": "euler",
+    "scheduler": "normal",
+    "fuerza": 1
+  },
+  "medidas": {
+    "1:1": [
+      1024,
+      1024
+    ],
+    "3:4": [
+      896,
+      1152
+    ],
+    "4:3": [
+      1152,
+      896
+    ],
+    "16:9": [
+      1344,
+      768
+    ],
+    "9:16": [
+      768,
+      1344
+    ]
+  },
+  "casos": [
+    "retoque"
+  ]
+}

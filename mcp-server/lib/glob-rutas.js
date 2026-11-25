@@ -49,14 +49,31 @@ function aRegExp(patron, { insensible = process.platform === 'win32' } = {}) {
 /**
  * `crearMatcher(patrones)` → `(rutaRelativa) => boolean`. Patrones vacíos o
  * inválidos se ignoran; sin patrones, nada coincide.
+ *
+ * FEAT-212 — Con `{ absolutas: true }` recibe rutas absolutas: se compara sin la
+ * unidad ni la `/` inicial. Un patrón anclado (`/x/…` o con unidad) va contra la
+ * ruta entera; uno con `/` sin anclar, contra cada sufijo; uno sin `/`, contra
+ * el nombre. Sin la opción, nada cambia.
  */
 function crearMatcher(patrones, opciones = {}) {
+  const { absolutas = false, ...deRegExp } = opciones;
   const reglas = [];
   for (const patron of Array.isArray(patrones) ? patrones : []) {
-    const re = aRegExp(patron, opciones);
+    const crudo = String(patron || '').trim().replace(/\\/g, '/');
+    const texto = absolutas ? crudo.replace(/^[A-Za-z]:/, '') : crudo;
+    const re = aRegExp(texto, deRegExp);
     if (!re) continue;
-    const texto = String(patron).trim().replace(/\\/g, '/');
-    reglas.push({ re, porNombre: !texto.replace(/^\//, '').includes('/') && !texto.startsWith('/') });
+    const anclado = texto.startsWith('/');
+    reglas.push({ re, porNombre: !anclado && !texto.includes('/'), anclado });
+  }
+  if (absolutas) {
+    return (ruta) => {
+      const rel = String(ruta || '').replace(/\\/g, '/').replace(/^[A-Za-z]:/, '').replace(/^\/+/, '');
+      if (!rel) return false;
+      const partes = rel.split('/');
+      const sufijos = partes.map((_, k) => partes.slice(k).join('/'));
+      return reglas.some(({ re, porNombre, anclado }) => (porNombre ? re.test(partes[partes.length - 1]) : anclado ? re.test(rel) : sufijos.some((s) => re.test(s))));
+    };
   }
   return (ruta) => {
     const rel = String(ruta || '').replace(/\\/g, '/').replace(/^\.\//, '');

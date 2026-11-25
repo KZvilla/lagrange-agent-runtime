@@ -113,6 +113,12 @@ export function memoriaDe(m) {
 const MOTIVOS_RECHAZO_IMAGEN = new Set(['apagadas', 'hilo-externo', 'una-por-turno', 'pasada-descartada', 'aislado']);
 const ESTADOS_IMAGEN = new Set(['generando', 'lista', 'error', 'borrada']);
 const TOPE_IMAGENES = 4;
+const CASOS_IMAGEN = new Set(['nueva', 'variacion', 'retoque', 'edicion']);
+const lorasDe = (v) => {
+  const l = (Array.isArray(v) ? v : []).filter((x) => x && typeof x === 'object' && typeof x.clave === 'string' && x.clave && Number.isFinite(x.fuerza) && x.fuerza >= 0 && x.fuerza <= 2)
+    .slice(0, 4).map((x) => ({ clave: x.clave.slice(0, 30), fuerza: x.fuerza }));
+  return l.length ? l : undefined;
+};
 
 /** FEAT-210 §5 — Las imágenes de un turno, solo con los campos públicos del esquema (nunca rutas). */
 export function imagenesDe(lista) {
@@ -123,11 +129,15 @@ export function imagenesDe(lista) {
     .map((i) => sinIndefinidos({
       n: i.n, estado: i.estado, ancho: enteroPositivo(i.ancho), alto: enteroPositivo(i.alto),
       tipo: textoONulo(i.tipo, 32), proveedor: textoONulo(i.proveedor, 32), modelo: textoONulo(i.modelo, 200),
-      prompt: textoONulo(i.prompt, 900), negativo: textoONulo(i.negativo, 300),
+      prompt: textoONulo(i.prompt, 2000), negativo: textoONulo(i.negativo, 500),
       desdeFoto: typeof i.desdeFoto === 'boolean' ? i.desdeFoto : undefined,
       fotoIgnorada: typeof i.fotoIgnorada === 'boolean' ? i.fotoIgnorada : undefined,
       intento: enteroPositivo(i.intento), codigo: textoONulo(i.codigo, 40), mensaje: textoONulo(i.mensaje, 200),
-      creada: i.creada === undefined ? undefined : iso(i.creada), terminada: i.terminada === undefined ? undefined : iso(i.terminada)
+      creada: i.creada === undefined ? undefined : iso(i.creada), terminada: i.terminada === undefined ? undefined : iso(i.terminada),
+      // FEAT-212 — El caso hecho y el pedido, y lo que lo describe. Una que todavía no tiene caso los omite.
+      caso: CASOS_IMAGEN.has(i.caso) ? i.caso : undefined, casoPedido: CASOS_IMAGEN.has(i.casoPedido) ? i.casoPedido : undefined,
+      zona: textoONulo(i.zona, 120), instruccion: textoONulo(i.instruccion, 2000), perfil: textoONulo(i.perfil, 40),
+      loras: lorasDe(i.loras), sinChequeoZona: i.sinChequeoZona === true ? true : undefined
     }));
 }
 
