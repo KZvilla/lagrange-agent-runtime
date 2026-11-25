@@ -176,9 +176,100 @@ function fotoPermitida(ruta, { dirAdjuntos = null, env = process.env } = {}) {
   return null;
 }
 
-/** FEAT-215 — Una imagen que el alma puede ver con su visión: en SU carpeta de imágenes o en la de adjuntos. Sin base, no. */
-function rutaDeVista(clave, ruta, { dirAdjuntos = null, env = process.env } = {}) {
-  return (dirAdjuntos && rutaDentroDe(dirAdjuntos, ruta)) || rutaDentroDe(dirImagenes(clave, env), ruta);
+/**
+ * FEAT-215 — Una imagen que el alma puede ver con su visión: en SU carpeta de imágenes o, con `deOtras` (una foto que le mandó el
+ * usuario), en la de adjuntos o en la de otra alma. Sin carpeta de adjuntos, esa no cuenta.
+ */
+function rutaDeVista(clave, ruta, { dirAdjuntos = null, deOtras = false, env = process.env } = {}) {
+  const suya = rutaDentroDe(dirImagenes(clave, env), ruta);
+  if (suya || !deOtras) return suya;
+  const adjunta = dirAdjuntos && rutaDentroDe(dirAdjuntos, ruta);
+  if (adjunta) return adjunta;
+  for (const otra of claves(env)) {
+    const x = rutaDentroDe(dirImagenes(otra, env), ruta);
+    if (x) return x;
+  }
+  return null;
+}
+
+// FEAT-215 — El número de cada imagen, por alma: no se repite ni se reusa.
+const rutaContador = (clave, env) => path.join(dirImagenes(clave, env), 'contador.json');
+const numValido = (v) => Number.isInteger(v) && v > 0 && v < 1e9;
+function ultimoNumero(clave, env) {
+  let ultimo = 0;
+  try { const o = JSON.parse(fs.readFileSync(rutaContador(clave, env), 'utf8')); if (o && numValido(o.ultimo)) ultimo = o.ultimo; } catch {}
+  for (const e of listar(clave, env)) if (numValido(e.num) && e.num > ultimo) ultimo = e.num;
+  return ultimo;
+}
+/** El próximo número. Lanza si no se puede escribir. */
+function tomarNumero(clave, env = process.env) {
+  const ruta = rutaContador(clave, env);
+  fs.mkdirSync(path.dirname(ruta), { recursive: true });
+  return conLock(ruta, () => {
+    const num = ultimoNumero(clave, env) + 1;
+    escribirAtomico(ruta, `${JSON.stringify({ ultimo: num })}\n`);
+    return num;
+  });
+}
+/** Numera las listas que no tienen número, de la más vieja a la más nueva. Cuántas. */
+function numerar(clave, env = process.env) {
+  let n = 0;
+  for (const e of listar(clave, env)) {
+    if (!e.lista || numValido(e.num)) continue;
+    const num = tomarNumero(clave, env);
+    actualizar(clave, e.tareaId, e.n, (p) => (p && p.lista && !numValido(p.num) ? { ...p, num } : null), env);
+    n++;
+  }
+  return n;
+}
+/** La entrada lista de ese número, con su archivo. `null` si no está. */
+function porNumero(clave, num, env = process.env) {
+  for (const e of listar(clave, env)) {
+    if (e.num !== num || !e.lista) continue;
+    const ruta = archivoDe(clave, e, env);
+    if (ruta && fs.existsSync(ruta)) return { ...e, ruta };
+  }
+  return null;
+}
+/** La entrada de ese archivo, si es una imagen de esa alma. */
+function porRuta(clave, ruta, env = process.env) {
+  const real = rutaDentroDe(dirImagenes(clave, env), ruta);
+  if (!real) return null;
+  return listar(clave, env).find((e) => e.archivo && archivoDe(clave, e, env) === real) || null;
+}
+
+const ORIGENES = Object.freeze(['alma', 'version', 'variante']);
+const origenDe = (e) => (ORIGENES.includes(e.origen) ? e.origen : 'alma');
+/**
+ * FEAT-215 — Entre cuáles se elige: en el primero de esos hilos que tenga imágenes, las del último turno en que el alma pidió (desde la
+ * primera que pidió en él) y todo lo que vino después. `{ lista, elegida }`, de la más vieja a la más nueva, con su `ruta`.
+ */
+function candidatas(clave, hilos, env = process.env) {
+  const todas = listar(clave, env);
+  for (const hilo of hilos || []) {
+    if (!hilo) continue;
+    const suyas = todas.filter((e) => e.hilo === hilo && e.lista).map((e) => ({ ...e, ruta: archivoDe(clave, e, env) })).filter((e) => e.ruta && fs.existsSync(e.ruta));
+    if (!suyas.length) continue;
+    const ultima = [...suyas].reverse().find((e) => origenDe(e) === 'alma');
+    const desde = ultima ? suyas.findIndex((e) => e.tareaId === ultima.tareaId && origenDe(e) === 'alma') : 0;
+    const marcada = suyas.find((e) => e.elegida && !suyas.some((x) => String(x.creada || '') > String(e.elegida)));
+    return { lista: suyas.slice(desde), elegida: marcada || null };
+  }
+  return { lista: [], elegida: null };
+}
+
+/** FEAT-215 — Marca la que se elige en su hilo (una sola), o la desmarca. Las que cambiaron. */
+function elegir(clave, tareaId, n, si, env = process.env, ahora = new Date()) {
+  const e = leer(clave, tareaId, n, env);
+  if (!e || !e.lista || !e.hilo) return [];
+  const tocadas = [];
+  for (const x of listar(clave, env)) {
+    const esta = x.tareaId === tareaId && x.n === n;
+    if (x.hilo !== e.hilo || (esta ? Boolean(x.elegida) === Boolean(si) && !si : !x.elegida)) continue;
+    actualizar(clave, x.tareaId, x.n, (p) => (p ? { ...p, elegida: esta && si ? ahora.toISOString() : null } : null), env);
+    tocadas.push({ tareaId: x.tareaId, n: x.n, elegida: esta && Boolean(si) });
+  }
+  return tocadas;
 }
 
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -259,7 +350,8 @@ function vistasPendientes(clave, hilo, env = process.env, ahora = Date.now()) {
       const ruta = archivoDe(clave, e, env);
       return Boolean(ruta && fs.existsSync(ruta));
     })
-    .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden), ruta: archivoDe(clave, e, env) }));
+    .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden), ruta: archivoDe(clave, e, env),
+      num: numValido(e.num) ? e.num : null, origen: origenDe(e), deNum: numValido(e.deNum) ? e.deNum : null, baseNum: numValido(e.baseNum) ? e.baseNum : null }));
 }
 
 /** §2.1 — Marca entregadas las vistas que llevó un turno que terminó bien. */
@@ -277,5 +369,5 @@ function vaciarTmp(clave, env = process.env) {
 module.exports = {
   TOPE_POR_ALMA, RE_TAREA, dirImagenes, dirIndice, dirTmp, rutaIndice, rutaArchivo, leer, actualizar, borrar, listar, sha256,
   construirMapa, construirMapaTelegram, vistasPendientes, marcarEntregadas, vaciarTmp,
-  claves, rutaDentroDe, archivoDe, fotoPermitida, rutaDeVista, esExterna, porMensaje, anotarTelegram, ultimaImagen
+  claves, rutaDentroDe, archivoDe, fotoPermitida, rutaDeVista, tomarNumero, numerar, porNumero, porRuta, origenDe, candidatas, elegir, esExterna, porMensaje, anotarTelegram, ultimaImagen
 };

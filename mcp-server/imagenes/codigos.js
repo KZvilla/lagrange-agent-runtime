@@ -46,7 +46,10 @@ const MOTIVOS_RECHAZO = Object.freeze({
 const DETALLES_RECHAZO = Object.freeze({
   'sin-foto': 'no había ninguna foto de la que partir',
   'sin-anterior': 'no había ninguna imagen anterior de la que partir',
-  'no-pedida': 'el alma no la pidió en su respuesta'
+  'no-pedida': 'el alma no la pidió en su respuesta',
+  // FEAT-215
+  'sin-esa-imagen': 'no hay ninguna imagen con ese número',
+  'cual-version': 'hay varias versiones: decile sobre cuál'
 });
 
 /** Los nombres legibles de cada proveedor, para los mensajes. */

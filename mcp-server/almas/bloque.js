@@ -35,15 +35,21 @@ const MAX_PEDIDO = 300;
 // FEAT-210 — El pedido de una imagen: qué y para qué, en palabras del alma (el prompt técnico lo escribe el refinador).
 const MAX_IMAGEN = 600;
 const RE_IMAGEN = /^imagen(-desde-foto|-desde-anterior)?\s*:\s*(.+)$/i;
+// FEAT-215 — Una o varias suyas, por su número: `imagen-desde #7: …`, `imagen-desde #7 y #8: …`.
+const RE_IMAGEN_NUM = /^imagen-desde\s+((?:#?\d{1,6}(?:\s*(?:,|\by\b|\be\b|\band\b)\s*|\s*))+):\s*(.+)$/i;
+const MAX_BASES = 4;
 
 /** FEAT-210 — `{ texto, desdeFoto, desdeAnterior }` si la línea pide una imagen, o `null`. FEAT-213 — `desdeAnterior`: la última del hilo. */
 function parsearImagen(linea) {
-  const m = RE_IMAGEN.exec(linea);
+  const porNumero = RE_IMAGEN_NUM.exec(linea);
+  const m = porNumero ? [porNumero[0], '', porNumero[2]] : RE_IMAGEN.exec(linea);
   if (!m) return null;
   const texto = m[2].trim().replace(/\s+/g, ' ').slice(0, MAX_IMAGEN);
   if (!texto || esPlantilla(texto)) return null;
   const desde = (m[1] || '').toLowerCase();
-  return { texto, desdeFoto: desde === '-desde-foto', desdeAnterior: desde === '-desde-anterior' };
+  const nums = porNumero ? [...new Set(porNumero[1].match(/\d+/g).map(Number))].filter((n) => n > 0) : [];
+  if (porNumero && !nums.length) return null;
+  return { texto, desdeFoto: desde === '-desde-foto', desdeAnterior: desde === '-desde-anterior', ...(nums.length ? { nums } : {}) };
 }
 
 /**
@@ -52,7 +58,7 @@ function parsearImagen(linea) {
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false, pideImagen = false } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false, pideImagen = false, versiones = null } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
@@ -84,7 +90,16 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         'imagen-desde-foto: <qué cambiar de la foto que te mandó>   (solo si el usuario te mandó una foto)',
         // FEAT-213 — Solo si en este hilo hay una imagen suya de la que partir.
         ...(puedePedirAnterior ? ['imagen-desde-anterior: <qué cambiar de la última imagen que hiciste en este hilo>   (si te pide otra parecida o un cambio)'] : []),
+        // FEAT-215 — Por su número, y cuáles hay sin elegir.
+        ...(versiones && versiones.porNumero ? [`imagen-desde #7: <qué cambiar>   (una imagen tuya, por su número${versiones.varias ? '; con `#7 #8`, una edición por cada una' : ''})`] : []),
         'El prompt técnico lo escribe otro modelo; la imagen llega después de tu respuesta.',
+        ...(versiones && versiones.sinElegir.length > 1
+          ? [
+              '',
+              `La última imagen tiene varias versiones sin elegir: ${versiones.sinElegir.map((n) => `#${n}`).join(', ')}. Si el usuario pide un cambio y no dice sobre cuál,`,
+              `preguntale y no pidas la imagen. Si dice cuál, usá su número${versiones.varias ? '; si dice todas, todos' : ''}.`
+            ]
+          : versiones && versiones.elegida ? ['', `El usuario eligió partir de la #${versiones.elegida}: \`imagen-desde-anterior\` usa esa.`] : []),
         // Medido (2026-11-25, deepseek-v4.1-flash): anunciaba la imagen y omitía la línea en 6 de 21 intentos; con esto, en 0 de 16.
         ...(pideImagen
           ? [
@@ -258,4 +273,4 @@ function extraerBloqueCrudo(textoCrudo, { conTema = false } = {}) {
   return { respuesta, operaciones, pedido, imagenPedida, imagenRechazos };
 }
 
-module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, MAX_IMAGEN, ENCABEZADO_CHARLA, PEDIDOS, instruccionDeCierre, extraerBloque, parsearImagen };
+module.exports = { APERTURA, CIERRE, MAX_OPERACIONES, MAX_TEXTO, MAX_IMAGEN, MAX_BASES, ENCABEZADO_CHARLA, PEDIDOS, instruccionDeCierre, extraerBloque, parsearImagen };

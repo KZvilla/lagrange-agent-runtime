@@ -102,20 +102,26 @@ export function memoriaDe(m) {
     tablero: tb,
     // FEAT-210 — Lo que pidió de imagen, o el motivo por el que no; y si la foto era segura.
     imagen: m.imagen && typeof m.imagen === 'object' && !Array.isArray(m.imagen)
-      ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null, ...(typeof m.imagen.detalle === 'string' && m.imagen.detalle ? { detalle: m.imagen.detalle.slice(0, 40) } : {}) }
+      ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null, ...(typeof m.imagen.detalle === 'string' && m.imagen.detalle ? { detalle: m.imagen.detalle.slice(0, 40) } : {}), ...numerosDe('desde', m.imagen.desde, 4), ...numerosDe('candidatas', m.imagen.candidatas, 8) }
       : undefined,
     fotoSegura: m.fotoSegura === 'marcada' || m.fotoSegura === 'reconocida' ? m.fotoSegura : undefined,
-    vision: m.vision === 'propia' || m.vision === 'descripcion' ? m.vision : undefined
+    vision: ['propia', 'hilo', 'descripcion'].includes(m.vision) ? m.vision : undefined
   });
   return Object.keys(salida).length ? salida : null;
 }
 
+/** FEAT-215 — Una lista de números de imagen, si hay alguno. */
+function numerosDe(campo, v, tope) {
+  const nums = (Array.isArray(v) ? v : []).filter((n) => Number.isInteger(n) && n > 0).slice(0, tope);
+  return nums.length ? { [campo]: nums } : {};
+}
 // FEAT-210 — Los motivos de rechazo de una imagen y los estados de una entrada (los de `codigos.js` y `tareas.js`).
 const MOTIVOS_RECHAZO_IMAGEN = new Set(['apagadas', 'hilo-externo', 'una-por-turno', 'pasada-descartada', 'aislado']);
 const ESTADOS_IMAGEN = new Set(['generando', 'lista', 'error', 'borrada']);
 const TOPE_IMAGENES = 4;
 const CASOS_IMAGEN = new Set(['nueva', 'variacion', 'retoque', 'edicion']);
 const CAMBIOS_IMAGEN = new Set(['leve', 'medio', 'fuerte']);
+const ORIGENES_IMAGEN = new Set(['alma', 'version', 'variante']);
 const lorasDe = (v) => {
   const l = (Array.isArray(v) ? v : []).filter((x) => x && typeof x === 'object' && typeof x.clave === 'string' && x.clave && Number.isFinite(x.fuerza) && x.fuerza >= 0 && x.fuerza <= 2)
     .slice(0, 4).map((x) => ({ clave: x.clave.slice(0, 30), fuerza: x.fuerza }));
@@ -141,7 +147,10 @@ export function imagenesDe(lista) {
       zona: textoONulo(i.zona, 120), instruccion: textoONulo(i.instruccion, 2000), perfil: textoONulo(i.perfil, 40),
       loras: lorasDe(i.loras), sinChequeoZona: i.sinChequeoZona === true ? true : undefined,
       // FEAT-213 — Cuánto cambia una variación y la fuerza que llevó.
-      cambio: CAMBIOS_IMAGEN.has(i.cambio) ? i.cambio : undefined, fuerza: Number.isFinite(i.fuerza) && i.fuerza >= 0 && i.fuerza <= 1 ? i.fuerza : undefined
+      cambio: CAMBIOS_IMAGEN.has(i.cambio) ? i.cambio : undefined, fuerza: Number.isFinite(i.fuerza) && i.fuerza >= 0 && i.fuerza <= 1 ? i.fuerza : undefined,
+      // FEAT-215 — Su número, de dónde salió y si es de la que se parte.
+      num: enteroPositivo(i.num), origen: ORIGENES_IMAGEN.has(i.origen) ? i.origen : undefined, deNum: enteroPositivo(i.deNum), baseNum: enteroPositivo(i.baseNum),
+      elegida: i.elegida === true ? true : undefined
     }));
 }
 

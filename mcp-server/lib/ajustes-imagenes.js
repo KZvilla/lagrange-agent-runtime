@@ -32,8 +32,10 @@ const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_versi
   // FEAT-213 — Partir de una imagen.
   'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica',
   // FEAT-215 — El alma ve con la visión de su modelo.
-  'vision_propia']);
-const CAMPOS = Object.freeze([...BOOLEANOS, 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+  'vision_propia', 'variar', 'partir', 'varias_bases']);
+/** FEAT-215 — Con varias versiones sin elegir. */
+const VARIAS_VERSIONES = Object.freeze(['preguntar', 'ultima']);
+const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
 const MAX_LORAS = 20;
@@ -73,6 +75,10 @@ function defectos() {
     foto_cuenta: true,
     fuerza_automatica: true,
     vision_propia: true,
+    variar: true,
+    partir: true,
+    varias_bases: true,
+    varias_versiones: 'preguntar',
     tope_por_alma: RANGOS.tope_por_alma.defecto,
     perfiles_propios: {},
     comfyui: {
@@ -208,6 +214,10 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
     if (crudo[k] === undefined) continue;
     if (typeof crudo[k] === 'boolean') d[k] = crudo[k];
     else avisos.push(`imagenes.${k} tiene que ser true o false; se usa ${d[k]}`);
+  }
+  if (crudo.varias_versiones !== undefined && crudo.varias_versiones !== null) {
+    if (VARIAS_VERSIONES.includes(crudo.varias_versiones)) d.varias_versiones = crudo.varias_versiones;
+    else avisos.push(`imagenes.varias_versiones tiene que ser ${VARIAS_VERSIONES.join(' o ')}; se usa ${d.varias_versiones}`);
   }
   if (crudo.tope_por_alma !== undefined && crudo.tope_por_alma !== null) {
     d.tope_por_alma = rangoTolerante(crudo.tope_por_alma, 'tope_por_alma');
@@ -416,6 +426,12 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     if (pedido[k] === null || pedido[k] === '') { delete nuevo[k]; continue; }
     if (typeof pedido[k] !== 'boolean') throw new ErrorAjuste(`imagenes.${k} tiene que ser true o false`, `imagenes.${k}`);
     nuevo[k] = pedido[k];
+  }
+  if (pedido.varias_versiones !== undefined) {
+    const v = pedido.varias_versiones;
+    if (v === null || v === '') delete nuevo.varias_versiones;
+    else if (!VARIAS_VERSIONES.includes(v)) throw new ErrorAjuste(`Con varias versiones: ${VARIAS_VERSIONES.join(' o ')}`, 'imagenes.varias_versiones');
+    else nuevo.varias_versiones = v;
   }
   if (pedido.tope_por_alma !== undefined) {
     const v = pedido.tope_por_alma;
