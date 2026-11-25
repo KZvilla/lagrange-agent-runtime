@@ -8,7 +8,7 @@
  * respuesta devuelve `null`. `enCache` mira sin pedir nada.
  */
 
-const ajustes = () => require('../lib/ajustes-imagenes.js');
+const { esLoopback } = require('./loopback.js');
 
 const DURA_OK_MS = 5 * 60 * 1000;
 const DURA_FALLO_MS = 30 * 1000;
@@ -86,7 +86,7 @@ async function pedir(url, { fetchImpl, tiempoMs, topeBytes }) {
 /** El catálogo de esa URL, de la caché o con un pedido. `forzar` ignora la caché. `null` si no hay catálogo. */
 async function catalogoDe(url, { forzar = false, fetchImpl = globalThis.fetch, ahora = () => Date.now(), tiempoMs = TIEMPO_MS, topeBytes = TOPE_BYTES } = {}) {
   const u = normalizarUrl(url);
-  if (!ajustes().esLoopback(u)) return null;
+  if (!esLoopback(u)) return null;
   let e = porUrl.get(u);
   if (!e) { e = { cache: null, enVuelo: null }; porUrl.set(u, e); }
   if (e.enVuelo) return e.enVuelo;

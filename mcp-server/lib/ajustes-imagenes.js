@@ -20,6 +20,7 @@ const perfiles = require('../imagenes/perfiles.js');
 const flujosLib = require('../imagenes/flujos.js');
 const migracion = require('../imagenes/migracion.js');
 const catalogos = require('../imagenes/catalogo.js');
+const { esLoopback } = require('../imagenes/loopback.js');
 // La hoja, no ajustes-general.js: config.js lee esta sección y ajustes-general.js lee config.js.
 const { ErrorAjuste } = require('./error-ajuste.js');
 
@@ -69,15 +70,6 @@ function defectos() {
 }
 
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
-
-/** ¿Es una URL `http(s)` de loopback (127.0.0.1, localhost o [::1])? */
-function esLoopback(url) {
-  let u;
-  try { u = new URL(String(url)); } catch { return false; }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-  if (u.username || u.password) return false;
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
-}
 
 function esHttps(url) {
   try { const u = new URL(String(url)); return u.protocol === 'https:' && !u.username && !u.password; } catch { return false; }
