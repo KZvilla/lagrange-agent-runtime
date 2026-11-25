@@ -192,6 +192,10 @@ async function main() {
     check('un perfil desconocido: 400', Boolean(e400({ comfyui: { flujos: { nadie: { nueva: { archivo: ok } } } } })));
     check('un caso desconocido: 400', Boolean(e400({ comfyui: { flujos: { sdxl: { rara: { archivo: ok } } } } })));
     check('varios SaveImage sin salida: 400', /varios SaveImage/.test(e400({ comfyui: { flujos: { sdxl: { nueva: { archivo: flujo('dos.json', { salidas: ['9', '12'] }) } } } } })?.message || ''));
+    const dosFicha = flujo('dos-ficha.json', { salidas: ['9', '12'] });
+    fs.writeFileSync(F.rutaDeFicha(dosFicha), JSON.stringify({ salida: '12' }));
+    check('…ni con la de la ficha: la salida es la de la entrada', /varios SaveImage/.test(e400({ comfyui: { flujos: { sdxl: { nueva: { archivo: dosFicha } } } } })?.message || ''));
+    check('…y tiene que ser la de la ficha', /ficha/.test(e400({ comfyui: { flujos: { sdxl: { nueva: { archivo: dosFicha, salida: '9' } } } } })?.message || ''));
     check('…con salida, sí', A.aplicarImagenes({}, { comfyui: { flujos: { sdxl: { nueva: { archivo: flujo('dos.json', { salidas: ['9', '12'] }), salida: '12' } } } } }).imagenes.comfyui.flujos.sdxl.nueva.salida === '12');
     check('una salida que no es SaveImage: 400', Boolean(e400({ comfyui: { flujos: { sdxl: { nueva: { archivo: ok, salida: '4' } } } } })));
     check('un flujo unet en un perfil checkpoint: 400', /carga del flujo/.test(e400({ comfyui: { flujos: { sdxl: { nueva: { archivo: flujo('un.json', { loader: 'UNETLoader' }) } } } } })?.message || ''));
@@ -199,6 +203,11 @@ async function main() {
     fs.rmSync(path.join(dir, 'propio.json'));
     check('un flujo guardado que se borró no traba el mismo envío', A.aplicarImagenes(r, { comfyui: { flujos: { 'mi-sdxl': { nueva: { archivo: barras(ok), salida: '9' } } }, loras_activos: false } }).imagenes.comfyui.loras_activos === false);
     const im = A.leerSeccion(r).imagenes;
+    flujo('propio.json', { salidas: [] });
+    const sinSalida = A.leerSeccion(r).imagenes;
+    check('cambiado en el disco sin SaveImage: ok false', F.resolverFlujo(sinSalida, P.perfil(sinSalida, 'mi-sdxl'), 'nueva').motivo === 'el flujo no tiene SaveImage');
+    fs.rmSync(path.join(dir, 'propio.json'));
+    check('null y vacío vuelven al defecto', (() => { const x = A.aplicarImagenes({ imagenes: { refinar: false, comfyui: { chequeo_zona: false, loras_activos: false, liberar_gpu: false, tiempo_s: 60 } } }, { refinar: '', comfyui: { chequeo_zona: '', loras_activos: null, liberar_gpu: '', tiempo_s: '' } }).imagenes || {}; return x.refinar === undefined && x.comfyui === undefined; })());
     check('…y al resolverlo dice que falta', F.resolverFlujo(im, P.perfil(im, 'mi-sdxl'), 'nueva').motivo === 'el archivo del flujo no existe');
     // Dos Kontext: el del plugin (unet) y uno propio checkpoint, cada uno con su flujo.
     const { id: _, ...kon } = copia(P.PERFILES.get('flux-kontext'));
@@ -300,7 +309,11 @@ async function main() {
     fs.rmSync(`${ruta}.lock`);
     check('la cola (disponible.leerImagenes)', pide(disponible.leerImagenes({ homeDir: home })));
     check('el GET de Ajustes', pide(antes.imagenes) && antes.imagenes.comfyui.pasos === 21 && antes.imagenes.comfyui.flujo_txt2img === barras(ck));
-    check('la config del MCP usa la misma lectura', fs.readFileSync(path.join(RAIZ, 'mcp-server/lib/config.js'), 'utf8').includes('.leerSeccion(parsed)'));
+    const deEntorno = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home; process.env.USERPROFILE = home;
+    const delMcp = require('../mcp-server/lib/config.js').loadConfig(home).imagenes;
+    for (const [k, v] of Object.entries(deEntorno)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    check('la config del MCP lee lo migrado', pide(delMcp));
     // Un flujo editado entre dos lecturas se vuelve a leer.
     flujo('arch.json', { salidas: ['33'] });
     check('un flujo legado editado se vuelve a leer', disponible.leerImagenes({ homeDir: home }).comfyui.flujos.sdxl.nueva.salida === '33');
@@ -373,6 +386,8 @@ async function main() {
     check('agy en manual y los remotos quedan afuera con su código', (() => { const x = C.disponiblesDe({ ...d, orden: ['openai', 'antigravity', 'comfyui'] }, { manual: () => true }).nueva; return x.proveedores.join() === 'comfyui' && JSON.stringify(x.afuera) === JSON.stringify([{ proveedor: 'openai', codigo: 'no-implementado' }, { proveedor: 'antigravity', codigo: 'manual' }]); })());
     check('el retoque sin sus nodos: faltan', (() => { const e = C.estadoComfyui(d, 'retoque', catalogo()); return !e.puede && e.faltan.nodos.includes('Florence2Run') && e.faltan.nodos.includes('InpaintCropImproved'); })());
     check('retoque o máscara en no', !C.estaDisponible(disp({ ...d, comfyui: { ...d.comfyui, retoque: 'no' } }, { desdeFoto: true }), 'retoque') && !C.estaDisponible(disp({ ...d, comfyui: { ...d.comfyui, mascara: 'no' } }, { desdeFoto: true }), 'retoque'));
+    const noFill = C.estadoComfyui({ ...d, comfyui: { ...d.comfyui, retoque: 'fill', modelo_retoque: 'sd_xl_base_1.0.safetensors' } }, 'retoque');
+    check('retoque fill con un modelo que no es Fill: no se puede', !noFill.puede && noFill.motivo === 'el modelo de retoque no es un Fill');
     check('retoque con SDXL anda con modelo_retoque vacío', C.estaDisponible(disp(d, { desdeFoto: true }), 'retoque') && disp(d, { desdeFoto: true }).retoque.modelo === A.MODELO_POR_DEFECTO);
     const tres = { ...d, comfyui: { ...d.comfyui, modelo_edicion: 'flux1-kontext.safetensors', modelo_retoque: 'flux1-fill.safetensors', retoque: 'fill' } };
     const t3 = disp(tres, { desdeFoto: true });
@@ -458,6 +473,9 @@ async function main() {
       check('lleva x-opencode-session', Boolean(h['x-opencode-session']), JSON.stringify(Object.keys(h)));
       check('un prompt de 1800 entra entero', r.prompt.length === 1800 && r.refinado === true);
     } else check('el pedido a Go salió', false, JSON.stringify(r));
+    let aGo = 0;
+    const sinConsigna = await vision.llamar({ partes: { texto: 'x' }, modo: 'refinar', leer: async () => ({ key: 'k' }), fetchImpl: async () => { aGo++; return new Response('{}'); } });
+    check('refinar sin consigna no llama a Go', sinConsigna.ok === false && Boolean(sinConsigna.motivo) && aGo === 0);
     check('el mediador sigue cortando en 1500', limpiarSalida('x'.repeat(2000)).texto.length === 1500 && limpiarSalida('x'.repeat(2000), 2000).texto.length === 2000);
   });
 
@@ -473,6 +491,7 @@ async function main() {
     const l = catalogos.leerObjectInfo(info);
     check('las dos formas del combo', l.checkpoints.length === 2 && l.unets[0].valor === 'u.safetensors');
     check('valor tal cual, etiqueta con la carpeta', l.checkpoints[1].valor === 'SDXL\\a.safetensors' && l.checkpoints[1].etiqueta === 'SDXL/a.safetensors');
+    check('el mismo archivo con `/` o `\\`', P.enLista(l.checkpoints, 'SDXL/a.safetensors') === 'SDXL\\a.safetensors' && P.cargasEnCatalogo('SDXL/a.safetensors', l).checkpoint && P.enLista(l.checkpoints, 'b.safetensors') === null);
     check('los LoRAs de las dos clases, sin repetir', l.loras.map((x) => x.valor).join() === 'l1,l2,l3' && l.clips.length === 2);
     const url = 'http://127.0.0.1:8188';
     let pedidos = 0; let modo = 'ok'; let t = 1000;

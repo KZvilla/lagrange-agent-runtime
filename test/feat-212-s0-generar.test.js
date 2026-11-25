@@ -146,6 +146,10 @@ async function main() {
     check('con catálogo, uno que no está se saltea y se avisa', r2.loras.length === 1 && r2.loras[0].clave === 'c1' && g2.grafo()[101].inputs.lora_name === 'l1.safetensors' && logs.some((l) => l.includes('c0')));
     const g3 = comfyFalso();
     await generar(config(), 'nueva', 'sdxl', { loras: L(2) }, g3);
+    const g4 = comfyFalso();
+    const win = { checkpoints: [{ valor: 'SDXL\\m.safetensors' }], unets: [], clips: [], vaes: [], loras: [{ valor: 'a\\l0.safetensors' }] };
+    const r4 = await generar(config(), 'nueva', 'sdxl', { modelo: 'SDXL/m.safetensors', loras: [{ clave: 'c0', archivo: 'a/l0.safetensors', fuerza: 1 }] }, g4, () => {}, win);
+    check('con `/` en Ajustes va el nombre exacto que lista ComfyUI', r4.ok && g4.grafo()[4].inputs.ckpt_name === 'SDXL\\m.safetensors' && Object.values(g4.grafo()).some((x) => x.inputs.lora_name === 'a\\l0.safetensors'));
     check('sin catálogo no se saltea ninguno', Object.values(g3.grafo()).filter((x) => x.class_type === 'LoraLoader').length === 2);
   });
 
@@ -216,6 +220,8 @@ async function main() {
     const masc = await ret(comfyFalso({ conMascara: false, error: { node_id: '31', node_type: 'Florence2Run', exception_message: 'the hat https://x.y/?t=abc C:\\Users\\yo\\m.pt' } }), d, (l) => l2.push(l));
     check('un fallo en la rama de máscara: mascara-fallo', masc.codigo === 'mascara-fallo' && codigos.mensajeDe(masc.codigo, masc.extra) === 'Falló el nodo de máscara (Florence2Run).');
     check('…y el detalle no viaja; en el log, sin rutas', !JSON.stringify(masc).includes('http') && l2.some((l) => l.includes('Florence2Run')) && !l2.some((l) => l.includes('Users')));
+    const sinChequeo = await ret(comfyFalso({ conMascara: false, error: { node_id: '31', node_type: 'Florence2Run' } }), config({}, { chequeo_zona: false }));
+    check('con chequeo_zona apagado, la rama de máscara también da mascara-fallo', sinChequeo.codigo === 'mascara-fallo');
     check('el propio nodo de salida de la máscara', (await ret(comfyFalso({ conMascara: false, error: { node_id: '21', node_type: 'PreviewImage' } }))).codigo === 'mascara-fallo');
     check('un fallo en el sampler: fallo-del-flujo', (await ret(comfyFalso({ error: { node_id: '3', node_type: 'KSampler' } }))).codigo === 'fallo-del-flujo');
     check('cargar la foto no es la máscara', (await ret(comfyFalso({ conMascara: false, error: { node_id: '10', node_type: 'LoadImage' } }))).codigo === 'fallo-del-flujo');
@@ -389,6 +395,15 @@ async function main() {
     await envia({ leerConfig: leerCfg({ reconocer_telegram: false }) });
     await envia({ leerConfig: leerCfg({ reconocer_propias: false }) });
     check('apagado al mandar: no baja nada', bajadas.length === 0);
+    // La ventana de la descarga: hasta que termina, la foto que vuelve es de afuera.
+    let sol; const esp = new Promise((r) => { sol = r; });
+    const OTRO = Buffer.from('otro jpeg'); const jpg2 = path.join(tmp, 'vuelta2.jpg'); fs.writeFileSync(jpg2, OTRO);
+    const lenta = envia({ descargar: async () => { await esp; return OTRO; } });
+    check('un reenvío antes de que termine la descarga es de afuera', bot.fotoDelTurno({ ruta: jpg2 }, config(), rec).segura === false);
+    sol();
+    check('…y cuando termina se reconoce', await lenta === true && bot.fotoDelTurno({ ruta: jpg2 }, config(), rec).origen === 'reconocida');
+    await envia();
+    bajadas.length = 0;
     for (const ph of [undefined, []]) { api.photo = ph; await envia(); }
     check('sin photo no baja y /otra sigue andando', bajadas.length === 0 && bot.imagenDelMensaje('x', 1, 1)?.n === 1);
     api.photo = [{ file_id: 'f', width: 1, height: 1 }];
@@ -435,6 +450,13 @@ async function main() {
     await termina(id3, 2); await hasta(() => fabrica.length === 2);
     check('/otra crea el envío con la clave y la n nueva', JSON.stringify(fabrica[0]) === JSON.stringify([clave, 2]) && fabrica[1] === indice.leer(clave, id3, 2).telegram.envio);
     check('el cuerpo con tope corta', await bot.leerConTope(new Response('x'.repeat(50)), 10).then(() => false, () => true) && (await bot.leerConTope(new Response('hola'), 10)).toString() === 'hola');
+    const nodo = armar({ provs: { comfyui: prov('comfyui') } });
+    nodo.alArrancar([]);
+    const construir = indice.construirMapaTelegram; let leyo = 0;
+    indice.construirMapaTelegram = (...a) => { leyo++; return construir(...a); };
+    nodo.reconocerTelegram(JPEG);
+    indice.construirMapaTelegram = construir;
+    check('un nodo sin almas no lee el directorio por el sha de Telegram', leyo === 0);
     const fuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge/bot.js'), 'utf8');
     check('la descarga dura 10 s y pesa 10 MB', /AbortSignal\.timeout\(10 \* 1000\)/.test(fuente) && /TOPE_DESCARGA_FOTO = 10 \* 1024 \* 1024/.test(fuente));
   });

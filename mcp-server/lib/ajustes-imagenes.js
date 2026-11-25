@@ -369,6 +369,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
   const nuevo = { ...previo };
   for (const k of BOOLEANOS) {
     if (pedido[k] === undefined) continue;
+    if (pedido[k] === null || pedido[k] === '') { delete nuevo[k]; continue; }
     if (typeof pedido[k] !== 'boolean') throw new ErrorAjuste(`imagenes.${k} tiene que ser true o false`, `imagenes.${k}`);
     nuevo[k] = pedido[k];
   }
@@ -435,12 +436,12 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     }
     for (const k of ['chequeo_zona', 'loras_activos', 'liberar_gpu']) {
       if (c[k] === undefined) continue;
-      if (c[k] === null && k !== 'liberar_gpu') { quitar(k); continue; }
+      if (c[k] === null || c[k] === '') { quitar(k); continue; }
       if (typeof c[k] !== 'boolean') throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser true o false`, `imagenes.comfyui.${k}`);
       sal[k] = c[k];
     }
     if (c.loras !== undefined) {
-      if (c.loras === null) quitar('loras');
+      if (c.loras === null || c.loras === '') quitar('loras');
       else {
         const v = validarLoras(c.loras);
         if (!v.ok) throw new ErrorAjuste(`imagenes.comfyui.${v.campo} ${v.motivo}`, `imagenes.comfyui.${v.campo}`);
@@ -450,7 +451,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     for (const k of NUMEROS) {
       const rg = RANGOS[k];
       if (c[k] === undefined) continue;
-      if (c[k] === null) { quitar(k); continue; }
+      if (c[k] === null || c[k] === '') { quitar(k); continue; }
       if (!Number.isInteger(c[k]) || c[k] < rg.min || c[k] > rg.max) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser un entero de ${rg.min} a ${rg.max}`, `imagenes.comfyui.${k}`);
       sal[k] = c[k];
     }
@@ -503,7 +504,6 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
           if (!l.ok) throw new ErrorAjuste(`El flujo de ${caso}: ${l.motivo}`, `${campo}.archivo`);
           let salida = r.entrada.salida;
           if (salida && !l.salidas.includes(salida)) throw new ErrorAjuste('El nodo de salida tiene que ser un SaveImage del flujo', `${campo}.salida`);
-          if (!salida && l.salidas.length > 1 && l.ficha.salida) salida = l.ficha.salida;
           if (!salida && l.salidas.length > 1) throw new ErrorAjuste('El flujo tiene varios SaveImage: elegí el nodo de salida', `${campo}.salida`);
           if (!salida) salida = l.salidas[0];
           if (l.ficha.salida && l.ficha.salida !== salida) throw new ErrorAjuste('La salida no es la de la ficha del flujo', `${campo}.salida`);

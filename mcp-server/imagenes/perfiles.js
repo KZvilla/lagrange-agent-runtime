@@ -155,9 +155,20 @@ function idPorNombre(modelo, carga) {
   return 'sdxl';
 }
 
+/**
+ * El `valor` exacto con que ComfyUI lista un archivo, o `null`. En Windows lo lista con `\` (`SDXL\a.safetensors`) y la
+ * pestaña lo muestra con `/`: las dos formas son el mismo archivo.
+ */
+function enLista(lista, nombre) {
+  if (!Array.isArray(lista) || typeof nombre !== 'string' || !nombre) return null;
+  const igual = (v) => v.replace(/\\/g, '/');
+  const a = lista.find((x) => x.valor === nombre) || lista.find((x) => igual(x.valor) === igual(nombre));
+  return a ? a.valor : null;
+}
+
 /** En qué listas del catálogo está el archivo: `{ checkpoint, unet }`. */
 function cargasEnCatalogo(modelo, catalogo) {
-  const en = (lista) => Array.isArray(lista) && lista.some((a) => a.valor === modelo);
+  const en = (lista) => Boolean(enLista(lista, modelo));
   return { checkpoint: Boolean(catalogo) && en(catalogo.checkpoints), unet: Boolean(catalogo) && en(catalogo.unets) };
 }
 
@@ -188,5 +199,5 @@ function perfilDe(imagenes, modelo, catalogo = null, { cargaSugerida = null } = 
 
 module.exports = {
   FAMILIAS, CARGA_DE_FAMILIA, CASOS, PROPORCIONES, ESTILOS, NEGATIVOS, RESERVADAS, RE_ID, MAX_PROPIOS, PERFILES,
-  formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, cargasEnCatalogo, pareceUnet, perfilDe
+  formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe
 };

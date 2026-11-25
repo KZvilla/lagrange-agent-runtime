@@ -26,6 +26,7 @@ const perezoso = (ruta) => { let m = null; return new Proxy({}, { get: (_, k) =>
 const ajustesImagenes = perezoso('../../mcp-server/lib/ajustes-imagenes.js');
 const flujosLib = perezoso('../../mcp-server/imagenes/flujos.js');
 const casosLib = perezoso('../../mcp-server/imagenes/casos.js');
+const perfilesLib = perezoso('../../mcp-server/imagenes/perfiles.js');
 const catalogos = perezoso('../../mcp-server/imagenes/catalogo.js');
 
 const ESPERA_HISTORIA_MS = 1000;
@@ -151,11 +152,12 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     if (usaFoto && !foto) return fin('error');
     const resuelto = resolverFlujo(seccion, perfil, caso);
     if (!resuelto.ok) return fin('fallo-del-flujo', { detalle: resuelto.motivo });
+    const catalogo = catalogoDe(base);
     const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
     const m = perfil.muestreo;
     const datos = {
       prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : m.fuerza,
-      ...casosLib.valoresDeCarga(modelo, perfil)
+      ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
     };
     if (caso === 'retoque') datos.zona = zona;
     if (caso === 'edicion') {
@@ -164,11 +166,11 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
       if (!resuelto.marcadores.includes('instruccion')) datos.prompt = instruccion;
     }
     // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
-    const catalogo = catalogoDe(base);
     const usadas = [];
     for (const l of loras.slice(0, resuelto.huecos.length)) {
-      if (catalogo && !catalogo.loras.some((a) => a.valor === l.archivo)) { log(`[imagenes] El LoRA "${l.clave}" no está en ComfyUI; se saltea.`); continue; }
-      usadas.push(l);
+      const archivo = catalogo ? perfilesLib.enLista(catalogo.loras, l.archivo) : l.archivo;
+      if (!archivo) { log(`[imagenes] El LoRA "${l.clave}" no está en ComfyUI; se saltea.`); continue; }
+      usadas.push({ ...l, archivo });
     }
     usadas.forEach((l, i) => { datos[`lora_${i + 1}`] = l.archivo; datos[`lora_${i + 1}_fuerza`] = l.fuerza; });
     const armado = flujosLib.puentear(resuelto.flujo, resuelto.huecos, usadas.length);

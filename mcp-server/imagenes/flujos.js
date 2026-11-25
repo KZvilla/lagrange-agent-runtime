@@ -200,6 +200,8 @@ function leerFlujo(ruta, { caso = 'nueva', denyPaths = null } = {}) {
 
 /** El archivo de la plantilla del plugin para un perfil y un caso, o `{ ok: false, motivo }`. */
 function plantillaDe(imagenes, perfil, caso) {
+  // Con `fill`, el modelo de retoque tiene que ser un Fill: otro repintaría con Crop and Stitch sin que nadie lo pidiera.
+  if (caso === 'retoque' && imagenes.comfyui.retoque === 'fill' && perfil.plantillas !== 'flux-fill') return { ok: false, motivo: 'el modelo de retoque no es un Fill' };
   const nombre = caso === 'retoque' ? `retoque-${imagenes.comfyui.mascara}` : caso;
   const ruta = path.join(DIR_PLANTILLAS, perfil.plantillas, `${nombre}.json`);
   if (!fs.existsSync(ruta)) return { ok: false, motivo: 'no hay plantilla para este caso' };
@@ -246,12 +248,13 @@ function resolverFlujo(imagenes, perfil, caso) {
   visto.huecos = l.ficha.huecos;
   let salida = l.ficha.salida;
   if (propio) {
+    // La salida tiene una sola fuente: la entrada. La ficha solo se contrasta.
     if (propio.salida) {
       if (!l.salidas.includes(propio.salida)) return mal('el nodo de salida no es un SaveImage del flujo', visto);
       if (l.ficha.salida && l.ficha.salida !== propio.salida) return mal('la ficha no coincide con el flujo', visto);
       salida = propio.salida;
     } else if (l.salidas.length === 1) salida = l.salidas[0];
-    else if (!salida) return mal('varios SaveImage sin salida', visto);
+    else return mal('varios SaveImage sin salida', visto);
     if (!cargaCoincide(l.flujo, perfil.carga.tipo)) return mal('la carga del flujo no coincide con el perfil', { ...visto, salida });
   }
   return { ok: true, ...vacio, ...base, ...visto, flujo: l.flujo, ficha: l.ficha, salida, salidaMascara: l.ficha.salidaMascara, motivo: null };
@@ -333,14 +336,14 @@ function faltantes(resuelto, valores, catalogo, loras = []) {
   const mirar = (marcadores, lista) => {
     for (const m of marcadores) {
       const v = valores[m];
-      if (typeof v === 'string' && v && !lista.some((a) => a.valor === v) && !archivos.includes(v)) archivos.push(v);
+      if (typeof v === 'string' && v && !perfiles.enLista(lista, v) && !archivos.includes(v)) archivos.push(v);
     }
   };
   mirar(iny.checkpoints, catalogo.checkpoints);
   mirar(iny.unets, catalogo.unets);
   mirar(iny.clips, catalogo.clips);
   mirar(iny.vaes, catalogo.vaes);
-  const faltanLoras = resuelto.huecos.length ? loras.filter((a) => !catalogo.loras.some((x) => x.valor === a)) : [];
+  const faltanLoras = resuelto.huecos.length ? loras.filter((a) => !perfiles.enLista(catalogo.loras, a)) : [];
   return { faltan: { nodos, archivos }, faltanLoras };
 }
 

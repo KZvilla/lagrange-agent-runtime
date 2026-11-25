@@ -447,6 +447,7 @@ export function crearColaImagenes({
     for (const c of claves) indice.vaciarTmp(c, env);
     // Un nodo (sin claves) no lee el directorio de las almas (FEAT-090 §3.6): mapa vacío.
     mapaSha = claves.length ? null : new Map();
+    mapaTelegram = claves.length ? null : new Map();
     if (claves.length) mapa();
   }
 

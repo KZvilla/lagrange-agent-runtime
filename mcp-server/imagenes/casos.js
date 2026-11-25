@@ -44,6 +44,13 @@ function valoresDeCarga(modelo, perfil) {
   return v;
 }
 
+/** Los mismos valores, con el nombre exacto que lista ComfyUI (si el catálogo los tiene): es lo que su combo acepta. */
+function comoLosLista(valores, catalogo) {
+  if (!catalogo) return valores;
+  const de = { modelo: [...(catalogo.checkpoints || []), ...(catalogo.unets || [])], unet: catalogo.unets, clip_1: catalogo.clips, clip_2: catalogo.clips, vae: catalogo.vaes };
+  return Object.fromEntries(Object.entries(valores).map(([k, v]) => [k, perfiles.enLista(de[k], v) || v]));
+}
+
 /** Los LoRAs activos de una familia de plantillas. */
 function lorasDe(imagenes, familia) {
   const c = imagenes.comfyui;
@@ -172,5 +179,5 @@ function recortarParaAgy(prompt) {
 
 module.exports = {
   CASOS, PROPORCIONES, BAJADA, DECLARA, NO_IMPLEMENTADOS, TOPE_AGY, MAX_NEGATIVO, MAX_ZONA, MAX_INSTRUCCION,
-  declara, modeloDeCaso, valoresDeCarga, lorasDe, topeDelPrompt, estadoComfyui, disponiblesDe, estaDisponible, bajarCaso, sinPesos, ajustarAlCaso, recortarParaAgy
+  declara, modeloDeCaso, valoresDeCarga, comoLosLista, lorasDe, topeDelPrompt, estadoComfyui, disponiblesDe, estaDisponible, bajarCaso, sinPesos, ajustarAlCaso, recortarParaAgy
 };
