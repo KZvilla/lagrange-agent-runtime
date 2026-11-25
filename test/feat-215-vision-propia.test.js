@@ -300,7 +300,9 @@ async function main() {
     await turno(g, { opciones: { vision: PERMISOS, imagen: { ...foto(propia), num: 7 } } });
     check('la suya dice su número', texto(g.ultimo()).includes('una imagen que hiciste vos: la #7. Si trae'));
     nuevoHilo();
-    await turno(g, { opciones: { vision: PERMISOS, imagen: { ...foto(propia), deOtra: true } } });
+    const rd = await turno(g, { opciones: { vision: PERMISOS, imagen: { ...foto(propia), deOtra: true } } });
+    const botPie = await importar('telegram-bridge/bot.js');
+    check('…ni el pie dice que lo era', botPie.pieDeMemoria(rd).includes('🔓 foto segura (de otra alma)'));
     check('la de otra alma no es suya', texto(g.ultimo()).includes('una imagen que hizo otra alma') && !texto(g.ultimo()).includes('hiciste vos'));
     nuevoHilo();
     await turno(g, { opciones: { imagen: { ...foto(propia), deOtra: true } } });

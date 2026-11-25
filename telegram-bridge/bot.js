@@ -3285,7 +3285,7 @@ export function pieDeMemoria(turno) {
   if (turno.externo?.includes('foto')) lineas.push('🖼️ vio la foto (descrita por DeepSeek)');
   // FEAT-210 §2.2 — La foto segura no es de afuera: la vio la visión, entera.
   const comoLaVio = turno.vision === 'propia' ? '👁 la vio' : turno.vision === 'hilo' ? '👁 la sigue viendo' : turno.vision === 'descripcion' ? '👁 la recibió descripta' : '';
-  if (turno.fotoSegura) lineas.push(`🔓 foto segura${turno.fotoSegura === 'reconocida' ? ' (era tuya)' : ''}${turno.fotoSeguraOrden ? ' · traía texto con forma de orden' : ''}${comoLaVio ? ` · ${comoLaVio}` : ''}`);
+  if (turno.fotoSegura) lineas.push(`🔓 foto segura${turno.fotoSegura === 'reconocida' ? (turno.fotoDeOtra ? ' (de otra alma)' : ' (era tuya)') : ''}${turno.fotoSeguraOrden ? ' · traía texto con forma de orden' : ''}${comoLaVio ? ` · ${comoLaVio}` : ''}`);
   else if (comoLaVio) lineas.push(comoLaVio);
   if (turno.imagenPerdida) lineas.push('🖼️ no sé de qué imagen es la que respondiste (ya no la tengo)');
   // FEAT-210 §4 — La imagen que va a hacer, o por qué no (un solo motivo; el diario guarda la lista).

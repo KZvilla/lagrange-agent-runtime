@@ -914,6 +914,7 @@ async function charlar({
     imagenRechazos: rechazosImagen,
     vistasIncluidas: (vistas || []).map((v) => ({ tareaId: v.tareaId, n: v.n })),
     fotoSegura,
+    ...(deQuien.deOtra ? { fotoDeOtra: true } : {}),
     ...(comoVio() ? { vision: comoVio() } : {}),
     ...(fotoSegura && descripcionFoto && descripcionFoto.orden ? { fotoSeguraOrden: true } : {}),
     // FEAT-172 — Quien aplica el tablero es el bot: vaciarlo acá es lo que lo frena.
