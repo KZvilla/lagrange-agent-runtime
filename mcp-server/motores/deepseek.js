@@ -168,8 +168,8 @@ function hiloVigente(clave, hilo, env = process.env) {
 }
 
 /** Guarda el turno en el hilo local. `user` es el que se mandó (con su fecha); `assistant`, la respuesta ya limpia. */
-function agregarTurno({ clave, hilo, user, assistant, promptTokens }, env = process.env) {
-  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens }, env);
+function agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env = process.env) {
+  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env);
 }
 
 module.exports = {

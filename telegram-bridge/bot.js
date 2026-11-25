@@ -1383,8 +1383,8 @@ async function processTaskQueue(carril) {
               return u && { ...u, segura: u.externo === false && Boolean(configImagenes.fotos_seguras && configImagenes.reconocer_propias) };
             }
           } : {}),
-          ...(versionesDelTurno(task.clave, configImagenes) ? { versiones: versionesDelTurno(task.clave, configImagenes) } : {}),
-          ...(visionDelTurno(task, configImagenes) ? { vision: visionDelTurno(task, configImagenes) } : {}),
+          versiones: versionesDelTurno(task.clave, configImagenes),
+          vision: visionDelTurno(task, configImagenes),
           ...(configImagenes.alma_la_ve ? { vistasPendientes: (clave, hilo) => imgIndice().vistasPendientes(clave, hilo) } : {}),
           onReinicio: (pedido) => parcial?.reiniciar(ESTADO_DE_PEDIDO[pedido?.tipo] || ESTADO_DE_PEDIDO.archivo),
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.

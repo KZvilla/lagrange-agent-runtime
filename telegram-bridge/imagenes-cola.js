@@ -379,7 +379,13 @@ export function crearColaImagenes({
     const previo = indice.leer(job.clave, job.tareaId, job.n, env);
     // FEAT-215 — Su número: el mismo si se reintentó. Sin él, la imagen igual vale.
     let num = (previo && previo.num) || null;
-    if (!num) { try { num = indice.tomarNumero(job.clave, env); } catch (err) { log(`[imagenes] no se pudo numerar ${job.tareaId}#${job.n}: ${err.message}`); } }
+    for (let i = 0; !num && i < 5; i++) {
+      // Sin dormir el proceso: si otro tiene el contador, se prueba de nuevo. Al arrancar se numera lo que haya quedado.
+      try { num = indice.tomarNumero(job.clave, env, { esperaMs: 0 }); } catch (err) {
+        if (i === 4) log(`[imagenes] no se pudo numerar ${job.tareaId}#${job.n}: ${err.message}`);
+        else await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
       ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
       hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
@@ -747,7 +753,9 @@ export function crearColaImagenes({
     for (const c of claves) {
       indice.vaciarTmp(c, env);
       // FEAT-215 — Las de antes reciben su número, una sola vez.
-      try { indice.numerar(c, env); } catch (err) { log(`[imagenes] no se pudieron numerar las de ${c}: ${err.message}`); }
+      try {
+        for (const x of indice.numerar(c, env)) if (entradas(x.tareaId).some((e) => e.n === x.n)) transicionImagen(x.tareaId, x.n, { num: x.num });
+      } catch (err) { log(`[imagenes] no se pudieron numerar las de ${c}: ${err.message}`); }
     }
     // Un nodo (sin claves) no lee el directorio de las almas (FEAT-090 §3.6): mapa vacío.
     mapaSha = claves.length ? null : new Map();

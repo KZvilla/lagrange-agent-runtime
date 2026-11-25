@@ -201,26 +201,30 @@ function ultimoNumero(clave, env) {
   for (const e of listar(clave, env)) if (numValido(e.num) && e.num > ultimo) ultimo = e.num;
   return ultimo;
 }
-/** El próximo número. Lanza si no se puede escribir. */
-function tomarNumero(clave, env = process.env) {
+/** El próximo número (con `cuantos`, el primero de esa tanda). Lanza si no se puede escribir; `esperaMs: 0` no espera el lock. */
+function tomarNumero(clave, env = process.env, { cuantos = 1, esperaMs } = {}) {
   const ruta = rutaContador(clave, env);
   fs.mkdirSync(path.dirname(ruta), { recursive: true });
   return conLock(ruta, () => {
     const num = ultimoNumero(clave, env) + 1;
-    escribirAtomico(ruta, `${JSON.stringify({ ultimo: num })}\n`);
+    escribirAtomico(ruta, `${JSON.stringify({ ultimo: num + cuantos - 1 })}\n`);
     return num;
-  });
+  }, esperaMs === undefined ? {} : { esperaMs });
 }
-/** Numera las listas que no tienen número, de la más vieja a la más nueva. Cuántas. */
+/** Numera las listas que no tienen número, de la más vieja a la más nueva. Las numeradas; una que falla queda para la próxima. */
 function numerar(clave, env = process.env) {
-  let n = 0;
-  for (const e of listar(clave, env)) {
-    if (!e.lista || numValido(e.num)) continue;
-    const num = tomarNumero(clave, env);
-    actualizar(clave, e.tareaId, e.n, (p) => (p && p.lista && !numValido(p.num) ? { ...p, num } : null), env);
-    n++;
-  }
-  return n;
+  const faltan = listar(clave, env).filter((e) => e.lista && !numValido(e.num));
+  if (!faltan.length) return [];
+  const primero = tomarNumero(clave, env, { cuantos: faltan.length });
+  const hechas = [];
+  faltan.forEach((e, i) => {
+    try {
+      const num = primero + i;
+      const r = actualizar(clave, e.tareaId, e.n, (p) => (p && p.lista && !numValido(p.num) ? { ...p, num } : null), env);
+      if (r && r.num === num) hechas.push({ tareaId: e.tareaId, n: e.n, num });
+    } catch {}
+  });
+  return hechas;
 }
 /** La entrada lista de ese número, con su archivo. `null` si no está. */
 function porNumero(clave, num, env = process.env) {

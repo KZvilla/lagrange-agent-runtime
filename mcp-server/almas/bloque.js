@@ -36,12 +36,15 @@ const MAX_PEDIDO = 300;
 const MAX_IMAGEN = 600;
 const RE_IMAGEN = /^imagen(-desde-foto|-desde-anterior)?\s*:\s*(.+)$/i;
 // FEAT-215 — Una o varias suyas, por su número: `imagen-desde #7: …`, `imagen-desde #7 y #8: …`.
-const RE_IMAGEN_NUM = /^imagen-desde\s+((?:#?\d{1,6}(?:\s*(?:,|\by\b|\be\b|\band\b)\s*|\s*))+):\s*(.+)$/i;
+// En dos pasos y sin cuantificadores anidados: la línea la escribe un modelo.
+const RE_IMAGEN_NUM = /^imagen-desde ([^:]{1,120}):(.+)$/i;
+const RE_NUMEROS = /^#?\d{1,6}(?:(?: ?, ?(?:y )?| y | e | and | )#?\d{1,6})*$/i;
 const MAX_BASES = 4;
 
 /** FEAT-210 — `{ texto, desdeFoto, desdeAnterior }` si la línea pide una imagen, o `null`. FEAT-213 — `desdeAnterior`: la última del hilo. */
 function parsearImagen(linea) {
-  const porNumero = RE_IMAGEN_NUM.exec(linea);
+  let porNumero = /^imagen-desde\s/i.test(linea) ? RE_IMAGEN_NUM.exec(linea.slice(0, 4000).replace(/\s+/g, ' ')) : null;
+  if (porNumero && !RE_NUMEROS.test(porNumero[1].trim())) porNumero = null;
   const m = porNumero ? [porNumero[0], '', porNumero[2]] : RE_IMAGEN.exec(linea);
   if (!m) return null;
   const texto = m[2].trim().replace(/\s+/g, ' ').slice(0, MAX_IMAGEN);

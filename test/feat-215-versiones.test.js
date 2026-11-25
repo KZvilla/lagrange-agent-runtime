@@ -79,7 +79,7 @@ async function main() {
   await group('el número', () => {
     limpiar();
     entrada('t_aaaa1', 1); entrada('t_aaaa2', 1); entrada('t_aaaa3', 1, { lista: false });
-    check('las de antes, por fecha y una sola vez', indice.numerar('alya') === 2 && indice.leer('alya', 't_aaaa1', 1).num === 1 && indice.leer('alya', 't_aaaa2', 1).num === 2 && indice.numerar('alya') === 0);
+    check('las de antes, por fecha y una sola vez', indice.numerar('alya').map((x) => x.num).join() === '1,2' && indice.leer('alya', 't_aaaa1', 1).num === 1 && indice.leer('alya', 't_aaaa2', 1).num === 2 && indice.numerar('alya').length === 0);
     check('una sin terminar no gasta número', indice.leer('alya', 't_aaaa3', 1).num === undefined);
     check('el siguiente', indice.tomarNumero('alya') === 3);
     indice.actualizar('alya', 't_aaaa2', 1, (p) => ({ ...p, num: 3 }));
@@ -153,7 +153,9 @@ async function main() {
     const larga = `imagen-desde ${'#1 '.repeat(4000)}x`;
     const t0 = Date.now();
     bloque.parsearImagen(larga);
-    check('una línea larga no cuelga', Date.now() - t0 < 500, String(Date.now() - t0));
+    for (const l of [`imagen-desde #7${' '.repeat(60)}x`, `imagen-desde #7${' '.repeat(5000)}x`, `imagen-desde ${'7 '.repeat(60)}x`, `imagen-desde ${'1'.repeat(90)}x`, `imagen-desde #7 ${'y '.repeat(50)}:x`]) bloque.parsearImagen(l);
+    check('una línea armada no cuelga', Date.now() - t0 < 300, String(Date.now() - t0));
+    check('con «, y» y espacios de más', n('imagen-desde  #7 ,  #8,  y #9 :  x') === '7+8+9');
     const c = (v) => bloque.instruccionDeCierre({ puedePedirImagen: true, puedePedirAnterior: true, versiones: v });
     check('la consigna', c({ porNumero: true, varias: true, sinElegir: [7, 8], elegida: null }).includes('imagen-desde #7: <qué cambiar>') && c({ porNumero: true, varias: true, sinElegir: [7, 8] }).includes('sin elegir: #7, #8.') && c({ porNumero: true, varias: true, sinElegir: [7, 8] }).includes('si dice todas, todos'));
     check('sin varias', !c({ porNumero: true, varias: false, sinElegir: [7, 8] }).includes('todas') && !c({ porNumero: true, varias: false, sinElegir: [] }).includes('una edición por cada una'));
@@ -186,7 +188,11 @@ async function main() {
     const n = await turno(g3, op(), 'la segunda');
     check('…pero no vale como pedido', n.imagenRechazo === null);
     const u = await turno(guion(im('imagen-desde-anterior: x')), op({ varias_versiones: 'ultima' }), 'otra parecida');
-    check('con «usar la última», esa', u.imagenPedida.foto.ruta === r2 && u.imagenPedida.desdeAnterior);
+    check('con «usar la última», esa', u.imagenPedida.foto.ruta === r2 && u.imagenPedida.desdeAnterior && u.imagenPedida.desde.join() === '8');
+    indice.actualizar('alya', 't_cccc1', 1, (p) => ({ ...p, num: undefined }));
+    const sn = await turno(guion(im('imagen-desde-anterior: x')), op(), 'otra parecida');
+    check('una candidata sin número igual hace preguntar', sn.imagenRechazo === 'cual-version' && sn.imagenCandidatas.join() === '8');
+    indice.actualizar('alya', 't_cccc1', 1, (p) => ({ ...p, num: 7 }));
     indice.elegir('alya', 't_cccc1', 1, true, process.env, tic());
     const e = await turno(guion(im('imagen-desde-anterior: x')), op(), 'otra parecida');
     check('con una elegida, esa', e.imagenPedida.foto.ruta === r1 && e.imagenPedida.desde.join() === '7');
@@ -197,6 +203,8 @@ async function main() {
     const d = await turno(guion(im('imagen-desde #7 #8: sumá un gato')), op(), 'a las dos sumales un gato');
     check('a las dos', d.imagenPedida.bases.map((x) => x.num).join() === '7,8' && d.imagenPedida.bases[1].foto.ruta === r2 && d.imagenPedida.foto.ruta === r1);
     check('el diario', diario.ultimas('alya', 3).some((x) => x.imagen && x.imagen.desde && x.imagen.desde.join() === '7,8'));
+    const sf = await turno(guion(im('imagen-desde #7: x')), op({}, { fotoCuenta: false }), 'la 7');
+    check('por número la base no se pierde, con foto_cuenta apagado', sf.imagenPedida.baseFija === true);
     const d2 = await turno(guion(im('imagen-desde #7 #8: sumá un gato')), op({ varias_bases: false }), 'a las dos');
     check('con varias apagado no se hacen', d2.imagenPedida === null && d2.imagenRechazo === 'una-por-turno');
     const no = await turno(guion(im('imagen-desde #99: x')), op(), 'la 99');
@@ -315,8 +323,9 @@ async function main() {
     check('una nueva la desmarca', !e('t_eeee1', 2).elegida && indice.candidatas('alya', ['h1']).elegida === null);
     check('sin hilo, sin imagen, apagada', cola.partir('alya', 't_zzzz9', 1, true).codigo === 'no-existe' && (entrada('t_eeee5', 1, { hilo: null }), cola.partir('alya', 't_eeee5', 1, true).codigo === 'sin-hilo') && ((config = { ...config, partir: false }), cola.partir('alya', 't_eeee1', 1, true).codigo === 'apagada'));
     config = { ...config, partir: true };
+    indice.actualizar('alya', 't_eeee2', 1, (p) => ({ ...p, num: undefined }));
     cola.alArrancar(['alya']);
-    check('al arrancar no renumera', indice.leer('alya', 't_eeee1', 1).num === 1);
+    check('al arrancar no renumera, y lo que faltaba se ve también en el turno', indice.leer('alya', 't_eeee1', 1).num === 1 && indice.leer('alya', 't_eeee2', 1).num > 1 && e('t_eeee2', 1).num === indice.leer('alya', 't_eeee2', 1).num);
 
     // La galería.
     cola.partir('alya', 't_eeee4', 1, true);

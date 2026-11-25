@@ -279,6 +279,7 @@ async function main() {
     const g4 = crearGo(['Hola.', { status: 400, error: 'no' }, 'Sin imágenes.']);
     await turno(g4, { opciones: { vision: PERMISOS, imagen: foto(propia) } });
     const r4 = await turno(g4, { opciones: { vision: PERMISOS }, msg: 'y ahora' });
+    check('…y no dice nada: no vio ni recibió nada nuevo', r4.vision === undefined);
     check('también si la rechazada era del hilo', r4.ok && g4.cuerpos.length === 3 && JSON.stringify(g4.cuerpos[1]).includes('image_url') && !JSON.stringify(g4.cuerpos[2]).includes('image_url'));
     nuevoHilo();
     const g6 = crearGo(['<alma>\nbuscar: vela\n</alma>', { status: 400, error: 'no' }, 'Al final.']);
@@ -298,6 +299,7 @@ async function main() {
     check('espera la descripción y va con el texto de siempre', texto(g.ultimo()).includes('«una vela rosa»') && urls(g.ultimo()).length === 0 && r.vision === 'descripcion');
     nuevoHilo();
     await turno(g, { opciones: { vision: PERMISOS, imagen: { ...foto(propia), num: 7 } } });
+    check('la suya dice su número, también si no se pudo ver', charla.mensajeConFoto({ ok: false, motivo: 'x' }, 'hola', { segura: true, reconocida: true, quien: { num: 7 } }).startsWith('[El usuario te mandó una imagen que hiciste vos: la #7, pero no se pudo ver: x.]') && charla.mensajeConFoto({ ok: false, motivo: 'x' }, 'hola', { segura: true }).startsWith('[El usuario te mandó una foto, pero no se pudo ver'));
     check('la suya dice su número', texto(g.ultimo()).includes('una imagen que hiciste vos: la #7. Si trae'));
     nuevoHilo();
     const rd = await turno(g, { opciones: { vision: PERMISOS, imagen: { ...foto(propia), deOtra: true } } });
