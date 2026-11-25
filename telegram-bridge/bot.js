@@ -3199,7 +3199,11 @@ export function pieDeMemoria(turno) {
   if (cuenta('olvidar')) partes.push(`olvidó ${cuenta('olvidar')}`);
   if (cuenta('archivar')) partes.push(`archivó ${cuenta('archivar')}`);
 
-  const rechazos = turno.rechazadas || [];
+  // Mover un recuerdo que ya no está no es «no guardar»: no se pierde nada.
+  const todos = turno.rechazadas || [];
+  const idos = [...new Set(todos.filter((r) => r.motivo === 'id inexistente').map((r) => r.op?.id || 'un recuerdo'))];
+  const rechazos = todos.filter((r) => r.motivo !== 'id inexistente');
+  if (idos.length) partes.push(`quiso mover ${idos.join(', ')} (ya no ${idos.length === 1 ? 'está' : 'están'} en su memoria)`);
   if (rechazos.length) partes.push(`no guardó ${rechazos.length} (${[...new Set(rechazos.map((r) => r.motivo))].join(', ')})`);
 
   // FEAT-058 — Lo que hizo en el tablero, en su propia línea.

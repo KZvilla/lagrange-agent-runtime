@@ -24,6 +24,9 @@ owned by a Voicebox profile: the voice is the sound, the Soul is the identity an
   Choosing an acoustic `voice` never creates or selects a Soul. A missing Soul degrades visibly to neutral.
 - **Memory entries have stable ids** (`m3`, `u2`), hard caps, and a write that would exceed a cap is rejected
   rather than silently dropping something. The files are plain text: edit them by hand.
+- **A live thread sees its memory change** (since 2.20.1). The whole memory goes in only when the thread is born; a turn
+  that continues it gets what is gone, what is new (with its id) and what was not saved last time. `estado.json` keeps only
+  hashes of what the Soul saw. A thread with outside content gets none of it.
 - **Memory is scanned before it is written.** Invisible characters, command-shaped text, URLs and secret-shaped
   strings are rejected. The hard barrier is the agent, below.
 - **The archive keeps what no longer fits.** An entry archived to make room — or rejected for the cap — moves to

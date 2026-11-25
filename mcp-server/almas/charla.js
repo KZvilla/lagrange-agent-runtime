@@ -29,6 +29,7 @@ const archivo = require('./archivo.js');
 const { sanearParaInyeccion } = require('./escaneo.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 const contaminados = require('./contaminados.js');
+const memoriaDelHilo = require('./memoria-del-hilo.js');
 const mediadorReal = require('./mediador.js');
 const webReal = require('./web.js');
 const { usoDe: usoDeDeepseek } = require('../motores/deepseek.js');
@@ -528,7 +529,25 @@ async function charlar({
       const u = puedePedirImagen && !imagen ? ultimaDe([hilo, hiloAnterior]) : null;
       ofreceAnterior = Boolean(u && (!deAfuera(u) || pideEnEste()));
     }
-    const mensajeConVistas = !turno && vistas && vistas.length ? `${bloqueDeVistas(vistas)}\n\n${mensajeAlma}` : mensajeAlma;
+    // Qué memoria ve el alma en este turno: entera si nace el hilo; si sigue, lo que cambió. Un hilo con contenido de afuera
+    // no escribe memoria: no se le cuenta nada nuevo.
+    let memoriaVista = null;
+    let cambiosDeMemoria = '';
+    if (!turno && !opciones.aislado) {
+      try {
+        const actual = memoriaDelHilo.leer(clave, env);
+        if (!hilo) memoriaVista = actual.vista;
+        else if (!externo && !contaminados.contaminado(clave, hilo, env)) {
+          memoriaVista = actual.vista;
+          cambiosDeMemoria = memoriaDelHilo.bloqueDeCambios(actual, memoriaDelHilo.previaDe(clave, hilo, { motor: claveHilo, env }));
+        }
+      } catch (err) {
+        memoriaVista = null;
+        cambiosDeMemoria = '';
+        process.stderr.write(`[almas] No se pudo comparar la memoria de ${clave}: ${err.message}\n`);
+      }
+    }
+    const mensajeConVistas = [cambiosDeMemoria, !turno && vistas && vistas.length ? bloqueDeVistas(vistas) : '', mensajeAlma].filter(Boolean).join('\n\n');
     const pedido = {
       perfil: 'sin-tools',
       prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior }),
@@ -589,7 +608,7 @@ async function charlar({
       origen,
       cuota: resultado.cuota
     });
-    return { resultado, pedido, hilo, hiloNuevo, duracion, cuenta, busqueda };
+    return { resultado, pedido, hilo, hiloNuevo, duracion, cuenta, busqueda, claveHilo, memoriaVista };
   };
 
   // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
@@ -603,7 +622,7 @@ async function charlar({
   });
   const { eleccion, fallback } = intento;
   if (intento.resultado.preflight) return { ok: false, motivo: intento.resultado.error };
-  const { pedido, hilo, cuenta, busqueda } = intento;
+  const { pedido, hilo, cuenta, busqueda, claveHilo, memoriaVista } = intento;
   const motor = eleccion.motor;
   let { resultado, hiloNuevo, duracion } = intento;
   let uso = resultado.uso;
@@ -628,13 +647,18 @@ async function charlar({
    * el archivo es la fuente de verdad y el próximo turno nace con la foto.
    */
   const guardarEnHiloLocal = (r, assistant) => {
-    if (typeof motor.agregarTurno !== 'function' || opciones.aislado || !hiloNuevo || !r.userEnviado) return;
+    if (typeof motor.agregarTurno !== 'function') return true;
+    if (opciones.aislado || !hiloNuevo || !r.userEnviado) return false;
     try {
       motor.agregarTurno({ clave, hilo: hiloNuevo, user: r.userEnviado, assistant, promptTokens: r.promptTokens }, env);
+      return true;
     } catch (err) {
       process.stderr.write(`[almas] No se pudo guardar el turno de ${clave} en su hilo local: ${err.message}\n`);
+      return false;
     }
   };
+  // La memoria que vio el alma queda en el hilo con la primera pasada: si no se pudo guardar, no la vio.
+  let enElHilo = true;
 
   // FEAT-058 — Primero el tablero: un `<tablero>` sin cerrar no se lleva el
   // bloque de memoria. Se extrae siempre, aunque no se haya pedido, para que
@@ -652,7 +676,7 @@ async function charlar({
   if (pedida && herramientas.includes(pedida.tipo) && hiloNuevo) {
     // FEAT-210 — Una imagen pedida junto con una búsqueda se descarta: vale la de la pasada 2.
     if (extraido.imagenPedida) rechazosImagen.push('pasada-descartada');
-    guardarEnHiloLocal(resultado, lineaDelPedido(pedida));
+    enElHilo = guardarEnHiloLocal(resultado, lineaDelPedido(pedida));
     if (typeof opciones.onReinicio === 'function') {
       try { opciones.onReinicio(pedida); } catch {}
     }
@@ -679,7 +703,8 @@ async function charlar({
   }
 
   const { respuesta, operaciones } = extraido;
-  guardarEnHiloLocal(resultado, respuesta);
+  const guardado = guardarEnHiloLocal(resultado, respuesta);
+  if (!herramienta) enElHilo = guardado;
 
   // FEAT-213 — De qué parte la imagen pedida: la foto del turno, la última del hilo o nada. Usar una última de afuera
   // contamina el hilo, igual que ver una vista externa: se sabe acá, antes de decidir la memoria.
@@ -716,6 +741,14 @@ async function charlar({
   const { aplicadas, rechazadas } = contaminado
     ? { aplicadas: [], rechazadas: operaciones.map(op => ({ op: { tipo: op.tipo, prefijo: op.prefijo, ...(op.id ? { id: op.id } : {}) }, motivo: MOTIVO_EXTERNO })) }
     : aplicarOperaciones(clave, operaciones, env);
+  // Lo que vio y lo que no se le guardó, para contarle la diferencia en el turno que viene.
+  if (memoriaVista && enElHilo && hiloNuevo) {
+    try {
+      memoriaDelHilo.anotar(clave, { motor: claveHilo, hilo: hiloNuevo, vista: memoriaVista, rechazadas: contaminado ? [] : rechazadas }, env);
+    } catch (err) {
+      process.stderr.write(`[almas] No se pudo anotar la memoria que vio ${clave}: ${err.message}\n`);
+    }
+  }
   const dados = busqueda ? { ids: busqueda.resultados.map(r => r.id), omitidas: busqueda.omitidas } : null;
 
   // FEAT-210 §1 — La imagen que pidió el alma, si vale. Nunca en un turno aislado ni con las imágenes apagadas. En un
