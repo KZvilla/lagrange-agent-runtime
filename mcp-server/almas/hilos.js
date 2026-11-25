@@ -128,10 +128,23 @@ function olvidarHilo(clave, env = process.env) {
   const estado = leerEstado(env);
   const previo = estado.almas[clave];
   if (!previo || !hilosDe(previo).length) return false;
-  const { hilos_por_motor: _todos, ...resto } = previo;
+  const { hilos_por_motor: _todos, memoria_vista: _vista, ...resto } = previo;
   estado.almas[clave] = { ...resto, conversation_id: null };
   guardar(estado, env);
   return true;
+}
+
+/**
+ * Lo que el alma vio de su memoria en el hilo de ese motor (`memoria-del-hilo.js`). Va aparte de `hilos_por_motor`, que se
+ * reescribe en cada turno.
+ */
+function anotarMemoriaVista(clave, { motor = MOTOR_POR_DEFECTO, hilo, vista, rechazos }, env = process.env) {
+  validarClave(clave);
+  const estado = leerEstado(env);
+  const previo = estado.almas[clave];
+  if (!previo) return;
+  estado.almas[clave] = { ...previo, memoria_vista: { ...(previo.memoria_vista || {}), [motor]: { hilo, vista, rechazos } } };
+  guardar(estado, env);
 }
 
 /** El motor dueño de este hilo si es de un alma, o `null`. */
@@ -159,6 +172,6 @@ function esHiloDeAlma(conversationId, env = process.env) {
 }
 
 module.exports = {
-  VENTANA_MS, rutaEstado, leerEstado, hiloDe, hiloGuardado, registrarTurno, olvidarHilo, esHiloDeAlma,
+  VENTANA_MS, rutaEstado, leerEstado, hiloDe, hiloGuardado, registrarTurno, anotarMemoriaVista, olvidarHilo, esHiloDeAlma,
   motorDeHiloDeAlma, hilosDe, ultimoTurno
 };
