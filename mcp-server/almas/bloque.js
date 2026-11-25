@@ -33,7 +33,7 @@ const PEDIDOS = Object.freeze({
 });
 const MAX_PEDIDO = 300;
 // FEAT-210 — El pedido de una imagen: qué y para qué, en palabras del alma (el prompt técnico lo escribe el refinador).
-const MAX_IMAGEN = 300;
+const MAX_IMAGEN = 600;
 const RE_IMAGEN = /^imagen(-desde-foto|-desde-anterior)?\s*:\s*(.+)$/i;
 
 /** FEAT-210 — `{ texto, desdeFoto, desdeAnterior }` si la línea pide una imagen, o `null`. FEAT-213 — `desdeAnterior`: la última del hilo. */
@@ -52,7 +52,7 @@ function parsearImagen(linea) {
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false, pideImagen = false } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
@@ -84,7 +84,16 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         'imagen-desde-foto: <qué cambiar de la foto que te mandó>   (solo si el usuario te mandó una foto)',
         // FEAT-213 — Solo si en este hilo hay una imagen suya de la que partir.
         ...(puedePedirAnterior ? ['imagen-desde-anterior: <qué cambiar de la última imagen que hiciste en este hilo>   (si te pide otra parecida o un cambio)'] : []),
-        'El prompt técnico lo escribe otro modelo; la imagen llega después de tu respuesta.'
+        'El prompt técnico lo escribe otro modelo; la imagen llega después de tu respuesta.',
+        // Medido (2026-11-25, deepseek-v4.1-flash): anunciaba la imagen y omitía la línea en 6 de 21 intentos; con esto, en 0 de 16.
+        ...(pideImagen
+          ? [
+              '',
+              'El usuario te pide una imagen en este mensaje. Si la vas a hacer, el bloque tiene que llevar su línea, y va',
+              'PRIMERA: sin esa línea no se hace ninguna, aunque la anuncies en la respuesta. No cuenta entre las',
+              `${MAX_OPERACIONES} operaciones.`
+            ]
+          : [])
       ]
     : [];
   return [
@@ -189,6 +198,9 @@ function extraerBloque(textoCrudo, { conTema = false } = {}) {
   return alFinal ? { ...r, respuesta: alFinal.respuesta, imagenPedida: alFinal.imagen } : r;
 }
 
+/** Un bloque completo, con la apertura sola en su línea: una mención en la prosa no lo es. */
+const BLOQUE_ENTERO = /(^|\n)[ \t]*<alma>[ \t]*\r?\n((?:(?!<alma>)[\s\S])*?)<\/alma>/g;
+
 function extraerBloqueCrudo(textoCrudo, { conTema = false } = {}) {
   const texto = String(textoCrudo || '');
   const inicio = texto.lastIndexOf(APERTURA);
@@ -209,7 +221,9 @@ function extraerBloqueCrudo(textoCrudo, { conTema = false } = {}) {
   const cuerpo = finCierre === -1
     ? texto.slice(inicio + APERTURA.length)
     : texto.slice(inicio + APERTURA.length, finCierre);
-  const antes = texto.slice(0, inicio);
+  // Medido (2026-11-25): a veces escribe dos bloques seguidos. Los de antes también se leen, y no quedan a la vista.
+  const previos = [];
+  const antes = texto.slice(0, inicio).replace(BLOQUE_ENTERO, (_, salto, interior) => { previos.push(interior); return salto; });
   const despues = finCierre === -1 ? '' : texto.slice(finCierre + CIERRE.length);
   const respuesta = `${antes}\n${despues}`.replace(/\n{3,}/g, '\n\n').trim();
 
@@ -219,7 +233,7 @@ function extraerBloqueCrudo(textoCrudo, { conTema = false } = {}) {
   // FEAT-210 — Una imagen por respuesta, fuera de las operaciones: no cuenta para MAX_OPERACIONES y se reconoce antes.
   let imagenPedida = null;
   const imagenRechazos = [];
-  for (const lineaCruda of cuerpo.split(/\r?\n/)) {
+  for (const lineaCruda of [...previos, cuerpo].join('\n').split(/\r?\n/)) {
     const linea = lineaCruda.replace(/^\s*[-*•]\s*/, '').trim();
     if (!linea) continue;
     const imagen = parsearImagen(linea);

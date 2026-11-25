@@ -75,11 +75,11 @@ function bloqueDeVistas(vistas) {
  * memoria en cada vuelta duplica tokens y deja conviviendo la versión vieja y
  * la nueva de un recuerdo que se reemplazó a mitad de la charla.
  */
-function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date(), profundos = [], pedidos = [], conFecha = false, puedePedirImagen = false, puedePedirAnterior = false }) {
+function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date(), profundos = [], pedidos = [], conFecha = false, puedePedirImagen = false, puedePedirAnterior = false, pideImagen: pide = false }) {
   // FEAT-058 — El tablero es estado vivo: va en cada turno, también en un
   // hilo continuado, y con él la consigna de `<tablero>` (antes de `<alma>`).
   const conTablero = typeof tablero === 'string';
-  const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre({ conTema: true, pedidos, puedePedirImagen, puedePedirAnterior })}`;
+  const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre({ conTema: true, pedidos, puedePedirImagen, puedePedirAnterior, pideImagen: pide })}`;
   // FEAT-172 — Qué día es, en cada turno: un hilo puede cruzar la medianoche y
   // el alma tiene que poder leer «mañana tengo la entrevista». El motor que ya
   // la pone él (deepseek, `fechaEnTurno`) no la recibe dos veces.
@@ -550,7 +550,7 @@ async function charlar({
     const mensajeConVistas = [cambiosDeMemoria, !turno && vistas && vistas.length ? bloqueDeVistas(vistas) : '', mensajeAlma].filter(Boolean).join('\n\n');
     const pedido = {
       perfil: 'sin-tools',
-      prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior }),
+      prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior, pideImagen: puedePedirImagen && pideEnEste() }),
       hilo,
       modelo,
       esfuerzo,
@@ -687,7 +687,7 @@ async function charlar({
     herramienta = ejecucion.herramienta;
     externo = sumarExterno(externo, ejecucion.externo);
     if (cancelado()) return cancelada();
-    const prompt = armarPrompt({ clave, mensaje: ejecucion.mensaje, hilo: hiloNuevo, env, tablero: opciones.tablero ?? null, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior });
+    const prompt = armarPrompt({ clave, mensaje: ejecucion.mensaje, hilo: hiloNuevo, env, tablero: opciones.tablero ?? null, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior, pideImagen: puedePedirImagen && pideEnEste() });
     const segundo = await intentarCon(eleccion, { prompt, hilo: hiloNuevo });
     if (segundo.resultado.preflight) return { ...base(), ok: false, motivo: segundo.resultado.error, herramienta };
     resultado = segundo.resultado;
@@ -755,6 +755,8 @@ async function charlar({
   // hilo con contenido de afuera, solo si el usuario la pidió en este mensaje, o desde una foto que marcó segura.
   rechazosImagen.push(...(extraido.imagenRechazos || []));
   let imagenPedida = null;
+  // La pidió el usuario y el alma no la pidió (la omitió o no quiso): se dice, para que no parezca que falló.
+  if (!linea && !rechazosImagen.length && puedePedirImagen && pideEnEste()) rechazosImagen.push('no-pedida');
   if (linea) {
     const desdeFoto = baseImagen.tipo === 'fija';
     if (opciones.aislado) rechazosImagen.unshift('aislado');

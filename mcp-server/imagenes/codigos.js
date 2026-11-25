@@ -45,7 +45,8 @@ const MOTIVOS_RECHAZO = Object.freeze({
 /** FEAT-213 — Los motivos que no están en el enum del contrato (2.x): viajan en `detalle`, con `rechazo` en `null`. */
 const DETALLES_RECHAZO = Object.freeze({
   'sin-foto': 'no había ninguna foto de la que partir',
-  'sin-anterior': 'no había ninguna imagen anterior de la que partir'
+  'sin-anterior': 'no había ninguna imagen anterior de la que partir',
+  'no-pedida': 'el alma no la pidió en su respuesta'
 });
 
 /** Los nombres legibles de cada proveedor, para los mensajes. */

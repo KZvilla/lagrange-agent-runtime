@@ -156,6 +156,37 @@ async function main() {
     check('lo guardado a mano, ilegible', md.bloqueDeCambios(actual, { vista: 'x', rechazos: 'y' }).includes('tal como está ahora'));
   });
 
+  await group('la imagen que el usuario pide', async () => {
+    const bloque = require('../mcp-server/almas/bloque.js');
+    const RECUERDO = 'esa línea no se hace ninguna';
+    const pide = async (texto, respuesta, opciones = {}) => {
+      hilos.olvidarHilo('alya');
+      const g = guion(respuesta, 'h3');
+      const r = await turno(g, { puedePedirImagen: true, ...opciones }, texto);
+      return { r, prompt: g.prompts[0] };
+    };
+    const a = await pide('dibujame un gato', 'Ahí va.');
+    check('el turno lleva el recordatorio', a.prompt.includes(RECUERDO) && a.prompt.trimEnd().endsWith('operaciones.'));
+    check('si no la pidió, se dice', a.r.imagenPedida === null && a.r.imagenRechazo === 'no-pedida');
+    const b = await pide('dibujame un gato', 'Ahí va.\n<alma>\nimagen: un gato\n</alma>');
+    check('si la pidió, no', Boolean(b.r.imagenPedida) && b.r.imagenRechazo === null);
+    const c = await pide('¿cómo estás?', 'Bien.');
+    check('sin pedido, ni recordatorio ni aviso', !c.prompt.includes(RECUERDO) && c.r.imagenRechazo === null);
+    const d = await pide('dibujame un gato', 'No puedo.', { puedePedirImagen: false });
+    check('con las imágenes apagadas, tampoco', !d.prompt.includes(RECUERDO) && d.r.imagenRechazo === null);
+    const e = await pide('haceme otra parecida', 'Ahí va.', { ultimaImagen: () => null });
+    check('«otra parecida» cuenta con usar_ultima', e.prompt.includes(RECUERDO) && e.r.imagenRechazo === 'no-pedida');
+    const bot = await importar('telegram-bridge/bot.js');
+    check('el pie', bot.pieDeMemoria({ imagenRechazo: 'no-pedida' }).includes('no hizo la imagen: el alma no la pidió en su respuesta'));
+
+    const dos = bloque.extraerBloque('Hola.\n\n<alma>\nrecordar: a\narchivar m1\n</alma>\n\n<alma>\nimagen-desde-anterior: de noche\n</alma>');
+    check('dos bloques: se leen los dos y no queda ninguno a la vista', dos.respuesta === 'Hola.' && dos.operaciones.length === 2 && dos.imagenPedida.desdeAnterior);
+    const cinco = bloque.extraerBloque('<alma>\nrecordar: a\nrecordar: b\nrecordar: c\n</alma>\n<alma>\nrecordar: d\nrecordar: e\n</alma>');
+    check('el tope es de los dos juntos', cinco.operaciones.length === 4 && cinco.operaciones[3].texto === 'd');
+    const prosa = bloque.extraerBloque('Uso `<alma>` para guardar.\n<alma>\nrecordar: a\n</alma>');
+    check('una mención en la prosa queda', prosa.respuesta === 'Uso `<alma>` para guardar.' && prosa.operaciones.length === 1);
+  });
+
   await group('lo que se lee', async () => {
     const bot = await importar('telegram-bridge/bot.js');
     const pie = bot.pieDeMemoria({ aplicadas: [{ tipo: 'agregar' }], rechazadas: [{ op: { tipo: 'archivar', id: 'm27' }, motivo: 'id inexistente' }, { op: { tipo: 'agregar' }, motivo: 'tope' }] });
