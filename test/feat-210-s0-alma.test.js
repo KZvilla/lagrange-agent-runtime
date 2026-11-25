@@ -92,7 +92,7 @@ async function main() {
     const dentroYFuera = bloque.extraerBloque('Listo.\n<alma>\nimagen: uno\n</alma>\nimagen: dos');
     check('con una en el bloque, la de afuera queda como texto', dentroYFuera.imagenPedida.texto === 'uno' && dentroYFuera.respuesta.includes('imagen: dos'));
     check('la plantilla al final no cuenta', bloque.extraerBloque('Hola.\nimagen: <qué imagen querés>').imagenPedida === null);
-    check('el texto se recorta a 300',bloque.extraerBloque(`<alma>\nimagen: ${'x'.repeat(400)}\n</alma>`).imagenPedida.texto.length === 300);
+    check('el texto se recorta a 600',bloque.extraerBloque(`<alma>\nimagen: ${'x'.repeat(900)}\n</alma>`).imagenPedida.texto.length === 600);
     check('la consigna solo con puedePedirImagen', /imagen-desde-foto:/.test(bloque.instruccionDeCierre({ puedePedirImagen: true })) && !/imagen:/.test(bloque.instruccionDeCierre({})));
   });
 

@@ -460,7 +460,7 @@
                 "detalle": {
                   "type": "string",
                   "maxLength": 40,
-                  "description": "FEAT-213 — El motivo cuando no está en el enum de rechazo (sin-foto, sin-anterior); rechazo va en null."
+                  "description": "FEAT-213 — El motivo cuando no está en el enum de rechazo (sin-foto, sin-anterior, no-pedida); rechazo va en null."
                 }
               },
               "description": "FEAT-210 — Lo que pidió el alma (pedida) o el primer motivo por el que no se hizo (rechazo). El estado de la imagen vive en turno.imagenes."
