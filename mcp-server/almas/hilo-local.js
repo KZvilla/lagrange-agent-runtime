@@ -108,7 +108,7 @@ function agregarTurno({ clave, hilo, user, assistant, promptTokens = null, image
  * FEAT-215 — Completa el `texto` de una imagen que se guardó sin él (la descripción llegó después del turno). Bajo el mismo lock
  * que `agregarTurno`: relee el hilo entero y no toca nada más. `false` si no había nada que completar.
  */
-function anotarTexto(clave, hilo, rutaImagen, texto, env = process.env) {
+function anotarTexto(clave, hilo, rutaImagen, texto, env = process.env, { esperaMs } = {}) {
   const ruta = rutaHilo(clave, hilo, env);
   if (!ruta || typeof texto !== 'string' || !texto || !fs.existsSync(ruta)) return false;
   let tocado = false;
@@ -121,7 +121,7 @@ function anotarTexto(clave, hilo, rutaImagen, texto, env = process.env) {
       return { ...m, imagenes: m.imagenes.map((i) => (i.ruta === rutaImagen && i.texto === null ? { ...i, texto: texto.slice(0, MAX_TEXTO_IMAGEN) } : i)) };
     });
     if (tocado) escribirAtomico(ruta, `${[previo.cabecera, ...mensajes].map((x) => JSON.stringify(x)).join('\n')}\n`);
-  });
+  }, esperaMs === undefined ? {} : { esperaMs });
   return tocado;
 }
 
@@ -135,9 +135,15 @@ const avisoSinImagen = (i) => `[La imagen de este mensaje ya no está a la vista
  * FEAT-215 — Los mensajes como van a la API: solo `role` y `content`. Las últimas imágenes del hilo siguen a la vista si `ver`
  * (`refs → urls`, de la más nueva a la más vieja) las da; las demás van como texto.
  */
+/**
+ * El orden en que llegaron las de un mensaje: las vistas se guardan de la más nueva a la más vieja y la foto, que es lo que mandó
+ * el usuario en ese turno, es la más nueva de todas.
+ */
+const enOrden = (imagenes) => imagenes.map((ref, k) => ({ ref, k }))
+  .sort((a, b) => ((a.ref.tipo === 'vista') !== (b.ref.tipo === 'vista') ? (a.ref.tipo === 'vista' ? -1 : 1) : b.k - a.k));
 function paraEnviar(mensajes, { delTurno = 0, ver = null } = {}) {
   const todas = [];
-  mensajes.forEach((m, j) => (m.imagenes || []).forEach((ref, k) => todas.push({ ref, j, k })));
+  mensajes.forEach((m, j) => enOrden(m.imagenes || []).forEach(({ ref, k }) => todas.push({ ref, j, k })));
   const lugar = ver ? Math.max(0, A_LA_VISTA - delTurno) : 0;
   const elegidas = lugar ? todas.slice(-lugar).reverse() : [];
   const urls = elegidas.length ? ver(elegidas.map((e) => e.ref)) : [];

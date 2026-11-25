@@ -135,6 +135,8 @@ async function main() {
     check('una sola por hilo', elegida() === 9 && indice.listar('alya').filter((e) => e.elegida).length === 1);
     indice.elegir('alya', 't_bbbb4', 1, true, process.env, tic());
     check('…y otra en otro hilo', elegida() === 9 && indice.candidatas('alya', ['h2']).elegida.num === 7);
+    indice.elegir('alya', 't_bbbb3', 1, false, process.env, tic());
+    check('desmarcar una que no es la elegida no toca la elegida', elegida() === 9);
     indice.elegir('alya', 't_bbbb3', 3, false, process.env, tic());
     check('desmarcar', elegida() === null && indice.candidatas('alya', ['h2']).elegida.num === 7);
     indice.elegir('alya', 't_bbbb1', 1, true, process.env, tic());

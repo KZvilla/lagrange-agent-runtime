@@ -215,7 +215,8 @@ function tomarNumero(clave, env = process.env, { cuantos = 1, esperaMs } = {}) {
 function numerar(clave, env = process.env) {
   const faltan = listar(clave, env).filter((e) => e.lista && !numValido(e.num));
   if (!faltan.length) return [];
-  const primero = tomarNumero(clave, env, { cuantos: faltan.length });
+  let primero;
+  try { primero = tomarNumero(clave, env, { cuantos: faltan.length, esperaMs: 0 }); } catch { return []; }
   const hechas = [];
   faltan.forEach((e, i) => {
     try {
@@ -239,7 +240,8 @@ function porNumero(clave, num, env = process.env) {
 function porRuta(clave, ruta, env = process.env) {
   const real = rutaDentroDe(dirImagenes(clave, env), ruta);
   if (!real) return null;
-  return listar(clave, env).find((e) => e.archivo && archivoDe(clave, e, env) === real) || null;
+  const nombre = path.basename(real);
+  return listar(clave, env).find((e) => e.archivo && path.basename(String(e.archivo)) === nombre && archivoDe(clave, e, env) === real) || null;
 }
 
 const ORIGENES = Object.freeze(['alma', 'version', 'variante']);
@@ -269,7 +271,8 @@ function elegir(clave, tareaId, n, si, env = process.env, ahora = new Date()) {
   const tocadas = [];
   for (const x of listar(clave, env)) {
     const esta = x.tareaId === tareaId && x.n === n;
-    if (x.hilo !== e.hilo || (esta ? Boolean(x.elegida) === Boolean(si) && !si : !x.elegida)) continue;
+    // Marcar quita la anterior; desmarcar toca solo esa, y solo si estaba marcada.
+    if (x.hilo !== e.hilo || (esta ? !si && !x.elegida : !si || !x.elegida)) continue;
     actualizar(clave, x.tareaId, x.n, (p) => (p ? { ...p, elegida: esta && si ? ahora.toISOString() : null } : null), env);
     tocadas.push({ tareaId: x.tareaId, n: x.n, elegida: esta && Boolean(si) });
   }

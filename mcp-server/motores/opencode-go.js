@@ -200,8 +200,8 @@ function ve(modelo) {
 }
 
 /** FEAT-215 — La descripción de una imagen del hilo que llegó después del turno. */
-function anotarTexto(clave, hilo, ruta, texto, env = process.env) {
-  return hiloLocal.anotarTexto(clave, hilo, ruta, texto, env);
+function anotarTexto(clave, hilo, ruta, texto, env = process.env, opciones = {}) {
+  return hiloLocal.anotarTexto(clave, hilo, ruta, texto, env, opciones);
 }
 
 module.exports = {

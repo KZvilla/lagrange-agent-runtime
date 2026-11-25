@@ -215,6 +215,8 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     } },
     // FEAT-215 — «Variar esta».
     { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):variar$/, fn: ({ p }) => {
+      // Numera la nueva: solo el daemon (en un nodo, `capacidades.versiones` es false).
+      if (!galeria) return sinGaleria();
       const t = tareaDeImagen(p[0], p[1]);
       return t.error || deImagen(imagenes.variar(t.tareaId, t.n), { apagada: 'Variar está apagada.' });
     } },

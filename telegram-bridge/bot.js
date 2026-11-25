@@ -362,9 +362,14 @@ export function versionesDelTurno(clave, config) {
   if (!config.usar_ultima) return null;
   const propias = Boolean(config.fotos_seguras && config.reconocer_propias);
   const comoBase = (e) => e && { num: e.num || null, ruta: e.ruta, externo: imgIndice().esExterna(e), segura: !imgIndice().esExterna(e) && propias };
+  let hay = null;
   return {
     preguntar: config.varias_versiones !== 'ultima', varias: Boolean(config.varias_bases),
-    hayNumeradas: imgIndice().listar(clave).some((e) => e.lista && e.num),
+    // Se mira solo si el turno puede pedir una imagen, y una vez.
+    get hayNumeradas() {
+      if (hay === null) hay = imgIndice().listar(clave).some((e) => e.lista && e.num);
+      return hay;
+    },
     candidatas: (c, hilos) => {
       const r = imgIndice().candidatas(c, hilos);
       return { lista: r.lista.map(comoBase), elegida: config.partir ? comoBase(r.elegida) : null };

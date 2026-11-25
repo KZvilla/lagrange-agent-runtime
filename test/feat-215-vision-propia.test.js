@@ -155,6 +155,15 @@ async function main() {
     const falta = hiloLocal.paraEnviar(ms, { ver: () => [null, 'u'] });
     check('una que ya no se puede leer va en texto', urls(falta[6]).length === 0 && falta[6].content.includes('«desc»') && urls(falta[4]).length === 1);
 
+    // Ronda 2 — en un mensaje con foto y vistas (guardadas de la más nueva a la más vieja), las dos últimas son la foto y la vista más nueva.
+    const id2 = '11111111-2222-3333-4444-666666666666';
+    const vista = (ruta) => ({ ruta, tipo: 'vista', texto: 'v' });
+    hiloLocal.agregarTurno({ clave: 'alya', hilo: id2, user: 'a', assistant: 'b', imagenes: [{ ruta: '/foto.png', tipo: 'marcada', texto: 'f' }, vista('/v3.png'), vista('/v2.png'), vista('/v1.png')] });
+    const ms2 = hiloLocal.leerHilo('alya', id2).mensajes;
+    const vistas = (o) => { const p = []; hiloLocal.paraEnviar(ms2, { ...o, ver: (refs) => { p.push(...refs.map((r) => r.ruta)); return refs.map(() => 'u'); } }); return p.join(); };
+    check('con varias en un mensaje, las dos últimas son la foto y la vista más nueva', vistas({}) === '/foto.png,/v3.png');
+    check('…y con una del turno, la foto', vistas({ delTurno: 1 }) === '/foto.png');
+
     check('anotarTexto completa solo lo que falta', hiloLocal.anotarTexto('alya', id, '/b.png', 'llegó tarde') === true && hiloLocal.anotarTexto('alya', id, '/b.png', 'otra') === false);
     const d = hiloLocal.leerHilo('alya', id).mensajes;
     check('…y no toca nada más', d[4].imagenes[0].texto === 'llegó tarde' && d[0].imagenes[0].texto === 'la primera' && d.length === 8 && d[7].content === 'd');

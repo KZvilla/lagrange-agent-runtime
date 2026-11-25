@@ -30,6 +30,7 @@ const { sanearParaInyeccion } = require('./escaneo.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 const contaminados = require('./contaminados.js');
 const hiloLocal = require('./hilo-local.js');
+const { ErrorLock } = require('./archivos.js');
 const memoriaDelHilo = require('./memoria-del-hilo.js');
 // FEAT-215 — El alma ve con su propia visión.
 const ojosLib = require('./ojos.js');
@@ -474,6 +475,25 @@ async function charlar({
   };
   // FEAT-215 — El proveedor rechazó un pedido con imágenes: el resto del turno va sin ninguna.
   let sinImagenes = false;
+  /**
+   * FEAT-215 — Completa en el hilo la descripción de la foto, cuando llegue. Con el lock ocupado reintenta con `setTimeout` (nunca
+   * duerme el proceso) y, si no lo consigue, la deja: es lo mejor posible.
+   */
+  const anotarDescripcion = async (hiloDeLaFoto, motorDeLaFoto) => {
+    try {
+      const d = await describir();
+      const anotar = motorDeLaFoto && motorDeLaFoto.anotarTexto;
+      if (!d || !d.ok || !hiloDeLaFoto || typeof anotar !== 'function') return;
+      for (let i = 0; i < 5; i++) {
+        try { anotar.call(motorDeLaFoto, clave, hiloDeLaFoto, imagen.ruta, d.texto, env, { esperaMs: 0 }); return; } catch (err) {
+          if (!(err instanceof ErrorLock)) throw err;
+          await new Promise((r) => setTimeout(r, 100 * (i + 1)));
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`[almas] No se pudo completar la descripción en el hilo de ${clave}: ${err.message}\n`);
+    }
+  };
   // FEAT-210 — ¿Puede pedir una imagen en este turno? Lo decide el bot (activas, por alma, algún proveedor que pueda andar);
   // nunca en un turno aislado.
   const puedePedirImagen = Boolean(opciones.puedePedirImagen) && !opciones.aislado;
@@ -579,7 +599,7 @@ async function charlar({
       ofreceAnterior = Boolean(u && (!deAfuera(u) || pideEnEste()));
       if (V && !imagen) {
         const cs = ofreceAnterior ? candidatasDe([hilo, hiloAnterior]) : { lista: [], elegida: null };
-        ofrecidas = { porNumero: Boolean(V.hayNumeradas), varias: Boolean(V.varias), sinElegir: sinElegir(cs).filter(Boolean), elegida: (cs.elegida && cs.elegida.num) || null };
+        ofrecidas = { porNumero: Boolean(V.hayNumeradas), varias: Boolean(V.varias), sinElegir: sinElegir(cs), elegida: (cs.elegida && cs.elegida.num) || null };
       }
     }
     // Qué memoria ve el alma en este turno: entera si nace el hilo; si sigue, lo que cambió. Un hilo con contenido de afuera
@@ -681,6 +701,8 @@ async function charlar({
     // FEAT-215 — El proveedor no aceptó las imágenes: el mismo intento, una vez, sin ninguna (tampoco las del hilo).
     if (!resultado.ok && !resultado.cancelado && SIN_IMAGEN.has(resultado.status) && (miradas.imagenes.length || (ojos && ojos.viajaron()))) {
       sinImagenes = true;
+      // En la segunda pasada la foto va por el hilo: sin bytes, va con su descripción (que se espera acá).
+      if (turno && fotoSegura) await anotarDescripcion(turno.hilo, motor);
       if (!cancelado()) return intentarCon(eleccion, turno);
     }
     // Lo nuevo que vio, o que recibió en texto: solo lo suyo y lo seguro.
@@ -704,7 +726,8 @@ async function charlar({
   if (intento.resultado.preflight) return { ok: false, motivo: intento.resultado.error };
   const { pedido, hilo, cuenta, busqueda, claveHilo, memoriaVista, comoLoVio = null } = intento;
   // FEAT-215 — Si la segunda pasada tuvo que ir sin imágenes, la respuesta no salió de verlas.
-  const comoVio = () => (!sinImagenes ? comoLoVio : comoLoVio === 'hilo' ? null : comoLoVio && 'descripcion');
+  const comoVio = () => (!sinImagenes ? comoLoVio : comoLoVio === 'hilo' ? null
+    : comoLoVio && (!fotoSegura || (descripcionFoto && descripcionFoto.ok)) ? 'descripcion' : null);
   // FEAT-215 — Lo que se guarda con el mensaje de este turno (una sola vez: con dos pasadas, en la primera).
   let porGuardar = intento.imagenes || [];
   const motor = eleccion.motor;
@@ -738,14 +761,9 @@ async function charlar({
       const texto = (i) => (i.ruta === foto ? (descripcionFoto && descripcionFoto.texto) || null : i.texto);
       const imagenes = porGuardar.map((i) => ({ ruta: i.ruta, tipo: i.tipo, texto: texto(i) }));
       motor.agregarTurno({ clave, hilo: hiloNuevo, user: r.userEnviado, assistant, promptTokens: r.promptTokens, ...(imagenes.length ? { imagenes } : {}) }, env);
-      porGuardar = [];
       // La descripción que todavía no llegó se completa sola; que falle no cuesta nada.
-      if (foto && !descripcion && imagenes.some((i) => i.ruta === foto) && typeof motor.anotarTexto === 'function') {
-        const hiloDeLaFoto = hiloNuevo;
-        describir().then((d) => { if (d && d.ok) motor.anotarTexto(clave, hiloDeLaFoto, foto, d.texto, env); }).catch((err) => {
-          process.stderr.write(`[almas] No se pudo completar la descripción en el hilo de ${clave}: ${err.message}\n`);
-        });
-      }
+      porGuardar = [];
+      if (foto && !descripcion && imagenes.some((i) => i.ruta === foto)) anotarDescripcion(hiloNuevo, motor);
       return true;
     } catch (err) {
       process.stderr.write(`[almas] No se pudo guardar el turno de ${clave} en su hilo local: ${err.message}\n`);
@@ -772,6 +790,7 @@ async function charlar({
     // FEAT-210 — Una imagen pedida junto con una búsqueda se descarta: vale la de la pasada 2.
     if (extraido.imagenPedida) rechazosImagen.push('pasada-descartada');
     enElHilo = guardarEnHiloLocal(resultado, lineaDelPedido(pedida));
+    porGuardar = [];
     if (typeof opciones.onReinicio === 'function') {
       try { opciones.onReinicio(pedida); } catch {}
     }

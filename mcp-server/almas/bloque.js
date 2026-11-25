@@ -40,6 +40,12 @@ const RE_IMAGEN = /^imagen(-desde-foto|-desde-anterior)?\s*:\s*(.+)$/i;
 const RE_IMAGEN_NUM = /^imagen-desde ([^:]{1,120}):(.+)$/i;
 const RE_NUMEROS = /^#?\d{1,6}(?:(?: ?, ?(?:y )?| y | e | and | )#?\d{1,6})*$/i;
 const MAX_BASES = 4;
+/** FEAT-215 — «#7, #8», y las que no tienen número (de antes de numerar) se cuentan. */
+const listaDeVersiones = (nums) => {
+  const con = nums.filter(Boolean);
+  const sin = nums.length - con.length;
+  return [...con.map((n) => `#${n}`), ...(sin ? [`${sin} sin número`] : [])].join(', ');
+};
 
 /** FEAT-210 — `{ texto, desdeFoto, desdeAnterior }` si la línea pide una imagen, o `null`. FEAT-213 — `desdeAnterior`: la última del hilo. */
 function parsearImagen(linea) {
@@ -99,7 +105,7 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         ...(versiones && versiones.sinElegir.length > 1
           ? [
               '',
-              `La última imagen tiene varias versiones sin elegir: ${versiones.sinElegir.map((n) => `#${n}`).join(', ')}. Si el usuario pide un cambio y no dice sobre cuál,`,
+              `La última imagen tiene varias versiones sin elegir: ${listaDeVersiones(versiones.sinElegir)}. Si el usuario pide un cambio y no dice sobre cuál,`,
               `preguntale y no pidas la imagen. Si dice cuál, usá su número${versiones.varias ? '; si dice todas, todos' : ''}.`
             ]
           : versiones && versiones.elegida ? ['', `El usuario eligió partir de la #${versiones.elegida}: \`imagen-desde-anterior\` usa esa.`] : []),
