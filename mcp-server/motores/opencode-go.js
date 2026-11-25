@@ -101,7 +101,8 @@ function esfuerzoDe(modelo, pedido) {
  */
 function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = new Date() } = {}) {
   validarPedido(pedido);
-  const { prompt, modelo, esfuerzo, hilo, aislado, clave = null } = pedido;
+  // FEAT-215 — `imagenes`: las del turno (`{ url }`). `ver`: las del hilo que siguen a la vista; sin ella, ninguna.
+  const { prompt, modelo, esfuerzo, hilo, aislado, clave = null, imagenes = [], ver = null } = pedido;
   if (!modelo) throw new Error('motor opencode-go: el pedido no trae modelo.');
   const bloqueado = modeloBloqueado(ID, modelo);
   if (bloqueado) throw new Error(`motor opencode-go: ${bloqueado}.`);
@@ -110,7 +111,12 @@ function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = ne
   const previo = hilo && !aislado ? hiloLocal.leerHilo(clave, hilo, env) : null;
   const sistema = typeof pedido.sistema === 'string' && pedido.sistema.trim() ? pedido.sistema : agente.vozDelAlma();
   const user = `[Hoy es ${fechaDeHoy(ahora)}]\n\n${String(prompt || '')}`;
-  const messages = [{ role: 'system', content: sistema }, ...(previo ? previo.mensajes : []), { role: 'user', content: user }];
+  const partes = imagenes.map((i) => ({ type: 'image_url', image_url: { url: i.url } }));
+  const messages = [
+    { role: 'system', content: sistema },
+    ...hiloLocal.paraEnviar(previo ? previo.mensajes : [], { delTurno: imagenes.length, ver }),
+    { role: 'user', content: partes.length ? [{ type: 'text', text: user }, ...partes] : user }
+  ];
 
   // S2 — El modelo del pedido (ya validado contra la tabla); `thinking` y `reasoning_effort` viajan si el modelo los usa.
   const fila = modeloGo(modelo);
@@ -162,7 +168,8 @@ function interpretar(crudo, pedido = null) {
   const r = crudo || {};
   const base = {
     ok: false, cancelado: Boolean(r.cancelled), texto: '', hilo: null, uso: null, error: r.error || null, causa: r.causa || null,
-    modeloReal: (pedido && pedido.modelo) || null, costoUsd: null, cuota: null, anomalias: [], herramientas: [], promptTokens: null
+    modeloReal: (pedido && pedido.modelo) || null, costoUsd: null, cuota: null, anomalias: [], herramientas: [], promptTokens: null,
+    status: Number.isInteger(r.status) ? r.status : null
   };
   if (!r.success || !r.respuesta) return { ...base, error: base.error || 'OpenCode Go no respondió.' };
   const j = r.respuesta;
@@ -183,8 +190,19 @@ function hiloVigente(clave, hilo, env = process.env) {
   return hiloLocal.hiloVigente(clave, hilo, env);
 }
 
-function agregarTurno({ clave, hilo, user, assistant, promptTokens }, env = process.env) {
-  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens }, env);
+function agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env = process.env) {
+  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env);
+}
+
+/** FEAT-215 — ¿Este modelo ve imágenes en un turno de charla? La sonda vigente la mira quien llama. */
+function ve(modelo) {
+  const fila = modeloGo(modelo || MODELO_OPENCODE_GO);
+  return Boolean(fila && fila.vision);
+}
+
+/** FEAT-215 — La descripción de una imagen del hilo que llegó después del turno. */
+function anotarTexto(clave, hilo, ruta, texto, env = process.env) {
+  return hiloLocal.anotarTexto(clave, hilo, ruta, texto, env);
 }
 
 module.exports = {
@@ -202,6 +220,8 @@ module.exports = {
   interpretar,
   hiloVigente,
   agregarTurno,
+  ve,
+  anotarTexto,
   fechaEnTurno: true,
   fechaDeHoy,
   consultarCupo,

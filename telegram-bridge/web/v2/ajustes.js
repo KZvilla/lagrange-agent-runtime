@@ -34,7 +34,7 @@ const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ALTERNATIVAS = 3;
 const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz', 'imagenes']);
 // FEAT-210 — Los campos de la sección `imagenes` (la forma; el núcleo valida el resto).
-const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica', 'vision_propia', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const PROVEEDORES_IMAGEN = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 // FEAT-212 — Los casos, las familias de plantillas y las cargas de un perfil de modelo.
 const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
@@ -293,7 +293,7 @@ function imagenesV2(i) {
   return {
     activas: b(o.activas), refinar: b(o.refinar), alma_la_ve: b(o.alma_la_ve), otra_version: b(o.otra_version),
     fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias), reconocer_telegram: b(o.reconocer_telegram),
-    responder_usa_imagen: b(o.responder_usa_imagen), usar_ultima: b(o.usar_ultima), foto_cuenta: b(o.foto_cuenta), fuerza_automatica: b(o.fuerza_automatica),
+    responder_usa_imagen: b(o.responder_usa_imagen), usar_ultima: b(o.usar_ultima), foto_cuenta: b(o.foto_cuenta), fuerza_automatica: b(o.fuerza_automatica), vision_propia: b(o.vision_propia),
     tope_por_alma: entero(o.tope_por_alma),
     perfiles_propios: Object.fromEntries(Object.entries(esObjeto(o.perfiles_propios) ? o.perfiles_propios : {}).slice(0, 20).map(([id, p]) => [id, perfilImagenV2(id, p)]).filter(([, p]) => p)),
     orden: (Array.isArray(o.orden) ? o.orden : []).filter((p) => PROVEEDORES_IMAGEN.includes(p)),

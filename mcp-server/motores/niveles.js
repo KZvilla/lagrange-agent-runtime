@@ -79,6 +79,8 @@ const MODELOS_GO = Object.freeze({
     // `edicion` sondeada: corre con la sonda de edición vigente (`sondas-opencode-go.js`).
     perfiles: Object.freeze({ 'sin-tools': 'verificado', lectura: 'verificado', edicion: 'sondeado' }),
     niveles: Object.freeze(['low', 'high', 'max']), implicito: 'low', thinking: true, razon: 'reasoning_content',
+    // FEAT-215 — Ve imágenes en la charla, con la sonda de visión vigente (`imagenes/sonda-vision.js`, que prueba este modelo).
+    vision: true,
     evidencia: 'FEAT-173/175: almas y consolidación desde 2026-10-21; FEAT-176: audit, review y plan con lectura en producción; sonda de edición del 2026-11-21: pasa (3 pasos)'
   }),
   'glm-5.3': Object.freeze({

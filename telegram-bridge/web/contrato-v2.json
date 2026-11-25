@@ -471,6 +471,14 @@
                 "marcada",
                 "reconocida"
               ]
+            },
+            "vision": {
+              "type": "string",
+              "enum": [
+                "propia",
+                "descripcion"
+              ],
+              "description": "FEAT-215 — Cómo le llegaron al alma la foto segura o sus imágenes de este turno: con la visión de su modelo o descriptas. Ausente si no hubo ninguna."
             }
           }
         },

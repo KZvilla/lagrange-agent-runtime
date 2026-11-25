@@ -336,6 +336,30 @@ export function puedePedirImagen(task, config) {
   if (esChatWeb(task.chatId) && task.chatId !== CHAT_WEB_TERMINAL) return false;
   try { return imgDisponible().habilitadaPara(config, task.clave); } catch { return false; }
 }
+/**
+ * FEAT-215 — Qué puede ver el alma con su propia visión en este turno, con los interruptores de ahora; `null`, nada. Como
+ * `puedePedirImagen`: nunca en una reacción ni en un trabajo programado.
+ */
+export function visionDelTurno(task, config) {
+  if (!config.vision_propia || !herramientasDeCharla(task).length) return null;
+  return {
+    marcadas: Boolean(config.fotos_seguras), propias: Boolean(config.fotos_seguras && config.reconocer_propias), vistas: Boolean(config.alma_la_ve),
+    dirAdjuntos: dirAdjuntos()
+  };
+}
+
+/** FEAT-215 — Al arrancar: la sonda de visión, si algún alma corre en un modelo que ve y no está vigente. */
+function calentarVision() {
+  try {
+    if (!leerConfigImagenes().vision_propia) return;
+    const config = contextoMotorBot().config;
+    const ven = almasRutas.listarClaves().map((clave) => requireCjs('../mcp-server/motores/index.js').elegir(config, `alma:${clave}`)).filter((e) => typeof e.motor.ve === 'function' && e.motor.ve(e.modelo));
+    if (ven.length) requireCjs('../mcp-server/imagenes/vision.js').puedeVer({ log: (linea) => console.error(redactSecrets(linea)) });
+  } catch (err) {
+    console.error(`[imagenes] No se pudo mirar la sonda de visión: ${redactSecrets(err.message)}`);
+  }
+}
+
 // FEAT-072 — El ejecutor del motor claude, con la misma cancelación previa al
 // spawn que el de agy: un `/cancel` mientras se verifica no lanza nada.
 const { ejecutarClaude } = requireCjs('../mcp-server/motores/claude-ejecutar.js');
@@ -975,7 +999,9 @@ function cierreDeCharla(turno) {
       ...(turno.imagenPedida || turno.imagenRechazo
         ? { imagen: { pedida: turno.imagenPedida ? String(turno.imagenPedida.texto || '').slice(0, 300) : null, ...rechazoDeImagen(turno.imagenRechazo) } }
         : {}),
-      ...(turno.fotoSegura ? { fotoSegura: turno.fotoSegura } : {})
+      ...(turno.fotoSegura ? { fotoSegura: turno.fotoSegura } : {}),
+      // FEAT-215 — Cómo le llegó lo nuevo de este turno: con su visión o descripto.
+      ...(turno.vision ? { vision: turno.vision } : {})
     }
   };
 }
@@ -1325,6 +1351,7 @@ async function processTaskQueue(carril) {
               return u && { ...u, segura: u.externo === false && Boolean(configImagenes.fotos_seguras && configImagenes.reconocer_propias) };
             }
           } : {}),
+          ...(visionDelTurno(task, configImagenes) ? { vision: visionDelTurno(task, configImagenes) } : {}),
           ...(configImagenes.alma_la_ve ? { vistasPendientes: (clave, hilo) => imgIndice().vistasPendientes(clave, hilo) } : {}),
           onReinicio: (pedido) => parcial?.reiniciar(ESTADO_DE_PEDIDO[pedido?.tipo] || ESTADO_DE_PEDIDO.archivo),
           // FEAT-055 — Stream para mostrar la respuesta mientras se escribe.
@@ -3222,7 +3249,9 @@ export function pieDeMemoria(turno) {
   if (h?.tipo === 'link') lineas.push(h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`);
   if (turno.externo?.includes('foto')) lineas.push('🖼️ vio la foto (descrita por DeepSeek)');
   // FEAT-210 §2.2 — La foto segura no es de afuera: la vio la visión, entera.
-  if (turno.fotoSegura) lineas.push(`🔓 foto segura${turno.fotoSegura === 'reconocida' ? ' (era tuya)' : ''}${turno.fotoSeguraOrden ? ' · traía texto con forma de orden' : ''}`);
+  const comoLaVio = turno.vision === 'propia' ? '👁 la vio' : turno.vision === 'descripcion' ? '👁 la recibió descripta' : '';
+  if (turno.fotoSegura) lineas.push(`🔓 foto segura${turno.fotoSegura === 'reconocida' ? ' (era tuya)' : ''}${turno.fotoSeguraOrden ? ' · traía texto con forma de orden' : ''}${comoLaVio ? ` · ${comoLaVio}` : ''}`);
+  else if (comoLaVio) lineas.push(comoLaVio);
   if (turno.imagenPerdida) lineas.push('🖼️ no sé de qué imagen es la que respondiste (ya no la tengo)');
   // FEAT-210 §4 — La imagen que va a hacer, o por qué no (un solo motivo; el diario guarda la lista).
   if (turno.imagenPedida) lineas.push('🖼️ va a hacer una imagen');
@@ -7038,6 +7067,7 @@ async function main() {
     colaImagenes().alArrancar(rolDaemon === 'nodo' ? [] : almasRutas.listarClaves());
     // FEAT-213 — Un ComfyUI nuestro que quedó sin guardián (se cortó, o se actualizó el plugin) vuelve a tener uno.
     if (rolDaemon !== 'nodo') procesoComfy().adoptar().catch(() => {});
+    if (rolDaemon !== 'nodo') calentarVision();
   } catch (err) {
     console.error(`[imagenes] No se pudo revisar al arrancar: ${redactSecrets(err.message)}`);
   }

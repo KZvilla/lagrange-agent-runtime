@@ -30,7 +30,9 @@ const PROVEEDORES = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']
 const REMOTOS = Object.freeze({ openai: 'openai_imagen', gemini: 'gemini_imagen' });
 const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram',
   // FEAT-213 — Partir de una imagen.
-  'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica']);
+  'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica',
+  // FEAT-215 — El alma ve con la visión de su modelo.
+  'vision_propia']);
 const CAMPOS = Object.freeze([...BOOLEANOS, 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
@@ -70,6 +72,7 @@ function defectos() {
     usar_ultima: true,
     foto_cuenta: true,
     fuerza_automatica: true,
+    vision_propia: true,
     tope_por_alma: RANGOS.tope_por_alma.defecto,
     perfiles_propios: {},
     comfyui: {

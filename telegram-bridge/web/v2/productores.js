@@ -104,7 +104,8 @@ export function memoriaDe(m) {
     imagen: m.imagen && typeof m.imagen === 'object' && !Array.isArray(m.imagen)
       ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null, ...(typeof m.imagen.detalle === 'string' && m.imagen.detalle ? { detalle: m.imagen.detalle.slice(0, 40) } : {}) }
       : undefined,
-    fotoSegura: m.fotoSegura === 'marcada' || m.fotoSegura === 'reconocida' ? m.fotoSegura : undefined
+    fotoSegura: m.fotoSegura === 'marcada' || m.fotoSegura === 'reconocida' ? m.fotoSegura : undefined,
+    vision: m.vision === 'propia' || m.vision === 'descripcion' ? m.vision : undefined
   });
   return Object.keys(salida).length ? salida : null;
 }

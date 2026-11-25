@@ -30,6 +30,10 @@ const { sanearParaInyeccion } = require('./escaneo.js');
 const { fechaDeHoy } = require('../lib/fecha-hoy.js');
 const contaminados = require('./contaminados.js');
 const memoriaDelHilo = require('./memoria-del-hilo.js');
+// FEAT-215 — El alma ve con su propia visión.
+const ojosLib = require('./ojos.js');
+/** Lo que responde un proveedor que no acepta la imagen: se repite una vez sin ninguna. */
+const SIN_IMAGEN = new Set([400, 413, 415, 422]);
 const mediadorReal = require('./mediador.js');
 const webReal = require('./web.js');
 const { usoDe: usoDeDeepseek } = require('../motores/deepseek.js');
@@ -175,7 +179,7 @@ function registrarRechazosPorTope(clave, rechazadas, { compartido = false, env =
   });
 }
 
-function anotarEnDiario(clave, { respuesta, dicho = null, externo = false, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null, cuenta = null, hilo = null, fallback = false, recuerdos: dados = null, herramienta = null, imagen = null, fotoSegura = null }, env) {
+function anotarEnDiario(clave, { respuesta, dicho = null, externo = false, aplicadas, rechazadas, metadatos, motor = null, modeloReal = null, cuenta = null, hilo = null, fallback = false, recuerdos: dados = null, herramienta = null, imagen = null, fotoSegura = null, vision = null }, env) {
   try {
     // FEAT-053 — La superficie la dice quien llama (web o telegram). Sin
     // dato se asume telegram, que era el único origen antes de la consola web.
@@ -208,7 +212,7 @@ function anotarEnDiario(clave, { respuesta, dicho = null, externo = false, aplic
     // FEAT-210 — La imagen que pidió (o por qué no), y si la foto del turno era segura.
     const conImagen = imagen ? { imagen } : {};
     const conFotoSegura = fotoSegura ? { fotoSegura } : {};
-    diario.anotar(clave, { superficie, ...origen, ...quien, ...conRecuerdos, ...conHerramienta, ...conDicho, ...conExterno, ...conImagen, ...conFotoSegura, resumen: respuesta }, env);
+    diario.anotar(clave, { superficie, ...origen, ...quien, ...conRecuerdos, ...conHerramienta, ...conDicho, ...conExterno, ...conImagen, ...conFotoSegura, ...(vision ? { vision } : {}), resumen: respuesta }, env);
     // Igual que la consolidación de voz: registrar cada cambio deja trazabilidad.
     // En `olvidar`, a.texto es el valor quitado y preserva la única copia que
     // deja de existir en el archivo; en `reemplazar` es el nuevo valor aplicado.
@@ -382,7 +386,7 @@ async function charlar({
   rutas.validarClave(clave);
 
   // FEAT-172 — `mensaje` es siempre lo que escribió el usuario; con una foto,
-  // lo que ve el alma (`mensajeAlma`) le suma la descripción del mediador.
+  // lo que ve el alma le suma la descripción del mediador. FEAT-215: o la imagen misma, si el motor del intento ve.
   const imagen = opciones.imagen && opciones.imagen.ruta ? opciones.imagen : null;
   const mensaje = String(texto || '').trim();
   if (!mensaje && !imagen) return { ok: false, motivo: 'el mensaje está vacío' };
@@ -391,11 +395,14 @@ async function charlar({
   // FEAT-172 — La foto la mira el mediador, que no sabe nada del alma. Si la
   // vio, lo que trajo es de afuera y el hilo queda contaminado.
   let externo = null;
-  let mensajeAlma = mensaje;
   // FEAT-210 §2.2 — Una foto segura (marcada por el usuario o reconocida como propia): no contamina, y la describe la
   // visión en detalle. El bot ya decidió si cuenta (`imagenes.fotos_seguras`); acá solo se respeta.
   const fotoSegura = imagen && imagen.segura ? (imagen.origen === 'reconocida' ? 'reconocida' : 'marcada') : null;
   let descripcionFoto = null;
+  // FEAT-215 — La descripción es una promesa por turno: solo la espera un intento que no ve la foto.
+  let descripcion = null;
+  let describir = async () => null;
+  const permisosVision = opciones.vision && !opciones.aislado ? opciones.vision : null;
   if (imagen) {
     const inicioFoto = Date.now();
     const registrarMediador = (d) => registrarSinRomper(registrarUso, {
@@ -410,35 +417,53 @@ async function charlar({
         return { ok: false, motivo: err.message };
       }
     };
-    let descripcion = null;
-    if (fotoSegura) {
-      // Dentro del turno, con 60 s y la cancelación del turno. Si la visión no puede, el mediador; sigue segura.
-      let v;
-      try {
-        v = await vision.llamar({ partes: { texto: 'Describí esta foto.', imagen: { ruta: imagen.ruta } }, modo: 'foto-segura', signal: opciones.signal, timeoutMs: 60000, leer: contextoMotor.leerKeyGo, ejecutar: contextoMotor.ejecutarVision, fetchImpl: contextoMotor.fetchVision });
-      } catch (err) {
-        v = { ok: false, motivo: err.message };
+    const hacerla = async () => {
+      let d = null;
+      if (fotoSegura) {
+        // Dentro del turno, con 60 s y la cancelación del turno. Si la visión no puede, el mediador; sigue segura.
+        let v;
+        try {
+          v = await vision.llamar({ partes: { texto: 'Describí esta foto.', imagen: { ruta: imagen.ruta } }, modo: 'foto-segura', signal: opciones.signal, timeoutMs: 60000, leer: contextoMotor.leerKeyGo, ejecutar: contextoMotor.ejecutarVision, fetchImpl: contextoMotor.fetchVision });
+        } catch (err) {
+          v = { ok: false, motivo: err.message };
+        }
+        if (v.ok) {
+          d = { ok: true, texto: v.texto, orden: Boolean(v.orden) };
+          registrarSinRomper(registrarUso, {
+            tool: 'foto_segura', motor: 'opencode-go', rol: `alma:${clave}`, modelo: v.modelo || null, modeloReal: v.modelo || null,
+            esfuerzo: null, conversationId: null, duracion: (Date.now() - inicioFoto) / 1000, usage: v.uso || null, error: null, costoUsd: null,
+            origen: opciones.origen || 'usuario', cuota: null
+          });
+        }
       }
-      if (v.ok) {
-        descripcion = { ok: true, texto: v.texto, orden: Boolean(v.orden) };
-        registrarSinRomper(registrarUso, {
-          tool: 'foto_segura', motor: 'opencode-go', rol: `alma:${clave}`, modelo: v.modelo || null, modeloReal: v.modelo || null,
-          esfuerzo: null, conversationId: null, duracion: (Date.now() - inicioFoto) / 1000, usage: v.uso || null, error: null, costoUsd: null,
-          origen: opciones.origen || 'usuario', cuota: null
-        });
+      if (!d) {
+        d = await porMediador();
+        if (d.ok) {
+          registrarMediador(d);
+          // Una foto de afuera contamina el hilo; una segura, no.
+          if (!fotoSegura) externo = { motivos: ['foto'], tokens: d.tokens || [] };
+        }
       }
-    }
-    if (!descripcion) {
-      descripcion = await porMediador();
-      if (descripcion.ok) {
-        registrarMediador(descripcion);
-        // Una foto de afuera contamina el hilo; una segura, no.
-        if (!fotoSegura) externo = { motivos: ['foto'], tokens: descripcion.tokens || [] };
-      }
-    }
-    descripcionFoto = { ok: Boolean(descripcion.ok), texto: descripcion.ok ? descripcion.texto : null, orden: Boolean(descripcion.orden) };
-    mensajeAlma = mensajeConFoto(descripcion, mensaje, { segura: Boolean(fotoSegura), reconocida: fotoSegura === 'reconocida' });
+      descripcion = d;
+      descripcionFoto = { ok: Boolean(d.ok), texto: d.ok ? d.texto : null, orden: Boolean(d.orden) };
+      return d;
+    };
+    const promesa = hacerla().catch((err) => {
+      descripcion = { ok: false, motivo: err.message };
+      descripcionFoto = { ok: false, texto: null, orden: false };
+      return descripcion;
+    });
+    describir = () => promesa;
+    if (!fotoSegura || !permisosVision) await promesa;
   }
+  /** El mensaje sin visión propia: la descripción de la foto (si hay) y lo que escribió el usuario. */
+  const mensajeDescripto = async () => {
+    if (!imagen) return mensaje;
+    const d = await describir();
+    return mensajeConFoto(d, mensaje, { segura: Boolean(fotoSegura), reconocida: fotoSegura === 'reconocida' });
+  };
+  // FEAT-215 — El proveedor rechazó un pedido con imágenes: el resto del turno va sin ninguna.
+  let sinImagenes = false;
   // FEAT-210 — ¿Puede pedir una imagen en este turno? Lo decide el bot (activas, por alma, algún proveedor que pueda andar);
   // nunca en un turno aislado.
   const puedePedirImagen = Boolean(opciones.puedePedirImagen) && !opciones.aislado;
@@ -547,7 +572,22 @@ async function charlar({
         process.stderr.write(`[almas] No se pudo comparar la memoria de ${clave}: ${err.message}\n`);
       }
     }
-    const mensajeConVistas = [cambiosDeMemoria, !turno && vistas && vistas.length ? bloqueDeVistas(vistas) : '', mensajeAlma].filter(Boolean).join('\n\n');
+    // FEAT-215 — ¿Ve este intento? Lo dice el motor con su modelo, y la sonda. La segunda pasada ve por el hilo.
+    const ve = Boolean(permisosVision && !sinImagenes && typeof motor.ve === 'function' && motor.ve(modelo) && typeof vision.puedeVer === 'function'
+      && vision.puedeVer({ modelo: modelo || undefined, leer: contextoMotor.leerKeyGo, ejecutar: contextoMotor.ejecutarVision, fetchImpl: contextoMotor.fetchVision }));
+    const ojos = ve ? ojosLib.crearOjos({ clave, permisos: permisosVision, env }) : null;
+    const tipoFoto = fotoSegura === 'reconocida' ? 'propia' : 'marcada';
+    const vistasDelTurno = !turno && vistas ? vistas : [];
+    const miradas = ojos && !turno
+      ? ojos.delTurno({ foto: fotoSegura ? { ruta: imagen.ruta, tipo: tipoFoto } : null, vistas: vistasDelTurno })
+      : { imagenes: [], foto: false, conImagen: [], enTexto: vistasDelTurno };
+    let mensajeConVistas = mensaje;
+    if (!turno) {
+      const delUsuario = miradas.foto ? `${ojosLib.textoDeFoto(tipoFoto)}\n\n${mensaje || '(sin texto)'}` : await mensajeDescripto();
+      mensajeConVistas = [
+        cambiosDeMemoria, miradas.enTexto.length ? bloqueDeVistas(miradas.enTexto) : '', ...miradas.conImagen.map(ojosLib.textoDeVista), delUsuario
+      ].filter(Boolean).join('\n\n');
+    }
     const pedido = {
       perfil: 'sin-tools',
       prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior, pideImagen: puedePedirImagen && pideEnEste() }),
@@ -560,7 +600,8 @@ async function charlar({
       aislado: Boolean(opciones.aislado),
       // FEAT-166 — El motor deepseek ubica el hilo local por la clave del alma.
       clave,
-      ...(cuenta ? { cuenta } : {})
+      ...(cuenta ? { cuenta } : {}),
+      ...(ojos ? { imagenes: miradas.imagenes, ver: ojos.ver } : {})
     };
 
     const inicio = Date.now();
@@ -608,7 +649,16 @@ async function charlar({
       origen,
       cuota: resultado.cuota
     });
-    return { resultado, pedido, hilo, hiloNuevo, duracion, cuenta, busqueda, claveHilo, memoriaVista };
+    // FEAT-215 — El proveedor no aceptó las imágenes: el mismo intento, una vez, sin ninguna (tampoco las del hilo).
+    if (!resultado.ok && !resultado.cancelado && SIN_IMAGEN.has(resultado.status) && (miradas.imagenes.length || (ojos && ojos.viajaron()))) {
+      sinImagenes = true;
+      if (!cancelado()) return intentarCon(eleccion, turno);
+    }
+    // Lo nuevo que vio, o que recibió en texto: solo lo suyo y lo seguro.
+    const comoLoVio = !permisosVision || turno ? null
+      : miradas.imagenes.length ? 'propia'
+        : (fotoSegura && descripcionFoto && descripcionFoto.ok) || vistasDelTurno.some((v) => !v.externo && !v.vistaOrden) ? 'descripcion' : null;
+    return { resultado, pedido, hilo, hiloNuevo, duracion, cuenta, busqueda, claveHilo, memoriaVista, imagenes: miradas.imagenes, comoLoVio };
   };
 
   // FEAT-097 — Si agy no puede y `fallback_agy` está activo, una vez más con
@@ -622,7 +672,11 @@ async function charlar({
   });
   const { eleccion, fallback } = intento;
   if (intento.resultado.preflight) return { ok: false, motivo: intento.resultado.error };
-  const { pedido, hilo, cuenta, busqueda, claveHilo, memoriaVista } = intento;
+  const { pedido, hilo, cuenta, busqueda, claveHilo, memoriaVista, comoLoVio = null } = intento;
+  // FEAT-215 — Si la segunda pasada tuvo que ir sin imágenes, la respuesta no salió de verlas.
+  const comoVio = () => (comoLoVio === 'propia' && sinImagenes ? 'descripcion' : comoLoVio);
+  // FEAT-215 — Lo que se guarda con el mensaje de este turno (una sola vez: con dos pasadas, en la primera).
+  let porGuardar = intento.imagenes || [];
   const motor = eleccion.motor;
   let { resultado, hiloNuevo, duracion } = intento;
   let uso = resultado.uso;
@@ -650,7 +704,18 @@ async function charlar({
     if (typeof motor.agregarTurno !== 'function') return true;
     if (opciones.aislado || !hiloNuevo || !r.userEnviado) return false;
     try {
-      motor.agregarTurno({ clave, hilo: hiloNuevo, user: r.userEnviado, assistant, promptTokens: r.promptTokens }, env);
+      const foto = imagen && fotoSegura ? imagen.ruta : null;
+      const texto = (i) => (i.ruta === foto ? (descripcionFoto && descripcionFoto.texto) || null : i.texto);
+      const imagenes = porGuardar.map((i) => ({ ruta: i.ruta, tipo: i.tipo, texto: texto(i) }));
+      porGuardar = [];
+      motor.agregarTurno({ clave, hilo: hiloNuevo, user: r.userEnviado, assistant, promptTokens: r.promptTokens, ...(imagenes.length ? { imagenes } : {}) }, env);
+      // La descripción que todavía no llegó se completa sola; que falle no cuesta nada.
+      if (foto && !descripcion && imagenes.some((i) => i.ruta === foto) && typeof motor.anotarTexto === 'function') {
+        const hiloDeLaFoto = hiloNuevo;
+        describir().then((d) => { if (d && d.ok) motor.anotarTexto(clave, hiloDeLaFoto, foto, d.texto, env); }).catch((err) => {
+          process.stderr.write(`[almas] No se pudo completar la descripción en el hilo de ${clave}: ${err.message}\n`);
+        });
+      }
       return true;
     } catch (err) {
       process.stderr.write(`[almas] No se pudo guardar el turno de ${clave} en su hilo local: ${err.message}\n`);
@@ -778,7 +843,7 @@ async function charlar({
   const diarioImagen = linea || rechazosImagen.length
     ? { pedida: linea ? linea.texto : null, desdeFoto: Boolean(linea && linea.desdeFoto && imagen), ...(linea && linea.desdeAnterior ? { desdeAnterior: true } : {}), rechazo: imagenPedida ? rechazosImagen.filter((m) => m === 'una-por-turno' || m === 'pasada-descartada') : rechazosImagen }
     : null;
-  anotarEnDiario(clave, { respuesta, dicho: mensaje, externo: contaminado, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo, fallback: Boolean(fallback), recuerdos: dados, herramienta, imagen: diarioImagen, fotoSegura }, env);
+  anotarEnDiario(clave, { respuesta, dicho: mensaje, externo: contaminado, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo, fallback: Boolean(fallback), recuerdos: dados, herramienta, imagen: diarioImagen, fotoSegura, vision: comoVio() }, env);
 
   return {
     ...base(),
@@ -796,6 +861,7 @@ async function charlar({
     imagenRechazos: rechazosImagen,
     vistasIncluidas: (vistas || []).map((v) => ({ tareaId: v.tareaId, n: v.n })),
     fotoSegura,
+    ...(comoVio() ? { vision: comoVio() } : {}),
     ...(fotoSegura && descripcionFoto && descripcionFoto.orden ? { fotoSeguraOrden: true } : {}),
     // FEAT-172 — Quien aplica el tablero es el bot: vaciarlo acá es lo que lo frena.
     tablero: contaminado ? { operaciones: [], sobrantes: 0 } : { operaciones: deTablero.operaciones, sobrantes: deTablero.sobrantes }

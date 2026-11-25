@@ -176,6 +176,11 @@ function fotoPermitida(ruta, { dirAdjuntos = null, env = process.env } = {}) {
   return null;
 }
 
+/** FEAT-215 — Una imagen que el alma puede ver con su visión: en SU carpeta de imágenes o en la de adjuntos. Sin base, no. */
+function rutaDeVista(clave, ruta, { dirAdjuntos = null, env = process.env } = {}) {
+  return (dirAdjuntos && rutaDentroDe(dirAdjuntos, ruta)) || rutaDentroDe(dirImagenes(clave, env), ruta);
+}
+
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 
 /** FEAT-213 — Solo `externo: false`, escrito, es de adentro: lo desconocido cuenta como externo. */
@@ -254,7 +259,7 @@ function vistasPendientes(clave, hilo, env = process.env, ahora = Date.now()) {
       const ruta = archivoDe(clave, e, env);
       return Boolean(ruta && fs.existsSync(ruta));
     })
-    .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden) }));
+    .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden), ruta: archivoDe(clave, e, env) }));
 }
 
 /** §2.1 — Marca entregadas las vistas que llevó un turno que terminó bien. */
@@ -272,5 +277,5 @@ function vaciarTmp(clave, env = process.env) {
 module.exports = {
   TOPE_POR_ALMA, RE_TAREA, dirImagenes, dirIndice, dirTmp, rutaIndice, rutaArchivo, leer, actualizar, borrar, listar, sha256,
   construirMapa, construirMapaTelegram, vistasPendientes, marcarEntregadas, vaciarTmp,
-  claves, rutaDentroDe, archivoDe, fotoPermitida, esExterna, porMensaje, anotarTelegram, ultimaImagen
+  claves, rutaDentroDe, archivoDe, fotoPermitida, rutaDeVista, esExterna, porMensaje, anotarTelegram, ultimaImagen
 };
