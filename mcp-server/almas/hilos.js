@@ -82,6 +82,13 @@ function hiloDe(clave, { ventanaMs = VENTANA_MS, ahora = Date.now(), env = proce
   return ahora - ultimo > ventanaMs ? null : h.conversation_id;
 }
 
+/** FEAT-213 — El hilo guardado de ese motor, aunque la ventana haya vencido (no después de `olvidarHilo`). */
+function hiloGuardado(clave, { env = process.env, motor = MOTOR_POR_DEFECTO } = {}) {
+  validarClave(clave);
+  const h = hiloDelMotor(leerEstado(env).almas[clave], motor);
+  return h ? h.conversation_id : null;
+}
+
 /** Anota el turno y su hilo. Se llama aunque el turno haya fallado: perder el hilo obliga a empezar de cero. */
 function registrarTurno(clave, { conversationId, motor = MOTOR_POR_DEFECTO } = {}, env = process.env) {
   validarClave(clave);
@@ -152,6 +159,6 @@ function esHiloDeAlma(conversationId, env = process.env) {
 }
 
 module.exports = {
-  VENTANA_MS, rutaEstado, leerEstado, hiloDe, registrarTurno, olvidarHilo, esHiloDeAlma,
+  VENTANA_MS, rutaEstado, leerEstado, hiloDe, hiloGuardado, registrarTurno, olvidarHilo, esHiloDeAlma,
   motorDeHiloDeAlma, hilosDe, ultimoTurno
 };

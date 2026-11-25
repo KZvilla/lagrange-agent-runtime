@@ -13,6 +13,11 @@
  * Toda transición de una entrada pasa por `transicionImagen` (un `actualizar`
  * de la tarea, que avisa con `cambioImagen`). Lo privado (rutas, hilo, vista)
  * va al índice del alma, nunca a la tarea.
+ *
+ * FEAT-213 — Si ComfyUI no responde y se puede levantar, el trabajo espera aparte
+ * (`esperando`): la cola sigue con los demás. Una imagen puede tener una base fija
+ * (`baseFija`: nunca sale una nueva en su lugar) o una foto que el refinador puede
+ * no usar (`fotoOpcional`).
  */
 
 import crypto from 'node:crypto';
@@ -33,7 +38,10 @@ const catalogos = perezoso('../mcp-server/imagenes/catalogo.js');
 
 export const TOPE_COLA_IMAGENES = 4;
 export const TOPE_IMAGENES_TURNO = 4;
-const SIGUE_CON_EL_PROXIMO = new Set(['no-responde', 'no-implementado', 'manual', 'cupo']);
+// FEAT-213 — Las que esperan que levante ComfyUI tienen su propio tope: no le quitan lugar a las demás.
+export const TOPE_ESPERANDO = 4;
+const USO_MS = 30 * 1000;
+const SIGUE_CON_EL_PROXIMO = new Set(['no-responde', 'no-implementado', 'manual', 'cupo', 'otro-programa']);
 const ESPERA_COLGADO_MS = 300 * 1000;
 const EXT = Object.freeze({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' });
 
@@ -43,13 +51,18 @@ const EXT = Object.freeze({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp
  * - `proveedor(id, imagenes)`: el proveedor con la config vigente (ComfyUI, agy, los remotos);
  * - `leerConfig()`: la sección `imagenes` normalizada, leída ahora;
  * - `catalogoDe(url)`: el catálogo de ComfyUI (de su caché) o `null`;
- * - `refinador`, `vision`, `registrarUso`, `log`, `env` (para las rutas de las almas).
+ * - `refinador`, `vision`, `registrarUso`, `log`, `env` (para las rutas de las almas);
+ * - FEAT-213: `comfy` (`comprobar(config)`, `levantar(config)` y `anotarUso(config)` del proceso de ComfyUI), `dirAdjuntos()`,
+ *   `fotosEnUso()` (las rutas de las fotos de los turnos abiertos) y `alCambiar(clave)` (una imagen nueva, borrada o podada).
  */
 export function crearColaImagenes({
   registro, proveedor, leerConfig = () => disponible.leerImagenes(), refinador = refinadorReal, vision = visionReal,
-  catalogoDe = (url) => catalogos.catalogoDe(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined
+  catalogoDe = (url) => catalogos.catalogoDe(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined,
+  comfy = null, dirAdjuntos = () => null, fotosEnUso = () => [], alCambiar = () => {}
 }) {
   const pendientes = [];
+  const esperando = new Set();
+  let relojUso = null;
   let enCurso = null;
   let colgadoHasta = 0;
   let mapaSha = null;
@@ -66,6 +79,22 @@ export function crearColaImagenes({
     if (i >= 0) lista[i] = { ...lista[i], ...cambios };
     else lista.push({ n, ...cambios });
     return registro.actualizar(tareaId, { imagenes: lista });
+  }
+
+  function cambio(clave) { try { alCambiar(clave); } catch {} }
+
+  /** FEAT-213 — El uso que ve el guardián de ComfyUI: al encolar y cada 30 s mientras haya alguna. */
+  function anotarUso() {
+    if (!comfy) return;
+    const uno = () => { try { comfy.anotarUso(leerConfig()); } catch {} };
+    uno();
+    if (relojUso) return;
+    relojUso = setInterval(() => {
+      if (pendientes.length || enCurso || esperando.size) return uno();
+      clearInterval(relojUso);
+      relojUso = null;
+    }, USO_MS);
+    relojUso.unref?.();
   }
 
   function error(job, codigo, extra = {}) {
@@ -115,10 +144,13 @@ export function crearColaImagenes({
     if (!pedidoJob.n && lista.length >= TOPE_IMAGENES_TURNO) return { ok: false, codigo: 'tope-turno' };
     const job = { intento: 1, ...pedidoJob, n, control: new AbortController(), idEnvio: crypto.randomUUID() };
     if (job.crearEnvio) job.envio = job.crearEnvio(job.clave, n);
+    // FEAT-213 — Una base de afuera de las carpetas de siempre no se lee.
+    const permitida = job.foto ? fotoPermitida(job.foto.ruta) : null;
+    if (permitida) job.foto = { ...job.foto, ruta: permitida };
     const base = {
       estado: 'generando', pedido: String(job.pedido || '').slice(0, 300), desdeFoto: Boolean(job.desdeFoto), intento: job.intento,
       ancho: 1024, alto: 1024, creada: ahora().toISOString(), terminada: null, codigo: null, mensaje: null,
-      sinChequeoZona: undefined, loras: undefined,
+      sinChequeoZona: undefined, loras: undefined, cambio: undefined, fuerza: undefined,
       ...(job.prompt ? { prompt: job.prompt, negativo: job.negativo || '' } : {})
     };
     transicionImagen(job.tareaId, n, base);
@@ -128,6 +160,7 @@ export function crearColaImagenes({
       indice.actualizar(job.clave, job.tareaId, n, (p) => ({
         ...(p || {}), hilo: job.hilo || (p && p.hilo) || null, externo: Boolean(job.externo),
         fotoRuta: job.foto ? job.foto.ruta : (p && p.fotoRuta) || null, fotoSegura: Boolean(job.foto && job.foto.segura),
+        baseFija: Boolean(job.baseFija), fotoOpcional: Boolean(job.fotoOpcional),
         // FEAT-212 §7 — El id de este intento: una descarga vieja no le pega su sha a la imagen nueva.
         telegram: { sha256: null, envio: job.idEnvio },
         creada: (p && p.creada) || ahora().toISOString()
@@ -136,11 +169,17 @@ export function crearColaImagenes({
       log(`[imagenes] no se pudo anotar ${job.tareaId}#${n} en el índice: ${err.message}`);
     }
     mapaTelegram = null;
+    if (job.foto && !permitida) {
+      log(`[imagenes] la foto de ${job.tareaId}#${n} está fuera de su carpeta; no se usa`);
+      error(job, 'foto-perdida');
+      return { ok: false, codigo: 'foto-perdida', n };
+    }
     if (pendientes.length >= TOPE_COLA_IMAGENES) {
       error(job, 'cola-llena');
       return { ok: false, codigo: 'cola-llena', n };
     }
     pendientes.push(job);
+    anotarUso();
     Promise.resolve().then(siguiente);
     return { ok: true, n };
   }
@@ -152,6 +191,7 @@ export function crearColaImagenes({
     const job = pendientes.shift();
     enCurso = job;
     try {
+      if (await esperarComfy(job)) return;
       await trabajo(job);
     } catch (err) {
       log(`[imagenes] el trabajo de ${job.tareaId}#${job.n} falló: ${err.message}`);
@@ -162,6 +202,43 @@ export function crearColaImagenes({
     }
   }
 
+  /**
+   * FEAT-213 — ¿ComfyUI es el primero que puede con este trabajo? Una foto que podía no usarse, sin refinar todavía, puede ir a
+   * cualquiera de los dos: para levantarlo cuenta (`opcional: true`); para cortarla, solo si una nueva también va a él.
+   */
+  function primeroComfy(job, config, { opcional = false } = {}) {
+    const conFoto = Boolean((job.desdeFoto || (job.fotoOpcional && (opcional || job.caso))) && job.foto);
+    const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual })[job.caso || (conFoto ? 'variacion' : 'nueva')];
+    return Boolean(d && d.proveedores[0] === 'comfyui');
+  }
+
+  /**
+   * FEAT-213 — ¿Hay que levantar ComfyUI para este trabajo? Si sí, el trabajo queda en `esperando` y vuelve a la cola cuando
+   * ComfyUI responde o la espera se acaba. `true` si quedó esperando (o cerrado).
+   */
+  async function esperarComfy(job) {
+    if (!comfy || job.comfyVisto || job.control.signal.aborted) return false;
+    job.comfyVisto = true;
+    const config = leerConfig();
+    if (!config.comfyui.arranque || !config.comfyui.arranque.carpeta || !config.comfyui.arranque.automatico) return false;
+    if (!habilitada(config, job.clave)) return false;
+    if (!primeroComfy(job, config, { opcional: true })) return false;
+    if ((await comfy.comprobar(config)) !== 'no-responde') return false;
+    if (job.control.signal.aborted) return false;
+    const promesa = comfy.levantar(config);
+    if (!promesa) return false;
+    if (esperando.size >= TOPE_ESPERANDO) { error(job, 'cola-llena'); return true; }
+    esperando.add(job);
+    transicionImagen(job.tareaId, job.n, { mensaje: 'Levantando ComfyUI…' });
+    Promise.resolve(promesa).catch(() => null).then(() => {
+      if (!esperando.delete(job) || job.cerrado) return;
+      transicionImagen(job.tareaId, job.n, { mensaje: null });
+      pendientes.unshift(job);
+      siguiente();
+    });
+    return true;
+  }
+
   const habilitada = (config, clave) => disponible.habilitadaPara(config, clave, opcionesManual);
 
   async function trabajo(job) {
@@ -170,12 +247,13 @@ export function crearColaImagenes({
     if (!habilitada(config, job.clave)) return error(job, 'apagadas');
     if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
 
-    const conFoto = Boolean(job.desdeFoto && job.foto);
+    const conFoto = Boolean((job.desdeFoto || job.fotoOpcional) && job.foto);
+    const base = conFoto && job.baseFija ? 'fija' : conFoto && job.fotoOpcional ? 'opcional' : null;
     const disponiblesDe = async (c) => casosLib.disponiblesDe(c, {
       desdeFoto: conFoto, catalogo: c.orden.includes('comfyui') ? await catalogoDe(c.comfyui.url) : null, ...opcionesManual
     });
     // Si otro proveedor del orden hace imágenes pero no puede ahora (agy en manual), se nombra a cada uno con su motivo.
-    const sinCaso = (d) => (d.nueva.afuera.some((a) => a.proveedor !== 'comfyui')
+    const sinCaso = (d) => (base === 'fija' ? error(job, 'sin-base') : d.nueva.afuera.some((a) => a.proveedor !== 'comfyui')
       ? error(job, 'sin-proveedor', { intentos: d.nueva.afuera })
       : error(job, 'sin-caso', { motivo: d.nueva.motivo || '' }));
 
@@ -184,16 +262,16 @@ export function crearColaImagenes({
     if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
     let r;
     if (job.prompt || job.instruccion) {
-      const pedido = { prompt: job.prompt || '', negativo: job.negativo || '', proporcion: job.proporcion || '1:1', zona: job.zona || '', instruccion: job.instruccion || '', loras: job.loras || [] };
+      const pedido = { prompt: job.prompt || '', negativo: job.negativo || '', proporcion: job.proporcion || '1:1', zona: job.zona || '', instruccion: job.instruccion || '', loras: job.loras || [], cambio: job.cambio || null, fuerza: job.fuerza ?? null };
       // Una entrada de antes de 2.19 no tiene caso: sale de si lleva foto.
       const casoPedido = job.caso || (conFoto ? 'variacion' : 'nueva');
-      const caso = casosLib.bajarCaso(casoPedido, disponibles, pedido);
+      const caso = casosLib.bajarCaso(casoPedido, disponibles, pedido, { base: base === 'fija' });
       if (!caso) return sinCaso(disponibles);
       r = { ...(casosLib.ajustarAlCaso(pedido, caso, disponibles[caso]) || pedido), caso, casoPedido: job.casoPedido || casoPedido };
     } else {
       r = config.refinar
-        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, desdeFoto: conFoto, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
-        : refinador.sinRefinar(job.pedido, { disponibles, desdeFoto: conFoto });
+        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, desdeFoto: conFoto, base, fuerzaAutomatica: config.fuerza_automatica !== false, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
+        : refinador.sinRefinar(job.pedido, { disponibles, desdeFoto: conFoto, base });
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
       // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo del perfil).
       if (config.refinar && r.refinado === false) log(`[imagenes] ${job.tareaId}/${job.n}: sin refinar (${String(r.motivo || 'sin motivo').slice(0, 200)}); va el texto del alma`);
@@ -205,21 +283,24 @@ export function crearColaImagenes({
     if (!habilitada(config, job.clave)) return error(job, 'apagadas');
     disponibles = await disponiblesDe(config);
     if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
-    const caso = casosLib.bajarCaso(r.caso, disponibles, r);
+    const caso = casosLib.bajarCaso(r.caso, disponibles, r, { base: base === 'fija' });
     if (!caso) return sinCaso(disponibles);
     const d = disponibles[caso];
     const hecha = casosLib.ajustarAlCaso(r, caso, d) || r;
-    const { prompt, negativo, proporcion, zona, instruccion, loras } = hecha;
+    const { prompt, negativo, proporcion, zona, instruccion, loras, cambio: cuanto = null, fuerza = null } = hecha;
+    // FEAT-213 — Con una foto que podía no usarse, la entrada dice lo que pasó.
+    const desdeFoto = job.fotoOpcional ? conFoto && caso !== 'nueva' : Boolean(job.desdeFoto);
     const casoPedido = r.casoPedido || caso;
     const [ancho, alto] = d.perfil.medidas[proporcion];
     const conComfy = d.proveedores.includes('comfyui');
     // Lo que hace falta para repetirla queda en el índice antes de generar: una que falla también se puede repetir.
     try {
       indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? {
-        ...p, prompt, negativo, proporcion, caso, casoPedido, zona, instruccion, loras: loras.map((l) => l.clave), perfil: conComfy ? d.perfil.id : null
+        ...p, prompt, negativo, proporcion, caso, casoPedido, zona, instruccion, loras: loras.map((l) => l.clave), perfil: conComfy ? d.perfil.id : null,
+        cambio: cuanto, fuerza
       } : null), env);
     } catch {}
-    transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null });
+    transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null, desdeFoto, cambio: cuanto || undefined, fuerza: fuerza ?? undefined });
     const tmp = indice.dirTmp(job.clave, env);
     fs.mkdirSync(tmp, { recursive: true });
     const intentos = [];
@@ -229,11 +310,18 @@ export function crearColaImagenes({
       const p = proveedor(id, config);
       if (!p) continue;
       transicionImagen(job.tareaId, job.n, { proveedor: id, ancho, alto });
+      job.proveedor = id;
+      // FEAT-213 — Si en esa dirección contesta otra cosa, no recibe nada.
+      if (id === 'comfyui' && comfy) {
+        const estado = await comfy.comprobar(config);
+        if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
+        if (estado !== 'ok') { intentos.push({ proveedor: id, codigo: estado }); continue; }
+      }
       const destino = path.join(tmp, `${job.tareaId}-${job.n}-${job.intento}-${id}`);
       let g;
       try {
         g = await p.generar({
-          caso, modelo: d.modelo, perfil: d.perfil, prompt: id === 'antigravity' ? casosLib.recortarParaAgy(prompt) : prompt, negativo, ancho, alto, semilla: job.semilla,
+          caso, modelo: d.modelo, perfil: d.perfil, prompt: id === 'antigravity' ? casosLib.recortarParaAgy(prompt) : prompt, negativo, ancho, alto, semilla: job.semilla, fuerza,
           foto: caso !== 'nueva' && job.foto ? job.foto.ruta : null, zona, instruccion, loras, signal, destino, origen: job.origen, rol: `alma:${job.clave}`
         });
       } catch (err) {
@@ -247,7 +335,9 @@ export function crearColaImagenes({
       if (!SIGUE_CON_EL_PROXIMO.has(g.codigo)) return error(job, g.codigo || 'error', g.extra || {});
       intentos.push({ proveedor: id, codigo: g.codigo });
     }
+    job.proveedor = null;
     if (!hecho) {
+      if (base === 'fija') return error(job, 'sin-base');
       const otro = config.orden.some((id) => id !== 'comfyui' && casosLib.declara(id, caso));
       if (!otro && intentos.some((i) => i.proveedor === 'comfyui' && i.codigo === 'no-responde')) return error(job, 'solo-comfyui');
       // Los que ni se probaron (agy en manual, un remoto) también se nombran, en el orden del usuario.
@@ -265,12 +355,15 @@ export function crearColaImagenes({
     const bytes = fs.readFileSync(final);
     const sha = indice.sha256(bytes);
     // La imagen derivada de una foto segura no contamina; de una foto de afuera o de un hilo ya externo, sí.
-    const externo = Boolean(job.externo) || Boolean(job.desdeFoto && job.foto && !job.foto.segura);
+    const externo = Boolean(job.externo) || Boolean(conFoto && !job.foto.segura);
     const previo = indice.leer(job.clave, job.tareaId, job.n, env);
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
       ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
       hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
       perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
+      // FEAT-213 — Lo que muestra la galería cuando la tarea ya no está en el registro.
+      proveedor: hecho.proveedor, modelo: hecho.modelo || null, ancho: hecho.ancho, alto: hecho.alto, bytes: bytes.length, cambio: cuanto, fuerza,
+      lorasUsadas: Array.isArray(hecho.loras) ? hecho.loras : [],
       // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
       lista: true, vista: null, vistaOrden: false, vistaEntregada: false,
       vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, vistaDesde: ahora().toISOString(),
@@ -278,15 +371,17 @@ export function crearColaImagenes({
       creada: ahora().toISOString(), intento: job.intento
     }), env);
     // Los intentos anteriores de esa n se borran.
-    if (previo && previo.archivo && previo.archivo !== final) { try { fs.rmSync(previo.archivo, { force: true }); } catch {} if (previo.sha256) mapa().delete(previo.sha256); }
-    mapa().set(sha, { clave: job.clave, tareaId: job.tareaId, n: job.n });
+    if (previo && previo.archivo && previo.archivo !== final) { borrarArchivo(job.clave, previo); if (previo.sha256) mapa().delete(previo.sha256); }
+    mapa().set(sha, { clave: job.clave, tareaId: job.tareaId, n: job.n, externo });
     transicionImagen(job.tareaId, job.n, {
       estado: 'lista', tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
-      semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
+      semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && !job.fotoOpcional && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
       loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString()
     });
+    job.hecha = true;
     podar(job.clave, job);
-    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo, idEnvio: job.idEnvio })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
+    cambio(job.clave);
+    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo, idEnvio: job.idEnvio, caso })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
 
     // 4. Mirar (§2.1): lo que salió, para el turno siguiente del mismo hilo.
     if (config.alma_la_ve && !signal.aborted) await mirar(job, final, prompt);
@@ -335,14 +430,52 @@ export function crearColaImagenes({
     } catch {}
   }
 
-  /** El tope de 500 por alma: la más vieja se borra; su entrada pasa a `borrada` si la tarea sigue. */
+  /** FEAT-213 — Una foto de base que se puede leer: la de los adjuntos o la de la carpeta de imágenes de un alma. */
+  const fotoPermitida = (ruta) => indice.fotoPermitida(ruta, { dirAdjuntos: dirAdjuntos(), env });
+
+  // Una vez por imagen: se lista muchas veces.
+  const avisadas = new Set();
+  function avisarAfuera(e) {
+    const k = `${e.tareaId}#${e.n}`;
+    if (avisadas.has(k)) return;
+    avisadas.add(k);
+    log(`[imagenes] el archivo de ${k} está fuera de su carpeta; se saltea`);
+  }
+
+  /** Borra el archivo de una entrada, solo si está en la carpeta de su alma. */
+  function borrarArchivo(clave, e) {
+    const ruta = indice.archivoDe(clave, e, env);
+    if (!ruta) { avisarAfuera(e); return false; }
+    try { fs.rmSync(ruta, { force: true }); return true; } catch { return false; }
+  }
+
+  const misma = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+  /** FEAT-213 — ¿Alguien la está usando? La base de una imagen que todavía no está, o la foto de un turno abierto. */
+  function enUso(clave, e) {
+    if ([...pendientes, ...esperando, enCurso].some((j) => j && j.clave === clave && j.tareaId === e.tareaId && j.n === e.n)) return true;
+    const ruta = indice.archivoDe(clave, e, env);
+    if (!ruta) return false;
+    let abiertas = [];
+    try { abiertas = fotosEnUso() || []; } catch {}
+    const usadas = [...[...pendientes, ...esperando, enCurso].map((j) => j && j.foto && j.foto.ruta), ...abiertas].filter(Boolean);
+    return usadas.some((u) => { let r = u; try { r = fs.realpathSync.native(u); } catch {} return misma(r, ruta); });
+  }
+
+  /** El tope por alma (`tope_por_alma`; 0 = nunca): la más vieja se borra; su entrada pasa a `borrada` si la tarea sigue. */
   function podar(clave, actual = null) {
-    // La que se acaba de hacer nunca se poda (todavía no se mandó).
+    const tope = leerConfig().tope_por_alma ?? indice.TOPE_POR_ALMA;
+    if (!tope) return;
+    // La que se acaba de hacer nunca se poda (todavía no se mandó), ni una que alguien está usando.
     const todas = indice.listar(clave, env).filter((e) => e.archivo && !(actual && e.tareaId === actual.tareaId && e.n === actual.n));
-    const sobran = todas.length + (actual ? 1 : 0) - indice.TOPE_POR_ALMA;
-    for (let i = 0; i < sobran; i++) {
-      const e = todas[i];
-      try { fs.rmSync(e.archivo, { force: true }); } catch {}
+    let sobran = todas.length + (actual ? 1 : 0) - tope;
+    for (const e of todas) {
+      if (sobran <= 0) break;
+      if (enUso(clave, e)) continue;
+      sobran--;
+      // Una que apunta afuera de su carpeta se saltea entera: ni el archivo ni la entrada.
+      if (!indice.archivoDe(clave, e, env)) { avisarAfuera(e); continue; }
+      borrarArchivo(clave, e);
       const borrada = indice.borrar(clave, e.tareaId, e.n, { sha256: e.sha256 || null, envio: (e.telegram && e.telegram.envio) || null, env });
       // Un Reintento pudo haber escrito otra en la misma `n`: esa no se toca.
       const sigue = borrada ? null : indice.leer(clave, e.tareaId, e.n, env);
@@ -368,6 +501,14 @@ export function crearColaImagenes({
       error(j, codigo);
       cuantas++;
     }
+    // FEAT-213 — Corta la espera de esa imagen, no el arranque de ComfyUI.
+    for (const j of [...esperando]) {
+      if (!toca(j)) continue;
+      esperando.delete(j);
+      j.control.abort();
+      error(j, codigo);
+      cuantas++;
+    }
     if (enCurso && toca(enCurso)) {
       enCurso.codigoCorte = codigo;
       enCurso.control.abort();
@@ -379,16 +520,103 @@ export function crearColaImagenes({
   }
 
   /** ¿Tiene imágenes en la cola o en curso este turno? */
-  const tieneAbiertas = (tareaId) => pendientes.some((j) => j.tareaId === tareaId) || Boolean(enCurso && enCurso.tareaId === tareaId);
+  const tieneAbiertas = (tareaId) => [...pendientes, ...esperando, enCurso].some((j) => j && j.tareaId === tareaId);
+
+  /** FEAT-213 — Las que necesitan a ComfyUI: las que lo esperan, las pendientes que van a él y la que está refinando o haciéndose ahí. */
+  function lasDeComfy() {
+    const config = leerConfig();
+    const actual = enCurso && !enCurso.hecha && (enCurso.proveedor ? enCurso.proveedor === 'comfyui' : primeroComfy(enCurso, config)) ? [enCurso] : [];
+    return [...esperando, ...pendientes.filter((j) => primeroComfy(j, config)), ...actual];
+  }
+
+  /** FEAT-213 — Al apagar ComfyUI a la fuerza, terminan en error. */
+  function cortarLasDeComfy(codigo = 'comfyui-apagado') {
+    const todas = lasDeComfy();
+    for (const j of todas) {
+      esperando.delete(j);
+      const i = pendientes.indexOf(j);
+      if (i >= 0) pendientes.splice(i, 1);
+      j.codigoCorte = codigo;
+      j.control.abort();
+      error(j, codigo);
+    }
+    return todas.length;
+  }
+
+  /**
+   * FEAT-213 — Borra una imagen a pedido del usuario: `'borrada'`, `'no-existe'`, `'cambio'` (hay otro intento) u `'ocupada'`.
+   * El archivo y el índice se borran bajo su lock y en el mismo tramo la entrada del turno pasa a `borrada`: un Reintento
+   * simultáneo gana o pierde entero.
+   */
+  function borrarImagen({ clave, tareaId, n, intento }) {
+    let previa = null;
+    try { previa = indice.leer(clave, tareaId, n, env); } catch { return 'no-existe'; }
+    const t = tareaDe(tareaId);
+    // La tarea es de otra alma: esa clave no tiene esa imagen.
+    if (!previa || (t && claveDe(t) !== clave)) return 'no-existe';
+    if (!previa.lista || !previa.archivo) return entradas(tareaId).some((e) => e.n === n && e.estado === 'generando') ? 'ocupada' : 'no-existe';
+    if ((previa.intento || 1) !== intento) return 'cambio';
+    const abierta = entradas(tareaId).find((e) => e.n === n);
+    if ((abierta && abierta.estado === 'generando') || enUso(clave, { ...previa, tareaId, n })) return 'ocupada';
+    let motivo = 'ocupada';
+    const ok = indice.borrar(clave, tareaId, n, {
+      env, intento,
+      alBorrar: (e) => {
+        if (!e || !e.lista) { motivo = 'cambio'; return false; }
+        if (!indice.archivoDe(clave, e, env)) { motivo = 'no-existe'; avisarAfuera({ tareaId, n }); return false; }
+        if (!borrarArchivo(clave, { ...e, tareaId, n })) { motivo = 'ocupada'; return false; }
+        return true;
+      }
+    });
+    if (!ok) {
+      const e = indice.leer(clave, tareaId, n, env);
+      return !e ? 'no-existe' : (e.intento || 1) !== intento ? 'cambio' : motivo;
+    }
+    if (previa.sha256) mapa().delete(previa.sha256);
+    if (previa.telegram && previa.telegram.sha256) mapaDeTelegram().delete(previa.telegram.sha256);
+    if (t) transicionImagen(tareaId, n, { estado: 'borrada', codigo: null, mensaje: 'La borraste.' });
+    return 'borrada';
+  }
+
+  /** FEAT-213 — Los bytes de una imagen por su lugar en el índice (la tarea puede no estar). */
+  function bytesDelIndice(clave, tareaId, n) {
+    let e = null;
+    try { e = indice.leer(clave, tareaId, n, env); } catch { return { ok: false, codigo: 404 }; }
+    if (!e || !e.lista) return { ok: false, codigo: 404 };
+    return bytesDeEntrada(clave, e);
+  }
+
+  function bytesDeEntrada(clave, e, tipo = null) {
+    const ruta = indice.archivoDe(clave, e, env);
+    if (!ruta) { if (e.archivo) avisarAfuera(e); return { ok: false, codigo: 404 }; }
+    try {
+      const st = fs.statSync(ruta);
+      if (!st.isFile() || st.size > 20 * 1024 * 1024) return { ok: false, codigo: 404 };
+      return { ok: true, bytes: fs.readFileSync(ruta), tipo: e.tipo || tipo || 'image/png' };
+    } catch {
+      return { ok: false, codigo: 404 };
+    }
+  }
 
   /** Lo que hace falta para repetir una imagen: lo que guardó el índice (o la entrada, si es de antes de 2.19). */
   function repetir(e, priv) {
     const prompt = e.prompt || priv.prompt || '';
-    if (!prompt && !priv.instruccion) return {};
+    const de = { ...(priv.baseFija ? { baseFija: true } : {}), ...(priv.fotoOpcional ? { fotoOpcional: true } : {}) };
+    if (!prompt && !priv.instruccion) return de;
     return {
+      ...de, ...(priv.cambio ? { cambio: priv.cambio, fuerza: priv.fuerza ?? null } : {}),
       prompt: priv.prompt || prompt, negativo: priv.negativo ?? e.negativo ?? '', proporcion: priv.proporcion || '1:1',
       ...(priv.caso ? { caso: priv.caso, casoPedido: priv.casoPedido || priv.caso, zona: priv.zona || '', instruccion: priv.instruccion || '', loras: priv.loras || [] } : {})
     };
+  }
+
+  /** La foto para repetir una imagen: la guardada, `null` si no lleva o `false` si hacía falta y ya no está. */
+  function fotoDeNuevo(e, priv) {
+    const opcional = Boolean(priv.fotoOpcional) && !priv.caso;
+    if (!e.desdeFoto && !opcional) return null;
+    const ruta = priv.fotoRuta && fotoPermitida(priv.fotoRuta);
+    if (!ruta || !fs.existsSync(ruta)) return opcional ? null : false;
+    return { ruta, segura: Boolean(priv.fotoSegura) };
   }
 
   /** §5 — «Otra versión»: la misma imagen con otra semilla, como `n` nueva. `{ ok, n }` o `{ ok: false, codigo }`. */
@@ -401,11 +629,12 @@ export function crearColaImagenes({
     if (entradas(tareaId).length >= TOPE_IMAGENES_TURNO) return { ok: false, codigo: 'tope-turno' };
     const clave = claveDe(t);
     const priv = indice.leer(clave, tareaId, n, env) || {};
-    if (e.desdeFoto && priv.fotoRuta && !fs.existsSync(priv.fotoRuta)) return { ok: false, codigo: 'foto-perdida' };
-    if (e.desdeFoto && !priv.fotoRuta) return { ok: false, codigo: 'foto-perdida' };
+    // FEAT-213 — Una borrada no se repite.
+    if (e.estado === 'borrada') return { ok: false, codigo: 'no-existe' };
+    const foto = fotoDeNuevo(e, priv);
+    if (foto === false) return { ok: false, codigo: 'foto-perdida' };
     return encolar({
-      tareaId, clave, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto,
-      foto: e.desdeFoto ? { ruta: priv.fotoRuta, segura: Boolean(priv.fotoSegura) } : null, externo: Boolean(priv.externo),
+      tareaId, clave, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto, foto, externo: Boolean(priv.externo),
       ...repetir(e, priv), semilla: undefined, envio, crearEnvio, origen: 'usuario'
     });
   }
@@ -414,15 +643,14 @@ export function crearColaImagenes({
   function reintentar(tareaId, n, { envio = null } = {}) {
     const t = tareaDe(tareaId);
     const e = entradas(tareaId).find((x) => x.n === n);
-    if (!t || !e) return { ok: false, codigo: 'no-existe' };
+    if (!t || !e || e.estado === 'borrada') return { ok: false, codigo: 'no-existe' };
     if (e.estado !== 'error') return { ok: false, codigo: 'no-en-error' };
     const clave = claveDe(t);
     const priv = indice.leer(clave, tareaId, n, env) || {};
-    const fotoRuta = priv.fotoRuta || (t.imagenFoto || null);
-    if (e.desdeFoto && (!fotoRuta || !fs.existsSync(fotoRuta))) return { ok: false, codigo: 'foto-perdida' };
+    const foto = fotoDeNuevo(e, priv);
+    if (foto === false) return { ok: false, codigo: 'foto-perdida' };
     return encolar({
-      tareaId, clave, n, intento: (e.intento || 1) + 1, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto,
-      foto: e.desdeFoto ? { ruta: fotoRuta, segura: Boolean(priv.fotoSegura) } : null, externo: Boolean(priv.externo),
+      tareaId, clave, n, intento: (e.intento || 1) + 1, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto, foto, externo: Boolean(priv.externo),
       ...repetir(e, priv),
       // FEAT-212 §5 — Sin la zona no hay qué retocar: va como variación, con el mismo prompt.
       ...(e.codigo === 'zona-no-encontrada' ? { caso: 'variacion', casoPedido: 'retoque', zona: '' } : {}), envio, origen: 'usuario'
@@ -435,14 +663,7 @@ export function crearColaImagenes({
     const e = entradas(tareaId).find((x) => x.n === n);
     if (!t || !e || e.estado !== 'lista') return { ok: false, codigo: 404 };
     const priv = indice.leer(claveDe(t), tareaId, n, env);
-    if (!priv || !priv.archivo) return { ok: false, codigo: 404 };
-    try {
-      const st = fs.statSync(priv.archivo);
-      if (st.size > 20 * 1024 * 1024) return { ok: false, codigo: 404 };
-      return { ok: true, bytes: fs.readFileSync(priv.archivo), tipo: priv.tipo || e.tipo || 'image/png' };
-    } catch {
-      return { ok: false, codigo: 404 };
-    }
+    return priv && priv.archivo ? bytesDeEntrada(claveDe(t), priv, e.tipo) : { ok: false, codigo: 404 };
   }
 
   /** Al arrancar: vacía los `.tmp/` de todas las almas y arma el mapa `sha256`. */
@@ -454,9 +675,9 @@ export function crearColaImagenes({
     if (claves.length) mapa();
   }
 
-  const estadoDeImagenes = () => ({ pendientes: pendientes.length, enCurso: enCurso ? 1 : 0 });
+  const estadoDeImagenes = () => ({ pendientes: pendientes.length + esperando.size, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, cancelarImagenes, tieneAbiertas, otra, reintentar, bytesDe, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes };
+  return { encolar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
 }
 
 /** La clave del alma de una tarea de charla. */

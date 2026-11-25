@@ -74,11 +74,11 @@ function bloqueDeVistas(vistas) {
  * memoria en cada vuelta duplica tokens y deja conviviendo la versión vieja y
  * la nueva de un recuerdo que se reemplazó a mitad de la charla.
  */
-function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date(), profundos = [], pedidos = [], conFecha = false, puedePedirImagen = false }) {
+function armarPrompt({ clave, mensaje, hilo, env, tablero = null, ahora = new Date(), profundos = [], pedidos = [], conFecha = false, puedePedirImagen = false, puedePedirAnterior = false }) {
   // FEAT-058 — El tablero es estado vivo: va en cada turno, también en un
   // hilo continuado, y con él la consigna de `<tablero>` (antes de `<alma>`).
   const conTablero = typeof tablero === 'string';
-  const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre({ conTema: true, pedidos, puedePedirImagen })}`;
+  const cierre = `${conTablero ? `${bloqueTablero.instruccionDeCierre()}\n` : ''}${bloque.instruccionDeCierre({ conTema: true, pedidos, puedePedirImagen, puedePedirAnterior })}`;
   // FEAT-172 — Qué día es, en cada turno: un hilo puede cruzar la medianoche y
   // el alma tiene que poder leer «mañana tengo la entrevista». El motor que ya
   // la pone él (deepseek, `fechaEnTurno`) no la recibe dos veces.
@@ -443,6 +443,21 @@ async function charlar({
   const puedePedirImagen = Boolean(opciones.puedePedirImagen) && !opciones.aislado;
   // FEAT-210 §2.1 — Las vistas de las imágenes que hizo el alma, de este hilo: se piden una sola vez por turno.
   let vistas = null;
+  // FEAT-213 — Lo que pide el usuario en este mensaje, para un hilo con contenido de afuera.
+  const pideEnEste = () => pideImagen(mensaje, { respondeImagen: Boolean(imagen && imagen.respuesta), usarUltima: typeof opciones.ultimaImagen === 'function' });
+  // FEAT-213 — La última imagen de estos hilos (`{ ruta, externo, segura }`), si `usar_ultima` está prendido.
+  const ultimaDe = (hilosDelTurno) => {
+    if (typeof opciones.ultimaImagen !== 'function') return null;
+    try { return opciones.ultimaImagen(clave, hilosDelTurno.filter(Boolean)) || null; } catch (err) {
+      process.stderr.write(`[almas] No se pudo leer la última imagen de ${clave}: ${err.message}\n`);
+      return null;
+    }
+  };
+  // Con `fotos_seguras` o `reconocer_propias` apagados, una propia cuenta como de afuera: el bot no la da por segura.
+  const deAfuera = (u) => u.externo !== false || !u.segura;
+  // El hilo de antes, si el de este turno nació porque el otro venció solo (nunca con `/charla nuevo`).
+  let hiloAnterior = null;
+  let ofreceAnterior = false;
 
   const eleccionDelRol = motorExplicito
     ? { motor: motorExplicito, modelo: null, esfuerzo: null, cuenta: null, fijo: true }
@@ -485,7 +500,8 @@ async function charlar({
     // FEAT-166 — Un motor que guarda el hilo de nuestro lado dice si se puede
     // retomar (por capacidad, sin preguntar qué motor es). Si no (sin archivo,
     // truncado, pasado el tope), nace de nuevo y con la foto: nunca amnesia.
-    if (!turno && hilo && typeof motor.hiloVigente === 'function' && !motor.hiloVigente(clave, hilo, env)) hilo = null;
+    if (!turno && hilo && typeof motor.hiloVigente === 'function' && !motor.hiloVigente(clave, hilo, env)) { hiloAnterior = hilo; hilo = null; }
+    if (!turno && !hilo && !hiloAnterior && !opciones.fresco && !opciones.aislado) hiloAnterior = hilos.hiloGuardado(clave, { env, motor: claveHilo });
     // FEAT-171 — Lo archivado que viene al caso, solo cuando nace el hilo, igual
     // que el snapshot de memoria. Sale del archivo local, no del servicio.
     const busqueda = hilo ? { resultados: [], omitidas: [] } : archivo.buscar(clave, mensaje, { env });
@@ -507,10 +523,15 @@ async function charlar({
       }
       if (vistas.some((v) => v.externo || v.vistaOrden)) externo = sumarExterno(externo, { motivos: ['imagen'], tokens: [] });
     }
+    // FEAT-213 — La línea `imagen-desde-anterior:`, solo sin foto en el turno. Si la última es de afuera, solo si la pidió.
+    if (!turno) {
+      const u = puedePedirImagen && !imagen ? ultimaDe([hilo, hiloAnterior]) : null;
+      ofreceAnterior = Boolean(u && (!deAfuera(u) || pideEnEste()));
+    }
     const mensajeConVistas = !turno && vistas && vistas.length ? `${bloqueDeVistas(vistas)}\n\n${mensajeAlma}` : mensajeAlma;
     const pedido = {
       perfil: 'sin-tools',
-      prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen }),
+      prompt: turno ? turno.prompt : armarPrompt({ clave, mensaje: mensajeConVistas, hilo, env, tablero: opciones.tablero ?? null, profundos, pedidos: herramientas, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior }),
       hilo,
       modelo,
       esfuerzo,
@@ -642,7 +663,7 @@ async function charlar({
     herramienta = ejecucion.herramienta;
     externo = sumarExterno(externo, ejecucion.externo);
     if (cancelado()) return cancelada();
-    const prompt = armarPrompt({ clave, mensaje: ejecucion.mensaje, hilo: hiloNuevo, env, tablero: opciones.tablero ?? null, conFecha: !motor.fechaEnTurno, puedePedirImagen });
+    const prompt = armarPrompt({ clave, mensaje: ejecucion.mensaje, hilo: hiloNuevo, env, tablero: opciones.tablero ?? null, conFecha: !motor.fechaEnTurno, puedePedirImagen, puedePedirAnterior: ofreceAnterior });
     const segundo = await intentarCon(eleccion, { prompt, hilo: hiloNuevo });
     if (segundo.resultado.preflight) return { ...base(), ok: false, motivo: segundo.resultado.error, herramienta };
     resultado = segundo.resultado;
@@ -659,6 +680,26 @@ async function charlar({
 
   const { respuesta, operaciones } = extraido;
   guardarEnHiloLocal(resultado, respuesta);
+
+  // FEAT-213 — De qué parte la imagen pedida: la foto del turno, la última del hilo o nada. Usar una última de afuera
+  // contamina el hilo, igual que ver una vista externa: se sabe acá, antes de decidir la memoria.
+  const linea = extraido.imagenPedida;
+  const fotoCuenta = Boolean(opciones.fotoCuenta);
+  let baseImagen = { tipo: null, foto: null, rechazo: null };
+  if (linea && !opciones.aislado && puedePedirImagen) {
+    const delTurno = imagen ? { ruta: imagen.ruta, segura: Boolean(fotoSegura), descripcion: descripcionFoto } : null;
+    const quiereBase = linea.desdeFoto || linea.desdeAnterior;
+    if (delTurno) baseImagen = { tipo: quiereBase ? 'fija' : fotoCuenta ? 'opcional' : null, foto: delTurno, rechazo: null };
+    else if (linea.desdeAnterior || (linea.desdeFoto && fotoCuenta)) {
+      const u = ultimaDe([hiloNuevo, hilo, hiloAnterior]);
+      if (!u) baseImagen.rechazo = linea.desdeAnterior ? 'sin-anterior' : 'sin-foto';
+      else if (deAfuera(u) && !pideEnEste()) baseImagen.rechazo = 'hilo-externo';
+      else {
+        baseImagen = { tipo: 'fija', foto: { ruta: u.ruta, segura: Boolean(u.segura), descripcion: null }, rechazo: null };
+        if (deAfuera(u)) externo = sumarExterno(externo, { motivos: ['imagen'], tokens: [] });
+      }
+    }
+  }
 
   // FEAT-172 — Un hilo que trajo contenido de afuera (en este turno o antes)
   // no escribe memoria ni toca el tablero: una inyección puede actuar en
@@ -681,22 +722,26 @@ async function charlar({
   // hilo con contenido de afuera, solo si el usuario la pidió en este mensaje, o desde una foto que marcó segura.
   rechazosImagen.push(...(extraido.imagenRechazos || []));
   let imagenPedida = null;
-  const linea = extraido.imagenPedida;
   if (linea) {
-    const desdeFoto = Boolean(linea.desdeFoto && imagen);
+    const desdeFoto = baseImagen.tipo === 'fija';
     if (opciones.aislado) rechazosImagen.unshift('aislado');
     else if (!puedePedirImagen) rechazosImagen.unshift('apagadas');
-    else if (contaminado && !pideImagen(mensaje) && !(fotoSegura && desdeFoto)) rechazosImagen.unshift('hilo-externo');
+    else if (baseImagen.rechazo) rechazosImagen.unshift(baseImagen.rechazo);
+    else if (contaminado && !pideEnEste() && !(fotoSegura && desdeFoto)) rechazosImagen.unshift('hilo-externo');
     else {
       imagenPedida = {
         texto: linea.texto,
         desdeFoto,
-        foto: imagen ? { ruta: imagen.ruta, segura: Boolean(fotoSegura), descripcion: descripcionFoto } : null
+        // FEAT-213 — Con `foto_cuenta`, la base no se pierde y la foto del turno la recibe aunque el alma escriba `imagen:`.
+        ...(fotoCuenta && desdeFoto ? { baseFija: true } : {}),
+        ...(baseImagen.tipo === 'opcional' ? { fotoOpcional: true } : {}),
+        ...(!imagen && desdeFoto ? { desdeAnterior: true } : {}),
+        foto: baseImagen.foto
       };
     }
   }
   const diarioImagen = linea || rechazosImagen.length
-    ? { pedida: linea ? linea.texto : null, desdeFoto: Boolean(linea && linea.desdeFoto && imagen), rechazo: imagenPedida ? rechazosImagen.filter((m) => m === 'una-por-turno' || m === 'pasada-descartada') : rechazosImagen }
+    ? { pedida: linea ? linea.texto : null, desdeFoto: Boolean(linea && linea.desdeFoto && imagen), ...(linea && linea.desdeAnterior ? { desdeAnterior: true } : {}), rechazo: imagenPedida ? rechazosImagen.filter((m) => m === 'una-por-turno' || m === 'pasada-descartada') : rechazosImagen }
     : null;
   anotarEnDiario(clave, { respuesta, dicho: mensaje, externo: contaminado, aplicadas, rechazadas, metadatos: opciones.diario, motor: motor.id, modeloReal: resultado.modeloReal, cuenta, hilo: hiloNuevo, fallback: Boolean(fallback), recuerdos: dados, herramienta, imagen: diarioImagen, fotoSegura }, env);
 

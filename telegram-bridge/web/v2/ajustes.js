@@ -34,7 +34,7 @@ const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ALTERNATIVAS = 3;
 const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz', 'imagenes']);
 // FEAT-210 — Los campos de la sección `imagenes` (la forma; el núcleo valida el resto).
-const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const PROVEEDORES_IMAGEN = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 // FEAT-212 — Los casos, las familias de plantillas y las cargas de un perfil de modelo.
 const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
@@ -237,6 +237,15 @@ function perfilImagenV2(id, p) {
   };
 }
 
+/** FEAT-213 — `comfyui.arranque`: la carpeta la eligió el usuario y sale como texto. */
+function arranqueV2(a) {
+  const o = esObjeto(a) ? a : {};
+  return {
+    carpeta: texto(o.carpeta, 260), automatico: o.automatico !== false, apagar_min: numero(o.apagar_min), espera_s: numero(o.espera_s),
+    flags: (Array.isArray(o.flags) ? o.flags : []).filter((f) => esObjeto(f) && texto(f.flag, 64)).slice(0, 40).map((f) => ({ flag: f.flag, valor: texto(f.valor, 300) }))
+  };
+}
+
 /** FEAT-212 — Lo que suma `imagenes.comfyui`. Los flujos propios son rutas que eligió el usuario. */
 function comfyuiV2(c) {
   const perfilDe = Object.entries(esObjeto(c.perfil_de) ? c.perfil_de : {}).filter(([k, v]) => k.length <= 200 && typeof v === 'string' && RE_PERFIL.test(v)).slice(0, 50);
@@ -247,7 +256,7 @@ function comfyuiV2(c) {
     modelo_edicion: texto(c.modelo_edicion, 200), modelo_retoque: texto(c.modelo_retoque, 200),
     perfil_de: Object.fromEntries(perfilDe), flujos: Object.fromEntries(flujos),
     mascara: ['florence2', 'sam2', 'no'].includes(c.mascara) ? c.mascara : 'florence2', retoque: ['crop-stitch', 'fill', 'no'].includes(c.retoque) ? c.retoque : 'crop-stitch',
-    chequeo_zona: c.chequeo_zona !== false, loras_activos: c.loras_activos !== false,
+    chequeo_zona: c.chequeo_zona !== false, loras_activos: c.loras_activos !== false, arranque: arranqueV2(c.arranque),
     loras: (Array.isArray(c.loras) ? c.loras : []).filter((l) => esObjeto(l) && texto(l.archivo, 200) && texto(l.clave, 30)).slice(0, 20).map((l) => ({
       archivo: l.archivo, clave: l.clave, familias: (Array.isArray(l.familias) ? l.familias : []).filter((f) => FAMILIAS_IMAGEN.includes(f)), fuerza: numero(l.fuerza), activo: l.activo === true
     }))
@@ -284,6 +293,8 @@ function imagenesV2(i) {
   return {
     activas: b(o.activas), refinar: b(o.refinar), alma_la_ve: b(o.alma_la_ve), otra_version: b(o.otra_version),
     fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias), reconocer_telegram: b(o.reconocer_telegram),
+    responder_usa_imagen: b(o.responder_usa_imagen), usar_ultima: b(o.usar_ultima), foto_cuenta: b(o.foto_cuenta), fuerza_automatica: b(o.fuerza_automatica),
+    tope_por_alma: entero(o.tope_por_alma),
     perfiles_propios: Object.fromEntries(Object.entries(esObjeto(o.perfiles_propios) ? o.perfiles_propios : {}).slice(0, 20).map(([id, p]) => [id, perfilImagenV2(id, p)]).filter(([, p]) => p)),
     orden: (Array.isArray(o.orden) ? o.orden : []).filter((p) => PROVEEDORES_IMAGEN.includes(p)),
     por_alma: Object.fromEntries(Object.entries(esObjeto(o.por_alma) ? o.por_alma : {}).filter(([k, v]) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k) && v === false)),
@@ -416,9 +427,15 @@ export async function leerAjustesV2(nucleo) {
 }
 
 /** `POST /api/v2/ajustes`. */
-export async function guardarAjustesV2(nucleo, cuerpo) {
+export async function guardarAjustesV2(nucleo, cuerpo, { comfy = null } = {}) {
   const invalido = validarPedidoV2(cuerpo);
   if (invalido) return invalido;
+  // FEAT-213 — Que la carpeta tenga un ComfyUI y que sus flags existan en su versión: puede tardar, así que va antes del núcleo.
+  const arranque = esObjeto(cuerpo.imagenes) && esObjeto(cuerpo.imagenes.comfyui) ? cuerpo.imagenes.comfyui.arranque : undefined;
+  if (comfy && esObjeto(arranque)) {
+    const v = await comfy.validarArranque(arranque);
+    if (v && v.ok === false) return error(400, v.motivo, `imagenes.comfyui.arranque${v.campo}`);
+  }
   const pedido = {};
   // FEAT-204 — Las secciones de v2 (FEAT-210: también `imagenes`): sin ellas acá, el núcleo recibiría `{}` y daría 400.
   for (const k of SECCIONES_V2) if (cuerpo[k] !== undefined) pedido[k] = { ...cuerpo[k] };

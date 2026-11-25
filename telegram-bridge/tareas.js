@@ -64,10 +64,12 @@ const CAMPOS_ACTUALIZABLES = new Set(['estado', 'iniciada', 'terminada', 'result
 // FEAT-210 — Las imágenes de un turno: solo campos públicos (lo privado vive en el índice del alma), hasta 4.
 export const TOPE_IMAGENES_TURNO = 4;
 export const ESTADOS_IMAGEN = Object.freeze(['generando', 'lista', 'error', 'borrada']);
-const CAMPOS_IMAGEN = Object.freeze(['n', 'estado', 'pedido', 'prompt', 'negativo', 'desdeFoto', 'fotoIgnorada', 'intento', 'ancho', 'alto', 'tipo', 'proveedor', 'modelo', 'semilla', 'codigo', 'mensaje', 'creada', 'terminada', 'caso', 'casoPedido', 'zona', 'instruccion', 'loras', 'perfil', 'sinChequeoZona']);
+const CAMPOS_IMAGEN = Object.freeze(['n', 'estado', 'pedido', 'prompt', 'negativo', 'desdeFoto', 'fotoIgnorada', 'intento', 'ancho', 'alto', 'tipo', 'proveedor', 'modelo', 'semilla', 'codigo', 'mensaje', 'creada', 'terminada', 'caso', 'casoPedido', 'zona', 'instruccion', 'loras', 'perfil', 'sinChequeoZona', 'cambio', 'fuerza']);
 const TOPES_IMAGEN = Object.freeze({ pedido: 300, prompt: 2000, negativo: 500, mensaje: 200, tipo: 32, proveedor: 32, modelo: 200, codigo: 40, zona: 120, instruccion: 2000, perfil: 40 });
 // FEAT-212 — Los casos de una imagen y sus LoRAs.
 const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
+// FEAT-213 — Cuánto cambia una variación.
+const CAMBIOS_IMAGEN = Object.freeze(['leve', 'medio', 'fuerte']);
 export const TOPE_LORAS_IMAGEN = 4;
 const lorasDe = (v) => (Array.isArray(v) ? v : [])
   .filter((l) => l && typeof l === 'object' && typeof l.clave === 'string' && l.clave && Number.isFinite(l.fuerza) && l.fuerza >= 0 && l.fuerza <= 2)
@@ -83,6 +85,7 @@ export function normalizarImagen(e) {
     if (TOPES_IMAGEN[k]) salida[k] = typeof v === 'string' ? v.slice(0, TOPES_IMAGEN[k]) : null;
     else if (['desdeFoto', 'fotoIgnorada', 'sinChequeoZona'].includes(k)) salida[k] = Boolean(v);
     else if (k === 'caso' || k === 'casoPedido') { if (CASOS_IMAGEN.includes(v)) salida[k] = v; } else if (k === 'loras') { const l = lorasDe(v); if (l.length) salida.loras = l; }
+    else if (k === 'cambio') { if (CAMBIOS_IMAGEN.includes(v)) salida.cambio = v; } else if (k === 'fuerza') { if (Number.isFinite(v) && v >= 0 && v <= 1) salida.fuerza = v; }
     else if (['n', 'intento', 'ancho', 'alto'].includes(k)) salida[k] = Number.isInteger(v) && v > 0 ? v : null;
     else if (k === 'semilla') salida[k] = Number.isInteger(v) ? v : null;
     else salida[k] = v;

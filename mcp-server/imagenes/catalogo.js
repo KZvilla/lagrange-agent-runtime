@@ -114,6 +114,9 @@ function publico(catalogo) {
   return resto;
 }
 
+/** FEAT-213 — ComfyUI acaba de levantar: lo que se supo antes (un fallo, otra lista de modelos) ya no vale. */
+function olvidar(url) { const e = porUrl.get(normalizarUrl(url)); if (e) e.cache = null; }
+
 function olvidarParaTests() { porUrl.clear(); }
 
-module.exports = { DURA_OK_MS, DURA_FALLO_MS, TIEMPO_MS, TOPE_BYTES, leerObjectInfo, catalogoDe, enCache, publico, olvidarParaTests };
+module.exports = { DURA_OK_MS, DURA_FALLO_MS, TIEMPO_MS, TOPE_BYTES, leerObjectInfo, catalogoDe, enCache, publico, olvidar, olvidarParaTests };

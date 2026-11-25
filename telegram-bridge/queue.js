@@ -87,6 +87,11 @@ export function quitarDeCola(carril, tareaId) {
   return i < 0 ? null : cola.splice(i, 1)[0];
 }
 
+/** FEAT-213 — Las rutas de las fotos de los turnos que esperan. */
+export function fotosEnCola() {
+  return CARRILES.flatMap((c) => colaDe(c).map((t) => t.imagen && t.imagen.ruta).filter(Boolean));
+}
+
 /**
  * Tareas esperando: sin carril, la suma de los dos.
  */

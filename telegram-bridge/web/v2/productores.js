@@ -102,7 +102,7 @@ export function memoriaDe(m) {
     tablero: tb,
     // FEAT-210 — Lo que pidió de imagen, o el motivo por el que no; y si la foto era segura.
     imagen: m.imagen && typeof m.imagen === 'object' && !Array.isArray(m.imagen)
-      ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null }
+      ? { pedida: typeof m.imagen.pedida === 'string' ? m.imagen.pedida.slice(0, 300) : null, rechazo: MOTIVOS_RECHAZO_IMAGEN.has(m.imagen.rechazo) ? m.imagen.rechazo : null, ...(typeof m.imagen.detalle === 'string' && m.imagen.detalle ? { detalle: m.imagen.detalle.slice(0, 40) } : {}) }
       : undefined,
     fotoSegura: m.fotoSegura === 'marcada' || m.fotoSegura === 'reconocida' ? m.fotoSegura : undefined
   });
@@ -114,6 +114,7 @@ const MOTIVOS_RECHAZO_IMAGEN = new Set(['apagadas', 'hilo-externo', 'una-por-tur
 const ESTADOS_IMAGEN = new Set(['generando', 'lista', 'error', 'borrada']);
 const TOPE_IMAGENES = 4;
 const CASOS_IMAGEN = new Set(['nueva', 'variacion', 'retoque', 'edicion']);
+const CAMBIOS_IMAGEN = new Set(['leve', 'medio', 'fuerte']);
 const lorasDe = (v) => {
   const l = (Array.isArray(v) ? v : []).filter((x) => x && typeof x === 'object' && typeof x.clave === 'string' && x.clave && Number.isFinite(x.fuerza) && x.fuerza >= 0 && x.fuerza <= 2)
     .slice(0, 4).map((x) => ({ clave: x.clave.slice(0, 30), fuerza: x.fuerza }));
@@ -137,7 +138,9 @@ export function imagenesDe(lista) {
       // FEAT-212 — El caso hecho y el pedido, y lo que lo describe. Una que todavía no tiene caso los omite.
       caso: CASOS_IMAGEN.has(i.caso) ? i.caso : undefined, casoPedido: CASOS_IMAGEN.has(i.casoPedido) ? i.casoPedido : undefined,
       zona: textoONulo(i.zona, 120), instruccion: textoONulo(i.instruccion, 2000), perfil: textoONulo(i.perfil, 40),
-      loras: lorasDe(i.loras), sinChequeoZona: i.sinChequeoZona === true ? true : undefined
+      loras: lorasDe(i.loras), sinChequeoZona: i.sinChequeoZona === true ? true : undefined,
+      // FEAT-213 — Cuánto cambia una variación y la fuerza que llevó.
+      cambio: CAMBIOS_IMAGEN.has(i.cambio) ? i.cambio : undefined, fuerza: Number.isFinite(i.fuerza) && i.fuerza >= 0 && i.fuerza <= 1 ? i.fuerza : undefined
     }));
 }
 

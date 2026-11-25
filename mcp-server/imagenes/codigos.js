@@ -27,7 +27,11 @@ const CODIGOS_ENTRADA = Object.freeze({
   'flujo-marcador': 'El flujo usa un marcador que este caso no da.',
   'mascara-fallo': 'Falló el nodo de máscara.',
   'solo-comfyui': 'ComfyUI no responde; este caso solo lo hace ComfyUI.',
-  'sin-caso': 'No hay ningún flujo disponible para este pedido.'
+  'sin-caso': 'No hay ningún flujo disponible para este pedido.',
+  // FEAT-213
+  'sin-base': 'Ahora nadie puede partir de esa imagen.',
+  'otro-programa': 'no está: en esa dirección responde otro programa',
+  'comfyui-apagado': 'ComfyUI se apagó.'
 });
 
 const MOTIVOS_RECHAZO = Object.freeze({
@@ -36,6 +40,12 @@ const MOTIVOS_RECHAZO = Object.freeze({
   'una-por-turno': 'una imagen por respuesta',
   'pasada-descartada': 'la pidió junto con una búsqueda',
   aislado: 'un turno aislado no hace imágenes'
+});
+
+/** FEAT-213 — Los motivos que no están en el enum del contrato (2.x): viajan en `detalle`, con `rechazo` en `null`. */
+const DETALLES_RECHAZO = Object.freeze({
+  'sin-foto': 'no había ninguna foto de la que partir',
+  'sin-anterior': 'no había ninguna imagen anterior de la que partir'
 });
 
 /** Los nombres legibles de cada proveedor, para los mensajes. */
@@ -57,7 +67,7 @@ function mensajeDe(codigo, { intentos = [], zona = '', cubre = false, marcador =
     const texto = partes.join('; ');
     return `${texto.charAt(0).toUpperCase()}${texto.slice(1)}.`.slice(0, 200);
   }
-  if (['no-responde', 'no-implementado', 'manual', 'cupo', 'tiempo'].includes(codigo)) {
+  if (['no-responde', 'no-implementado', 'manual', 'cupo', 'tiempo', 'otro-programa'].includes(codigo)) {
     return `El proveedor ${CODIGOS_ENTRADA[codigo]}.`;
   }
   return CODIGOS_ENTRADA[codigo] || CODIGOS_ENTRADA.error;
@@ -65,7 +75,7 @@ function mensajeDe(codigo, { intentos = [], zona = '', cubre = false, marcador =
 
 /** El texto de un rechazo del pedido. */
 function motivoDe(motivo) {
-  return MOTIVOS_RECHAZO[motivo] || String(motivo || '');
+  return MOTIVOS_RECHAZO[motivo] || DETALLES_RECHAZO[motivo] || String(motivo || '');
 }
 
-module.exports = { CODIGOS_ENTRADA, MOTIVOS_RECHAZO, NOMBRES, mensajeDe, motivoDe };
+module.exports = { CODIGOS_ENTRADA, MOTIVOS_RECHAZO, DETALLES_RECHAZO, NOMBRES, mensajeDe, motivoDe };

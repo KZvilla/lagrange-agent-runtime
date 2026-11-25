@@ -756,19 +756,26 @@ export function crearNucleoWeb({
      * validar y guardar: así un reenvío no guarda un segundo adjunto. Validar no escribe nada.
      */
     validarFoto(clave, { base64, nombre, texto, segura } = {}) {
-      const a = alma(clave);
-      if (!a) return error(404, 'No existe esa alma.');
-      const bruto = typeof texto === 'string' ? texto.trim() : '';
-      const pie = bruto ? textoValido(bruto) : '';
-      if (pie === null) return error(400, `El texto puede tener hasta ${TOPE_TEXTO} caracteres.`);
+      const p = api.validarPieDeFoto(clave, { texto, segura });
+      if (p.ok === false) return p;
       const crudo = String(base64 || '').replace(/^data:[^,]*,/, '');
       if (!crudo || !/^[A-Za-z0-9+/=\s]+$/.test(crudo)) return error(400, 'Falta la imagen.');
       const contenido = Buffer.from(crudo, 'base64');
       if (!contenido.length) return error(400, 'Falta la imagen.');
       if (contenido.length > TOPE_ARCHIVO_BYTES) return error(413, 'La imagen pesa más de 10 MB.');
+      return { ...p, contenido, nombre: String(nombre || 'foto.jpg').slice(0, 120) };
+    },
+
+    /** FEAT-213 — El alma, el pie y la marca de una foto: lo comparten la subida y la referencia a una imagen. */
+    validarPieDeFoto(clave, { texto, segura } = {}) {
+      const a = alma(clave);
+      if (!a) return error(404, 'No existe esa alma.');
+      const bruto = typeof texto === 'string' ? texto.trim() : '';
+      const pie = bruto ? textoValido(bruto) : '';
+      if (pie === null) return error(400, `El texto puede tener hasta ${TOPE_TEXTO} caracteres.`);
       // FEAT-210 §2.2 — `segura`, opcional y booleana.
       if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');
-      return { ok: true, alma: a, pie, contenido, nombre: String(nombre || 'foto.jpg').slice(0, 120), segura: segura === true };
+      return { ok: true, alma: a, pie, segura: segura === true };
     },
 
     guardarFoto({ contenido, nombre }) {

@@ -62,7 +62,7 @@ function comfyFalso(guion = {}) {
     if (u.pathname === '/queue' && (op.method || 'GET') === 'GET') return resp({ queue_running: cola.running, queue_pending: cola.pending });
     if (u.pathname === '/queue') { cola.pending = []; return resp({}); }
     if (u.pathname === '/interrupt') { if (!guion.noCorta) cola.running = []; return resp({}); }
-    if (u.pathname === '/system_stats') return resp({ devices: [{ vram_free: 123 }] });
+    if (u.pathname === '/system_stats') return resp({ system: {}, devices: [{ vram_free: 123 }] });
     return resp({}, { ok: false, status: 404 });
   };
   return { fetchImpl, pedidos, cola, rutas: () => pedidos.map((p) => `${p.metodo} ${p.ruta}`) };
@@ -661,7 +661,7 @@ async function main() {
     const foto = { ruta: path.join(tmp, 'foto.png') };
     const cfg = config();
     check('fotoDelTurno: marcada', bot.fotoDelTurno({ ...foto, segura: true }, cfg).origen === 'marcada');
-    check('fotoDelTurno: reconocida por sha256', bot.fotoDelTurno(foto, cfg, { reconocer: () => ({ tareaId: 't' }) }).origen === 'reconocida');
+    check('fotoDelTurno: reconocida por sha256', bot.fotoDelTurno(foto, cfg, { reconocer: () => ({ tareaId: 't', externo: false }) }).origen === 'reconocida');
     check('fotoDelTurno: reconocer_propias apagado → de afuera', bot.fotoDelTurno(foto, config({ reconocer_propias: false }), { reconocer: () => ({}) }).segura === false);
     check('fotoDelTurno: fotos_seguras apagado ignora la marca', bot.fotoDelTurno({ ...foto, segura: true }, config({ fotos_seguras: false })).segura === false);
     check('fotoDelTurno: sin marca ni reconocida → de afuera', bot.fotoDelTurno(foto, cfg, { reconocer: () => null }).segura === false);
@@ -761,7 +761,7 @@ async function main() {
 
   await group('Auditoría 1: vistas, /otra, la consola v1 y la foto reconocida', async () => {
     // Las vistas: entregadas solo después de un turno que terminó bien, y una vez.
-    const archivoV = path.join(tmp, 'vista.png'); fs.writeFileSync(archivoV, PNG);
+    const archivoV = path.join(indice.dirImagenes('alya'), 'vista.png'); fs.mkdirSync(path.dirname(archivoV), { recursive: true }); fs.writeFileSync(archivoV, PNG);
     indice.actualizar('alya', 't_vista1', 1, () => ({ hilo: 'hv', lista: true, archivo: archivoV, vista: 'un gato' }));
     const incluidas = [{ tareaId: 't_vista1', n: 1 }];
     check('la vista está pendiente', indice.vistasPendientes('alya', 'hv').length === 1);
@@ -929,7 +929,7 @@ async function main() {
       check('ruta → turno: marcada con fotos_seguras', bot.fotoDelTurno(despachos[0].imagen, config(), sinReconocer).origen === 'marcada');
       check('ruta → turno: fotos_seguras apagada → de afuera', bot.fotoDelTurno(despachos[0].imagen, config({ fotos_seguras: false }), sinReconocer).segura === false);
       check('ruta → turno: sin la marca, de afuera', bot.fotoDelTurno(despachos[1].imagen, config(), sinReconocer).segura === false);
-      check('ruta → turno: sin la marca pero con los bytes propios, reconocida', bot.fotoDelTurno(despachos[1].imagen, config(), { reconocer: () => ({ tareaId: 't' }) }).origen === 'reconocida');
+      check('ruta → turno: sin la marca pero con los bytes propios, reconocida', bot.fotoDelTurno(despachos[1].imagen, config(), { reconocer: () => ({ tareaId: 't', externo: false }) }).origen === 'reconocida');
     }
     const nucleoFuente = fs.readFileSync(path.join(RAIZ, 'telegram-bridge', 'web', 'nucleo.js'), 'utf8');
     check('validarFoto acepta segura (booleana)', nucleoFuente.includes("if (segura !== undefined && typeof segura !== 'boolean') return error(400, 'segura tiene que ser true o false.');"));

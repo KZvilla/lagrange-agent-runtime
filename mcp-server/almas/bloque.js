@@ -34,15 +34,16 @@ const PEDIDOS = Object.freeze({
 const MAX_PEDIDO = 300;
 // FEAT-210 — El pedido de una imagen: qué y para qué, en palabras del alma (el prompt técnico lo escribe el refinador).
 const MAX_IMAGEN = 300;
-const RE_IMAGEN = /^imagen(-desde-foto)?\s*:\s*(.+)$/i;
+const RE_IMAGEN = /^imagen(-desde-foto|-desde-anterior)?\s*:\s*(.+)$/i;
 
-/** FEAT-210 — `{ texto, desdeFoto }` si la línea pide una imagen, o `null`. */
+/** FEAT-210 — `{ texto, desdeFoto, desdeAnterior }` si la línea pide una imagen, o `null`. FEAT-213 — `desdeAnterior`: la última del hilo. */
 function parsearImagen(linea) {
   const m = RE_IMAGEN.exec(linea);
   if (!m) return null;
   const texto = m[2].trim().replace(/\s+/g, ' ').slice(0, MAX_IMAGEN);
   if (!texto || esPlantilla(texto)) return null;
-  return { texto, desdeFoto: Boolean(m[1]) };
+  const desde = (m[1] || '').toLowerCase();
+  return { texto, desdeFoto: desde === '-desde-foto', desdeAnterior: desde === '-desde-anterior' };
 }
 
 /**
@@ -51,7 +52,7 @@ function parsearImagen(linea) {
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
@@ -81,6 +82,8 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
         'suma de verdad (nunca por costumbre). Sumá al bloque una de estas líneas:',
         'imagen: <qué imagen querés y para qué, en tus palabras>',
         'imagen-desde-foto: <qué cambiar de la foto que te mandó>   (solo si el usuario te mandó una foto)',
+        // FEAT-213 — Solo si en este hilo hay una imagen suya de la que partir.
+        ...(puedePedirAnterior ? ['imagen-desde-anterior: <qué cambiar de la última imagen que hiciste en este hilo>   (si te pide otra parecida o un cambio)'] : []),
         'El prompt técnico lo escribe otro modelo; la imagen llega después de tu respuesta.'
       ]
     : [];

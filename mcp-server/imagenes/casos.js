@@ -23,6 +23,17 @@ const TOPE_AGY = 900;
 const MAX_NEGATIVO = 500;
 const MAX_ZONA = 120;
 const MAX_INSTRUCCION = 2000;
+// FEAT-213 — Cuánto cambia una variación, y lo que le suma a la fuerza del perfil.
+const CAMBIOS = Object.freeze(['leve', 'medio', 'fuerte']);
+const SUMA_FUERZA = Object.freeze({ leve: -0.15, medio: 0, fuerte: 0.2 });
+const FUERZA_MIN = 0.1;
+const FUERZA_MAX = 0.95;
+
+/** FEAT-213 — La fuerza de una variación para ese cambio. `null`: la del perfil (una de 0 o 1 no se ajusta). */
+function fuerzaDeCambio(cambio, fuerza) {
+  if (!CAMBIOS.includes(cambio) || !Number.isFinite(fuerza) || fuerza < FUERZA_MIN || fuerza > FUERZA_MAX) return null;
+  return Math.round(Math.min(FUERZA_MAX, Math.max(FUERZA_MIN, fuerza + SUMA_FUERZA[cambio])) * 100) / 100;
+}
 
 const declara = (proveedor, caso) => (DECLARA[proveedor] || []).includes(caso);
 
@@ -120,12 +131,16 @@ function disponiblesDe(imagenes, { desdeFoto = false, catalogo = null, manual = 
 
 const estaDisponible = (disponibles, caso) => Boolean(disponibles[caso] && disponibles[caso].proveedores.length);
 
-/** La única bajada: desde el caso pedido hacia abajo, salta lo no disponible y lo que no tiene su campo. `null` si no queda nada. */
-function bajarCaso(caso, disponibles, { zona = '', instruccion = '', prompt = '' } = {}) {
+/**
+ * La única bajada: desde el caso pedido hacia abajo, salta lo no disponible y lo que no tiene su campo. `null` si no queda nada.
+ * FEAT-213 — Con `base` (la imagen tiene que partir de una foto) nunca da `nueva`: un `nueva` sube a `variacion`.
+ */
+function bajarCaso(caso, disponibles, { zona = '', instruccion = '', prompt = '' } = {}, { base = false } = {}) {
+  if (base && caso === 'nueva') caso = 'variacion';
   const desde = BAJADA.indexOf(caso);
   if (desde < 0) return null;
   for (const c of BAJADA.slice(desde)) {
-    if (!estaDisponible(disponibles, c)) continue;
+    if (!estaDisponible(disponibles, c) || (base && c === 'nueva')) continue;
     if (c === 'retoque' && !zona) continue;
     if (c === 'edicion' && !instruccion && !prompt) continue;
     return c;
@@ -163,9 +178,15 @@ function ajustarAlCaso(r, caso, d) {
     const l = d.loras.find((x) => x.clave === clave);
     if (l && !loras.includes(l) && loras.length < Math.min(d.huecos, flujos.MAX_HUECOS)) loras.push(l);
   }
+  // FEAT-213 — La fuerza de una variación, según cuánto cambia. Una que ya viene (se repite, o ya pasó por acá) se respeta.
+  let fuerza = null;
+  if (caso === 'variacion' && CAMBIOS.includes(r.cambio)) {
+    fuerza = Number.isFinite(r.fuerza) && r.fuerza >= 0 && r.fuerza <= 1 ? r.fuerza : fuerzaDeCambio(r.cambio, d.perfil.muestreo.fuerza);
+  }
   return {
     prompt, negativo, proporcion: PROPORCIONES.includes(r.proporcion) ? r.proporcion : '1:1',
-    zona: caso === 'retoque' ? limpio(r.zona, MAX_ZONA) : '', instruccion: caso === 'edicion' ? instruccion : '', loras
+    zona: caso === 'retoque' ? limpio(r.zona, MAX_ZONA) : '', instruccion: caso === 'edicion' ? instruccion : '', loras,
+    cambio: fuerza === null ? null : r.cambio, fuerza
   };
 }
 
@@ -178,6 +199,6 @@ function recortarParaAgy(prompt) {
 }
 
 module.exports = {
-  CASOS, PROPORCIONES, BAJADA, DECLARA, NO_IMPLEMENTADOS, TOPE_AGY, MAX_NEGATIVO, MAX_ZONA, MAX_INSTRUCCION,
+  CASOS, PROPORCIONES, CAMBIOS, fuerzaDeCambio, BAJADA, DECLARA, NO_IMPLEMENTADOS, TOPE_AGY, MAX_NEGATIVO, MAX_ZONA, MAX_INSTRUCCION,
   declara, modeloDeCaso, valoresDeCarga, comoLosLista, lorasDe, topeDelPrompt, estadoComfyui, disponiblesDe, estaDisponible, bajarCaso, sinPesos, ajustarAlCaso, recortarParaAgy
 };

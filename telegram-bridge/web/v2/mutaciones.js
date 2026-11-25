@@ -61,7 +61,17 @@ export function purgaV2(r) {
 /** `nucleo.*Claude` → la forma de v2, o el error por lista blanca. */
 const deClaudeV2 = (r, forma, opciones) => (r && r.ok !== false && !(Number.isInteger(r.codigo) && r.codigo >= 400) ? forma(r) : errorClaudeV2(r, opciones));
 
-export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t, imagenes = null }) {
+export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t, imagenes = null, comfy = null, conGaleria = false }) {
+  // FEAT-213 — La galería y el proceso de ComfyUI son de este daemon: en un nodo no están.
+  const galeria = conGaleria && imagenes ? imagenes.galeria : null;
+  const sinGaleria = () => error(503, 'La galería no está en este proceso.');
+  const sinComfy = () => error(503, 'ComfyUI no se maneja desde este proceso.');
+  const CODIGOS_COMFY = { apagado: 409, ajeno: 409, ocupado: 409, 'no-se-puede': 409 };
+  const deComfy = async (p) => {
+    const r = await p;
+    return r.ok ? { ok: true } : { ...error(CODIGOS_COMFY[r.codigo] || 500, r.motivo || 'No se pudo.'), motivo: r.codigo || 'error' };
+  };
+  const forzarDe = (cuerpo) => (cuerpo.forzar === undefined || typeof cuerpo.forzar === 'boolean' ? { ok: true, forzar: cuerpo.forzar === true } : { ok: false });
   // FEAT-210 §5 — El turno de una imagen: por tareaId o por tid (la entrada de idempotencia).
   const tareaDeImagen = (id, n) => {
     if (!RE_ID_TURNO.test(id)) return { error: error(400, 'Id de turno inválido.') };
@@ -155,6 +165,19 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       const s = await resolverSujeto(p[0]);
       if (!s || s.tipo !== 'alma') return error(404, 'No existe esa alma.');
       if (!RE_ID_CLIENTE.test(String(cuerpo.idCliente || ''))) return error(400, 'Falta idCliente (un UUID).');
+      // FEAT-213 §2 — Una imagen de la galería, por referencia: el turno usa el archivo original. Si es segura lo decide el turno.
+      if (cuerpo.referencia !== undefined) {
+        if (!galeria) return sinGaleria();
+        if (cuerpo.base64 !== undefined) return error(400, 'Va la imagen o la referencia, no las dos.');
+        const pie = nucleo.validarPieDeFoto(s.id, cuerpo);
+        if (pie.ok === false) return pie;
+        let original = null;
+        return idempotente(s.clave, String(cuerpo.idCliente), {
+          adjunto: true,
+          antes: () => { const r = galeria.referencia(cuerpo.referencia); original = r.ruta; return r.ok ? r : error(r.codigo, r.motivo); },
+          despachar: (alEncolar) => cola.dispatchCharla(ctx, { clave: pie.alma.clave, voz: pie.alma.voz, texto: pie.pie, imagen: { ruta: original, segura: pie.segura }, alEncolar })
+        });
+      }
       const v = nucleo.validarFoto(s.id, cuerpo);
       if (v.ok === false) return v;
       let ruta = null;
@@ -194,6 +217,37 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       if (t.error) return t.error;
       return imagenes.cancelar(t.tareaId, t.n) > 0 ? { ok: true, accion: 'imagen' } : error(409, 'Esa imagen no está en la cola ni en curso.');
     } },
+    // ---------------------------------------------------------------- FEAT-213 §2 — La galería.
+    { metodo: 'GET', patron: /^\/api\/v2\/imagenes\/?$/, fn: ({ url }) => {
+      if (!galeria) return sinGaleria();
+      const q = (k) => url.searchParams.get(k);
+      const r = galeria.listar({ alma: q('alma'), caso: q('caso'), busca: q('texto'), antes: q('antes'), limite: q('limite') });
+      return r.ok ? r : { ...error(r.codigo, r.motivo), campo: r.campo };
+    } },
+    { metodo: 'GET', patron: /^\/api\/v2\/imagenes\/([^/:]+)\/([^/:]+)\/([1-9]\d?)$/, fn: ({ p }) => {
+      if (!galeria) return sinGaleria();
+      const r = galeria.bytes(p[0], p[1], Number(p[2]));
+      return r.ok ? { binario: r.bytes, tipo: r.tipo } : error(r.codigo === 400 ? 400 : 404, 'Esa imagen no está.');
+    } },
+    { metodo: 'POST', patron: /^\/api\/v2\/imagenes:borrar$/, fn: ({ cuerpo }) => {
+      if (!galeria) return sinGaleria();
+      const r = galeria.borrar(cuerpo.imagenes);
+      return r.ok ? r : { ...error(r.codigo, r.motivo), campo: r.campo };
+    } },
+    // ---------------------------------------------------------------- FEAT-213 §1 — El proceso de ComfyUI.
+    { metodo: 'GET', patron: /^\/api\/v2\/comfyui\/?$/, fn: async () => (comfy ? { ok: true, ...(await comfy.estado()) } : sinComfy()) },
+    { metodo: 'GET', patron: /^\/api\/v2\/comfyui\/flags\/?$/, fn: async () => {
+      if (!comfy) return sinComfy();
+      const r = await comfy.flags();
+      return r.ok ? { ok: true, flags: r.flags } : { ...error(409, `No se pueden leer las flags: ${r.motivo}.`), motivo: 'sin-flags' };
+    } },
+    { metodo: 'GET', patron: /^\/api\/v2\/comfyui\/registro\/?$/, fn: () => (comfy ? { ok: true, lineas: comfy.registro() } : sinComfy()) },
+    { metodo: 'POST', patron: /^\/api\/v2\/comfyui:levantar$/, fn: () => (comfy ? deComfy(comfy.levantar()) : sinComfy()) },
+    ...['apagar', 'reiniciar'].map((que) => ({ metodo: 'POST', patron: new RegExp(`^/api/v2/comfyui:${que}$`), fn: ({ cuerpo }) => {
+      if (!comfy) return sinComfy();
+      const f = forzarDe(cuerpo);
+      return f.ok ? deComfy(comfy[que](f.forzar)) : error(400, 'forzar tiene que ser true o false.');
+    } })),
     { metodo: 'POST', patron: /^\/api\/v2\/imagenes:probar$/, fn: async ({ cuerpo }) => {
       if (!imagenes) return error(503, 'Sin imágenes en este proceso.');
       if (cuerpo.url !== undefined && (typeof cuerpo.url !== 'string' || cuerpo.url.length > 300)) return error(400, 'url tiene que ser un texto.', 'url');
@@ -248,7 +302,7 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     } },
     // FEAT-203 S0 — Ajustes (motores y general): validación propia, el núcleo y la respuesta proyectada.
     // FEAT-212 — 256 KB: los perfiles propios llevan reglas largas.
-    { metodo: 'POST', topeCuerpo: 256 * 1024, patron: /^\/api\/v2\/ajustes\/?$/, fn: ({ cuerpo }) => guardarAjustesV2(nucleo, cuerpo) },
+    { metodo: 'POST', topeCuerpo: 256 * 1024, patron: /^\/api\/v2\/ajustes\/?$/, fn: ({ cuerpo }) => guardarAjustesV2(nucleo, cuerpo, { comfy }) },
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/preparar\/?$/, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) },
     // FEAT-204 — El carácter de una voz, en Voicebox, y Probar (el WAV).
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/caracter\/?$/, fn: ({ cuerpo }) => caracterVozV2(nucleo, cuerpo) },

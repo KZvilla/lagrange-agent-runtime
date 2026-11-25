@@ -162,7 +162,7 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
    * `generar({ caso, modelo, perfil, prompt, negativo, ancho, alto, semilla, foto, zona, instruccion, loras, signal, destino })` → la interfaz de §3.
    * `loras`: `[{ clave, archivo, fuerza }]`, en el orden de los huecos.
    */
-  async function generar({ caso = 'nueva', modelo, perfil, prompt, negativo = '', ancho, alto, semilla, foto = null, zona = '', instruccion = '', loras = [], signal, destino }) {
+  async function generar({ caso = 'nueva', modelo, perfil, prompt, negativo = '', ancho, alto, semilla, fuerza = null, foto = null, zona = '', instruccion = '', loras = [], signal, destino }) {
     const fin = (codigo, extra = {}) => ({ ok: false, codigo, proveedor: 'comfyui', modelo, ...extra });
     if (!ajustesImagenes.esLoopback(base)) return fin('error');
     if (signal && signal.aborted) return fin('cancelada');
@@ -174,7 +174,7 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
     const m = perfil.muestreo;
     const datos = {
-      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : m.fuerza,
+      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
       ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
     };
     if (caso === 'retoque') datos.zona = zona;
@@ -325,6 +325,8 @@ async function probarConexion({ url, fetchImpl }) {
     const r = await fetchImpl(`${String(url).replace(/\/+$/, '')}/system_stats`, { signal: control.signal });
     if (!r.ok) return { ok: false, codigo: 'error', mensaje: `ComfyUI respondió con un error (${r.status}).` };
     const s = await r.json();
+    // FEAT-213 — Todas las versiones traen `system` y `devices`: otra cosa no es ComfyUI.
+    if (!s || typeof s.system !== 'object' || !s.system || !Array.isArray(s.devices)) return { ok: false, codigo: 'otro-programa', mensaje: 'En esa dirección responde otro programa, no ComfyUI.' };
     const dev = Array.isArray(s.devices) ? s.devices[0] : null;
     const vramLibre = dev && Number.isFinite(dev.vram_free) ? dev.vram_free : null;
     return { ok: true, codigo: 'ok', mensaje: 'ComfyUI responde.', ...(vramLibre !== null ? { vramLibre } : {}) };
