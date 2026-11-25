@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "descripcion": "FEAT-201 F0 — Contrato v2 del daemon. Un esquema por agregado y uno por tipo de evento. Lo valida web/v2/esquema.js, que implementa solo las palabras clave que este archivo usa. Dentro de 2.x solo se agregan campos opcionales y eventos; quitar o cambiar algo es 3.0.",
+  "descripcion": "FEAT-201 F0 — Contrato v2 del daemon. Un esquema por agregado y uno por tipo de evento. Lo valida web/v2/esquema.js, que implementa solo las palabras clave que este archivo usa. Dentro de 2.x solo se agregan campos opcionales y eventos, y se puede ensanchar un tope; quitar o cambiar algo es 3.0.",
   "agregados": {
     "error": {
       "type": "object",
@@ -510,12 +510,12 @@
               "prompt": {
                 "type": "string",
                 "nullable": true,
-                "maxLength": 900
+                "maxLength": 2000
               },
               "negativo": {
                 "type": "string",
                 "nullable": true,
-                "maxLength": 300
+                "maxLength": 500
               },
               "desdeFoto": {
                 "type": "boolean"
@@ -546,10 +546,67 @@
                 "type": "string",
                 "nullable": true,
                 "maxLength": 64
+              },
+              "caso": {
+                "type": "string",
+                "enum": [
+                  "nueva",
+                  "variacion",
+                  "retoque",
+                  "edicion"
+                ]
+              },
+              "casoPedido": {
+                "type": "string",
+                "enum": [
+                  "nueva",
+                  "variacion",
+                  "retoque",
+                  "edicion"
+                ]
+              },
+              "zona": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 120
+              },
+              "instruccion": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 2000
+              },
+              "perfil": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 40
+              },
+              "loras": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "clave",
+                    "fuerza"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "clave": {
+                      "type": "string",
+                      "maxLength": 30
+                    },
+                    "fuerza": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "sinChequeoZona": {
+                "type": "boolean"
               }
             }
           },
-          "description": "FEAT-210 — Las imágenes del turno, hasta 4 (contando «otra versión»). Solo campos públicos: nunca rutas. mensaje es un texto fijo por codigo."
+          "description": "FEAT-210 — Las imágenes del turno, hasta 4 (contando «otra versión»). Solo campos públicos: nunca rutas. mensaje es un texto fijo por codigo. FEAT-212: caso es el que se hizo y casoPedido el que se pidió (si bajó); loras, hasta 4."
         }
       }
     },

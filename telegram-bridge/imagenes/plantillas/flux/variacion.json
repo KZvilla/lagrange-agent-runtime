@@ -1,0 +1,178 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{semilla}}",
+      "steps": "{{pasos}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": "{{fuerza}}",
+      "model": [
+        "104",
+        0
+      ],
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "{{unet}}",
+      "weight_dtype": "default"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": [
+        "13",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "14",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "lagrange",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{foto}}"
+    }
+  },
+  "11": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "12",
+        0
+      ],
+      "vae": [
+        "14",
+        0
+      ]
+    }
+  },
+  "12": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": "{{ancho}}",
+      "height": "{{alto}}",
+      "crop": "center",
+      "image": [
+        "10",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "{{clip_1}}",
+      "clip_name2": "{{clip_2}}",
+      "type": "flux"
+    }
+  },
+  "14": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "{{vae}}"
+    }
+  },
+  "15": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ],
+      "guidance": "{{guia}}"
+    }
+  },
+  "101": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "{{lora_1}}",
+      "strength_model": "{{lora_1_fuerza}}"
+    }
+  },
+  "102": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "101",
+        0
+      ],
+      "lora_name": "{{lora_2}}",
+      "strength_model": "{{lora_2_fuerza}}"
+    }
+  },
+  "103": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "102",
+        0
+      ],
+      "lora_name": "{{lora_3}}",
+      "strength_model": "{{lora_3_fuerza}}"
+    }
+  },
+  "104": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "103",
+        0
+      ],
+      "lora_name": "{{lora_4}}",
+      "strength_model": "{{lora_4_fuerza}}"
+    }
+  }
+}

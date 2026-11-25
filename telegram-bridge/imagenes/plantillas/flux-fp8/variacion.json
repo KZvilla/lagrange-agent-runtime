@@ -4,16 +4,16 @@
     "inputs": {
       "seed": "{{semilla}}",
       "steps": "{{pasos}}",
-      "cfg": 7,
-      "sampler_name": "euler",
-      "scheduler": "normal",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
       "denoise": "{{fuerza}}",
       "model": [
-        "4",
+        "104",
         0
       ],
       "positive": [
-        "6",
+        "15",
         0
       ],
       "negative": [
@@ -43,12 +43,11 @@
     }
   },
   "7": {
-    "class_type": "CLIPTextEncode",
+    "class_type": "ConditioningZeroOut",
     "inputs": {
-      "text": "{{negativo}}",
-      "clip": [
-        "4",
-        1
+      "conditioning": [
+        "6",
+        0
       ]
     }
   },
@@ -105,6 +104,60 @@
         "10",
         0
       ]
+    }
+  },
+  "15": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ],
+      "guidance": "{{guia}}"
+    }
+  },
+  "101": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "{{lora_1}}",
+      "strength_model": "{{lora_1_fuerza}}"
+    }
+  },
+  "102": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "101",
+        0
+      ],
+      "lora_name": "{{lora_2}}",
+      "strength_model": "{{lora_2_fuerza}}"
+    }
+  },
+  "103": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "102",
+        0
+      ],
+      "lora_name": "{{lora_3}}",
+      "strength_model": "{{lora_3_fuerza}}"
+    }
+  },
+  "104": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "103",
+        0
+      ],
+      "lora_name": "{{lora_4}}",
+      "strength_model": "{{lora_4_fuerza}}"
     }
   }
 }

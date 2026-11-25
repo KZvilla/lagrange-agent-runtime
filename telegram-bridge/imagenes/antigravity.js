@@ -53,13 +53,6 @@ export function aspectoMasCercano(ancho, alto) {
   return mejor;
 }
 
-/** Las dimensiones que se reservan: una estimación (agy no las promete), 1024 del lado largo con la proporción pedida. */
-export function dimensiones(proporcion) {
-  const [x, y] = String(proporcion || '1:1').split(':').map(Number);
-  if (!x || !y) return { ancho: 1024, alto: 1024 };
-  return x >= y ? { ancho: 1024, alto: Math.round((1024 * y) / x) } : { ancho: Math.round((1024 * x) / y), alto: 1024 };
-}
-
 let cacheSlash = null;
 /** ¿Este agy acepta `--disable-slash-commands`? Se pregunta una vez por proceso (`agy --help`). */
 export function soportaDisableSlash({ agyBin, leerAyuda = null } = {}) {
@@ -158,5 +151,5 @@ export function crearAntigravity({
     return fin('error');
   }
 
-  return { id: 'antigravity', generar, dimensiones };
+  return { id: 'antigravity', generar };
 }

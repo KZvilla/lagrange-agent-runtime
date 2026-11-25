@@ -247,7 +247,8 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       return motoresV2(typeof nucleo.motoresV2 === 'function' ? await nucleo.motoresV2() : r);
     } },
     // FEAT-203 S0 — Ajustes (motores y general): validación propia, el núcleo y la respuesta proyectada.
-    { metodo: 'POST', patron: /^\/api\/v2\/ajustes\/?$/, fn: ({ cuerpo }) => guardarAjustesV2(nucleo, cuerpo) },
+    // FEAT-212 — 256 KB: los perfiles propios llevan reglas largas.
+    { metodo: 'POST', topeCuerpo: 256 * 1024, patron: /^\/api\/v2\/ajustes\/?$/, fn: ({ cuerpo }) => guardarAjustesV2(nucleo, cuerpo) },
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/preparar\/?$/, fn: ({ cuerpo }) => nucleo.prepararVoz(cuerpo) },
     // FEAT-204 — El carácter de una voz, en Voicebox, y Probar (el WAV).
     { metodo: 'POST', patron: /^\/api\/v2\/voz\/caracter\/?$/, fn: ({ cuerpo }) => caracterVozV2(nucleo, cuerpo) },

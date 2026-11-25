@@ -20,7 +20,14 @@ const CODIGOS_ENTRADA = Object.freeze({
   interrumpida: 'Se interrumpió (el daemon se reinició).',
   'sin-proveedor': 'Ningún proveedor pudo hacer la imagen.',
   apagadas: 'Las imágenes están apagadas.',
-  'foto-perdida': 'La foto ya no está; mandala de nuevo.'
+  'foto-perdida': 'La foto ya no está; mandala de nuevo.',
+  // FEAT-212
+  'no-disponible': 'no tiene lo que necesita para esto',
+  'zona-no-encontrada': 'No encontré la zona en la foto.',
+  'flujo-marcador': 'El flujo usa un marcador que este caso no da.',
+  'mascara-fallo': 'Falló el nodo de máscara.',
+  'solo-comfyui': 'ComfyUI no responde; este caso solo lo hace ComfyUI.',
+  'sin-caso': 'No hay ningún flujo disponible para este pedido.'
 });
 
 const MOTIVOS_RECHAZO = Object.freeze({
@@ -34,8 +41,17 @@ const MOTIVOS_RECHAZO = Object.freeze({
 /** Los nombres legibles de cada proveedor, para los mensajes. */
 const NOMBRES = Object.freeze({ comfyui: 'ComfyUI', antigravity: 'agy', openai: 'OpenAI', gemini: 'Gemini' });
 
-/** El mensaje de una entrada en `error`: fijo por código. `sin-proveedor` nombra a cada uno con su motivo. */
-function mensajeDe(codigo, { intentos = [] } = {}) {
+const corto = (v, max) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/**
+ * El mensaje de una entrada en `error`: fijo por código. `sin-proveedor` nombra a cada uno con su motivo. FEAT-212: la
+ * zona, el marcador, la clase del nodo o el motivo van acotados, y el texto entero entra en 200.
+ */
+function mensajeDe(codigo, { intentos = [], zona = '', cubre = false, marcador = '', clase = '', motivo = '' } = {}) {
+  if (codigo === 'zona-no-encontrada' && zona) return (cubre ? `La máscara de «${corto(zona, 120)}» cubre toda la foto.` : `No encontré «${corto(zona, 120)}» en la foto.`).slice(0, 200);
+  if (codigo === 'flujo-marcador' && marcador) return `El flujo usa {{${corto(marcador, 40)}}} y este caso no lo da.`;
+  if (codigo === 'mascara-fallo' && clase) return `Falló el nodo de máscara (${corto(clase, 60).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)}).`;
+  if (codigo === 'sin-caso' && motivo) return `No hay ningún flujo disponible para este pedido (${corto(motivo, 120)}).`.slice(0, 200);
   if (codigo === 'sin-proveedor' && intentos.length) {
     const partes = intentos.map(({ proveedor, codigo: c }) => `${NOMBRES[proveedor] || proveedor} ${CODIGOS_ENTRADA[c] || CODIGOS_ENTRADA.error}`);
     const texto = partes.join('; ');

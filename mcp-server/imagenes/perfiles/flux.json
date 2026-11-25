@@ -1,0 +1,54 @@
+{
+  "id": "flux",
+  "nombre": "Flux.1 (archivos separados)",
+  "plantillas": "flux",
+  "carga": {
+    "tipo": "unet",
+    "clip1": "clip_l.safetensors",
+    "clip2": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae": "ae.safetensors"
+  },
+  "prompt": {
+    "estilo": "natural",
+    "reglas": "Flux understands plain English sentences: describe what is in the picture, where each thing is, the light and the style, as you would to a photographer.\nPut the most important element first. Use spatial words (in the foreground, behind, to the left of).\nIf the picture must contain written text, put it in double quotes and say where it goes.\nThere is no negative prompt: say what is there, never what is missing. Instead of \"no people\", write \"an empty street\".\nDo not use weights, tag lists or quality words such as masterpiece, 8k or best quality.",
+    "tope": 1800,
+    "negativo": "no",
+    "negativoPorDefecto": "",
+    "pesos": false
+  },
+  "muestreo": {
+    "pasos": 25,
+    "cfg": 1,
+    "guia": 3.5,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
+  },
+  "medidas": {
+    "1:1": [
+      1024,
+      1024
+    ],
+    "3:4": [
+      896,
+      1152
+    ],
+    "4:3": [
+      1152,
+      896
+    ],
+    "16:9": [
+      1344,
+      768
+    ],
+    "9:16": [
+      768,
+      1344
+    ]
+  },
+  "casos": [
+    "nueva",
+    "variacion"
+  ]
+}

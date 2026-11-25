@@ -288,7 +288,7 @@ function aplicarImagenes(config, parsed, { global = true } = {}) {
     config.avisos.push('imagenes solo se lee de la configuración global (~/.claude/antigravity.json); la del proyecto se ignora');
     return;
   }
-  const r = require('./ajustes-imagenes.js').normalizar(parsed.imagenes);
+  const r = require('./ajustes-imagenes.js').leerSeccion(parsed);
   config.imagenes = r.imagenes;
   config.avisos.push(...r.avisos);
 }

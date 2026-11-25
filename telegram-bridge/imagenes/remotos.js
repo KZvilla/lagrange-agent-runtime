@@ -10,7 +10,6 @@
 export function crearRemoto(id) {
   return {
     id,
-    dimensiones: () => ({ ancho: 1024, alto: 1024 }),
     async generar() {
       return { ok: false, codigo: 'no-implementado', proveedor: id, modelo: null };
     }

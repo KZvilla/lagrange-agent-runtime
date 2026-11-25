@@ -1,0 +1,300 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{semilla}}",
+      "steps": "{{pasos}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": "{{fuerza}}",
+      "model": [
+        "41",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "42",
+        1
+      ],
+      "latent_image": [
+        "42",
+        2
+      ]
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "{{unet}}",
+      "weight_dtype": "default"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": [
+        "13",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "14",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "lagrange",
+      "images": [
+        "43",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{foto}}"
+    }
+  },
+  "13": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "{{clip_1}}",
+      "clip_name2": "{{clip_2}}",
+      "type": "flux"
+    }
+  },
+  "14": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "{{vae}}"
+    }
+  },
+  "15": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ],
+      "guidance": "{{guia}}"
+    }
+  },
+  "20": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "31",
+        1
+      ]
+    }
+  },
+  "21": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "22",
+        0
+      ]
+    }
+  },
+  "22": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "upscale_method": "area",
+      "width": 256,
+      "height": 256,
+      "crop": "disabled",
+      "image": [
+        "20",
+        0
+      ]
+    }
+  },
+  "30": {
+    "class_type": "SAM2ModelLoader (segment anything2)",
+    "inputs": {
+      "model_name": "sam2_1_hiera_base_plus.pt"
+    }
+  },
+  "31": {
+    "class_type": "GroundingDinoSAM2Segment (segment anything2)",
+    "inputs": {
+      "sam_model": [
+        "30",
+        0
+      ],
+      "grounding_dino_model": [
+        "32",
+        0
+      ],
+      "image": [
+        "10",
+        0
+      ],
+      "prompt": "{{zona}}",
+      "threshold": 0.3,
+      "keep_model_loaded": false
+    }
+  },
+  "32": {
+    "class_type": "GroundingDinoModelLoader (segment anything2)",
+    "inputs": {
+      "model_name": "GroundingDINO_SwinT_OGC (694MB)"
+    }
+  },
+  "40": {
+    "class_type": "InpaintCropImproved",
+    "inputs": {
+      "image": [
+        "10",
+        0
+      ],
+      "mask": [
+        "31",
+        1
+      ],
+      "downscale_algorithm": "bilinear",
+      "upscale_algorithm": "bicubic",
+      "preresize": false,
+      "preresize_mode": "ensure minimum resolution",
+      "preresize_min_width": 1024,
+      "preresize_min_height": 1024,
+      "preresize_max_width": 16384,
+      "preresize_max_height": 16384,
+      "mask_fill_holes": true,
+      "mask_expand_pixels": 8,
+      "mask_invert": false,
+      "mask_blend_pixels": 32,
+      "mask_hipass_filter": 0.1,
+      "extend_for_outpainting": false,
+      "extend_up_factor": 1,
+      "extend_down_factor": 1,
+      "extend_left_factor": 1,
+      "extend_right_factor": 1,
+      "context_from_mask_extend_factor": 1.2,
+      "output_resize_to_target_size": true,
+      "output_target_width": "{{ancho}}",
+      "output_target_height": "{{alto}}",
+      "output_padding": "32",
+      "device_mode": "cpu (compatible)"
+    }
+  },
+  "41": {
+    "class_type": "DifferentialDiffusion",
+    "inputs": {
+      "model": [
+        "104",
+        0
+      ]
+    }
+  },
+  "42": {
+    "class_type": "InpaintModelConditioning",
+    "inputs": {
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "14",
+        0
+      ],
+      "pixels": [
+        "40",
+        1
+      ],
+      "mask": [
+        "40",
+        2
+      ],
+      "noise_mask": true
+    }
+  },
+  "43": {
+    "class_type": "InpaintStitchImproved",
+    "inputs": {
+      "stitcher": [
+        "40",
+        0
+      ],
+      "inpainted_image": [
+        "8",
+        0
+      ]
+    }
+  },
+  "101": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "{{lora_1}}",
+      "strength_model": "{{lora_1_fuerza}}"
+    }
+  },
+  "102": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "101",
+        0
+      ],
+      "lora_name": "{{lora_2}}",
+      "strength_model": "{{lora_2_fuerza}}"
+    }
+  },
+  "103": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "102",
+        0
+      ],
+      "lora_name": "{{lora_3}}",
+      "strength_model": "{{lora_3_fuerza}}"
+    }
+  },
+  "104": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "103",
+        0
+      ],
+      "lora_name": "{{lora_4}}",
+      "strength_model": "{{lora_4_fuerza}}"
+    }
+  }
+}

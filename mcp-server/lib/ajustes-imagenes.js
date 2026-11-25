@@ -6,36 +6,46 @@
  * lectura tolerante (lo inválido cae a su valor por defecto, con aviso) y la usa
  * todo lo que decide en caliente (la consigna del alma, la cola, `capacidades`);
  * `aplicarImagenes` es la escritura estricta de Ajustes.
+ *
+ * FEAT-212 — Suma los perfiles propios, los flujos por perfil, los LoRAs y la
+ * edición. `leerSeccion` es la única lectura: si el archivo trae claves de 2.18,
+ * las traduce en memoria (`imagenes/migracion.js`) antes de normalizar.
  */
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
-const path = require('node:path');
 const almasRutas = require('../almas/rutas.js');
-const { crearMatcher } = require('./glob-rutas.js');
+const perfiles = require('../imagenes/perfiles.js');
+const flujosLib = require('../imagenes/flujos.js');
+const migracion = require('../imagenes/migracion.js');
+const catalogos = require('../imagenes/catalogo.js');
+const { esLoopback } = require('../imagenes/loopback.js');
 // La hoja, no ajustes-general.js: config.js lee esta sección y ajustes-general.js lee config.js.
 const { ErrorAjuste } = require('./error-ajuste.js');
 
 const PROVEEDORES = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 const REMOTOS = Object.freeze({ openai: 'openai_imagen', gemini: 'gemini_imagen' });
-const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias']);
-const CAMPOS = Object.freeze([...BOOLEANOS, 'orden', 'por_alma', 'comfyui', 'openai_imagen', 'gemini_imagen']);
+const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram']);
+const CAMPOS = Object.freeze([...BOOLEANOS, 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
+const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
+const MAX_LORAS = 20;
+const MAX_INVALIDOS = 40;
 const URL_COMFYUI = 'http://127.0.0.1:8188';
 const MAX_TEXTO = 200;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 const RE_KEY_ENV = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const RE_NODO = /^[A-Za-z0-9_:.-]{1,40}$/;
 
+// `pasos` y `tope_prompt` viven en el perfil desde FEAT-212: acá quedan por los campos viejos de Desktop v0.21.1.
 const RANGOS = Object.freeze({
-  pasos: { min: 1, max: 150, defecto: 30 },
+  pasos: { min: 1, max: 150 },
   tiempo_s: { min: 10, max: 3600, defecto: 300 },
-  tope_prompt: { min: 100, max: 900, defecto: 300 }
+  tope_prompt: { min: 100, max: 2000 }
 });
-
-/** Los flujos que trae el plugin (SDXL). */
-const DIR_PLANTILLAS = path.join(__dirname, '..', '..', 'telegram-bridge', 'imagenes', 'plantillas');
-const PLANTILLA_TXT2IMG = path.join(DIR_PLANTILLAS, 'sdxl-txt2img.json');
-const PLANTILLA_IMG2IMG = path.join(DIR_PLANTILLAS, 'sdxl-img2img.json');
+const NUMEROS = Object.freeze(['tiempo_s']);
+const MODELO_POR_DEFECTO = 'sd_xl_base_1.0.safetensors';
 
 function defectos() {
   return {
@@ -47,9 +57,12 @@ function defectos() {
     otra_version: true,
     fotos_seguras: true,
     reconocer_propias: true,
+    reconocer_telegram: true,
+    perfiles_propios: {},
     comfyui: {
-      url: URL_COMFYUI, modelo: 'sd_xl_base_1.0.safetensors', flujo_txt2img: null, flujo_img2img: null, nodo_salida: null,
-      pasos: RANGOS.pasos.defecto, tiempo_s: RANGOS.tiempo_s.defecto, tope_prompt: RANGOS.tope_prompt.defecto, liberar_gpu: true
+      url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, flujos: {},
+      mascara: 'florence2', retoque: 'crop-stitch', chequeo_zona: true, loras: [], loras_activos: true,
+      tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true
     },
     openai_imagen: { url: null, modelo: null, key_env: null },
     gemini_imagen: { url: null, modelo: null, key_env: null }
@@ -57,15 +70,6 @@ function defectos() {
 }
 
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
-
-/** ¿Es una URL `http(s)` de loopback (127.0.0.1, localhost o [::1])? */
-function esLoopback(url) {
-  let u;
-  try { u = new URL(String(url)); } catch { return false; }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-  if (u.username || u.password) return false;
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
-}
 
 function esHttps(url) {
   try { const u = new URL(String(url)); return u.protocol === 'https:' && !u.username && !u.password; } catch { return false; }
@@ -75,38 +79,50 @@ function texto(v) {
   return typeof v === 'string' && v.trim() && v.trim().length <= MAX_TEXTO && !CONTROLES.test(v) ? v.trim() : null;
 }
 
-/** Un flujo de ComfyUI: ruta absoluta a un `.json`, fuera de `deny_paths`. `{ ok, motivo }` sin leer el archivo. */
-function formaDeFlujo(ruta, { denyPaths = [] } = {}) {
-  if (typeof ruta !== 'string' || !ruta.trim() || CONTROLES.test(ruta)) return { ok: false, motivo: 'tiene que ser una ruta' };
-  const r = ruta.trim();
-  if (!path.isAbsolute(r)) return { ok: false, motivo: 'tiene que ser una ruta absoluta' };
-  if (!/\.json$/i.test(r)) return { ok: false, motivo: 'tiene que ser un archivo .json' };
-  if (crearMatcher(denyPaths)(r.replace(/\\/g, '/').replace(/^[A-Za-z]:/, ''))) return { ok: false, motivo: 'está en deny_paths' };
-  return { ok: true };
+const RE_CLAVE_LORA = /^[\p{L}\p{N}][\p{L}\p{N} _.-]{0,29}$/u;
+const reservada = (k) => perfiles.RESERVADAS.includes(k);
+const conClave = (o, k, v) => Object.fromEntries([...Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k), [k, v]]);
+const sinClave = (o, k) => Object.fromEntries(Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k));
+
+/** El nombre de un modelo, como clave de `perfil_de`: `null` si vale, o el motivo. */
+function formaDeClaveDeModelo(k) {
+  if (reservada(k)) return 'no es un nombre de modelo';
+  return perfiles.formaDeArchivo(k, MAX_TEXTO);
 }
 
-/** Los marcadores `{{…}}` de un valor JSON ya parseado. */
-function marcadoresDe(valor, salida = new Set()) {
-  if (typeof valor === 'string') for (const m of valor.matchAll(/\{\{(\w+)\}\}/g)) salida.add(m[1]);
-  else if (Array.isArray(valor)) valor.forEach((v) => marcadoresDe(v, salida));
-  else if (esObjeto(valor)) Object.values(valor).forEach((v) => marcadoresDe(v, salida));
-  return salida;
+/** Valida la lista de LoRAs. `{ ok, loras }` o `{ ok: false, campo, motivo }`. */
+function validarLoras(v) {
+  const mal = (campo, motivo) => ({ ok: false, campo: `loras${campo}`, motivo });
+  if (!Array.isArray(v)) return mal('', 'tiene que ser una lista');
+  if (v.length > MAX_LORAS) return mal('', `tiene hasta ${MAX_LORAS}`);
+  const claves = new Set();
+  const loras = [];
+  for (const [i, l] of v.entries()) {
+    if (!esObjeto(l)) return mal(`.${i}`, 'tiene que ser un objeto');
+    for (const k of Object.keys(l)) if (!['archivo', 'clave', 'familias', 'fuerza', 'activo'].includes(k)) return mal(`.${i}.${k}`, 'no está permitido');
+    const m = perfiles.formaDeArchivo(l.archivo);
+    if (m) return mal(`.${i}.archivo`, m);
+    const clave = typeof l.clave === 'string' ? l.clave.trim() : '';
+    if (!RE_CLAVE_LORA.test(clave)) return mal(`.${i}.clave`, 'tiene que tener de 1 a 30 letras, números o espacios');
+    if (claves.has(clave.toLowerCase())) return mal(`.${i}.clave`, 'está repetida');
+    claves.add(clave.toLowerCase());
+    if (!Array.isArray(l.familias) || !l.familias.length || !l.familias.every((f) => perfiles.FAMILIAS.includes(f)) || new Set(l.familias).size !== l.familias.length) return mal(`.${i}.familias`, `tiene que ser una lista de ${perfiles.FAMILIAS.join(', ')}`);
+    if (!Number.isFinite(l.fuerza) || l.fuerza < 0 || l.fuerza > 2) return mal(`.${i}.fuerza`, 'tiene que ser un número de 0 a 2');
+    if (typeof l.activo !== 'boolean') return mal(`.${i}.activo`, 'tiene que ser true o false');
+    loras.push({ archivo: l.archivo.trim(), clave, familias: [...l.familias], fuerza: l.fuerza, activo: l.activo });
+  }
+  return { ok: true, loras };
 }
 
-/**
- * Lee y valida un flujo: existe, es JSON, tiene `{{prompt}}` (y `{{foto}}` si es de img2img).
- * `{ ok, flujo, marcadores }` o `{ ok: false, motivo }`.
- */
-function leerFlujo(ruta, { img2img = false } = {}) {
-  let crudo;
-  try { crudo = fs.readFileSync(ruta, 'utf8'); } catch { return { ok: false, motivo: 'el archivo del flujo no existe o no se puede leer' }; }
-  let flujo;
-  try { flujo = JSON.parse(crudo); } catch { return { ok: false, motivo: 'el flujo no es JSON' }; }
-  if (!esObjeto(flujo)) return { ok: false, motivo: 'el flujo no es un objeto de nodos de ComfyUI (formato API)' };
-  const marcadores = [...marcadoresDe(flujo)].sort();
-  if (!marcadores.includes('prompt')) return { ok: false, motivo: 'el flujo no tiene {{prompt}}' };
-  if (img2img && !marcadores.includes('foto')) return { ok: false, motivo: 'el flujo de img2img no tiene {{foto}}' };
-  return { ok: true, flujo, marcadores };
+/** Una entrada de `flujos[<perfil>][<caso>]`, sin leer el archivo. `{ ok, entrada }` o `{ ok: false, campo, motivo }`. */
+function validarEntradaDeFlujo(e, { denyPaths = [] } = {}) {
+  if (!esObjeto(e)) return { ok: false, campo: '', motivo: 'tiene que ser un objeto { archivo, salida }' };
+  for (const k of Object.keys(e)) if (!['archivo', 'salida'].includes(k)) return { ok: false, campo: `.${k}`, motivo: 'no está permitido' };
+  const forma = flujosLib.formaDeFlujo(e.archivo, { denyPaths });
+  if (!forma.ok) return { ok: false, campo: '.archivo', motivo: forma.motivo };
+  const salida = e.salida === undefined || e.salida === null || e.salida === '' ? null : String(e.salida);
+  if (salida !== null && !RE_NODO.test(salida)) return { ok: false, campo: '.salida', motivo: 'tiene que ser el id de un nodo del flujo' };
+  return { ok: true, entrada: { archivo: forma.ruta, salida } };
 }
 
 function rangoTolerante(v, campo) {
@@ -120,9 +136,27 @@ function rangoTolerante(v, campo) {
  */
 function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
   const d = defectos();
+  d[flujosLib.DENY] = denyPaths;
   const avisos = [];
-  if (crudo === undefined || crudo === null) return { imagenes: d, avisos };
-  if (!esObjeto(crudo)) return { imagenes: d, avisos: ['imagenes tiene que ser un objeto; se usan los valores por defecto'] };
+  const invalidos = [];
+  const invalido = (donde, motivo) => {
+    if (invalidos.length < MAX_INVALIDOS) invalidos.push({ donde: donde.slice(0, 200), motivo: String(motivo).slice(0, 120) });
+    avisos.push(`imagenes.${donde} ${motivo}; se ignora`);
+  };
+  if (crudo === undefined || crudo === null) return { imagenes: d, avisos, invalidos };
+  if (!esObjeto(crudo)) return { imagenes: d, avisos: ['imagenes tiene que ser un objeto; se usan los valores por defecto'], invalidos };
+  if (crudo.perfiles_propios !== undefined && crudo.perfiles_propios !== null) {
+    if (!esObjeto(crudo.perfiles_propios)) invalido('perfiles_propios', 'tiene que ser un objeto');
+    else {
+      const validos = [];
+      for (const [id, p] of Object.entries(crudo.perfiles_propios)) {
+        if (validos.length >= perfiles.MAX_PROPIOS) { invalido(`perfiles_propios.${id}`, `pasa los ${perfiles.MAX_PROPIOS} perfiles`); continue; }
+        const v = perfiles.validarPerfil(id, esObjeto(p) ? { ...p, id: undefined } : p);
+        if (v.ok) { const { id: _, ...resto } = v.perfil; validos.push([id, resto]); } else invalido(`perfiles_propios.${id}${v.campo ? `.${v.campo}` : ''}`, v.motivo);
+      }
+      d.perfiles_propios = Object.fromEntries(validos);
+    }
+  }
   for (const k of BOOLEANOS) {
     if (crudo[k] === undefined) continue;
     if (typeof crudo[k] === 'boolean') d[k] = crudo[k];
@@ -151,21 +185,56 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
         if (esLoopback(c.url)) d.comfyui.url = String(c.url).replace(/\/+$/, '');
         else avisos.push('imagenes.comfyui.url tiene que ser de esta máquina (127.0.0.1, localhost o [::1]); se usa la de siempre');
       }
-      if (c.modelo !== undefined && c.modelo !== null) {
-        if (texto(c.modelo)) d.comfyui.modelo = texto(c.modelo);
-        else avisos.push('imagenes.comfyui.modelo no es un nombre de archivo válido; se usa el de siempre');
-      }
-      for (const k of ['flujo_txt2img', 'flujo_img2img']) {
+      for (const k of ['modelo', 'modelo_edicion', 'modelo_retoque']) {
         if (c[k] === undefined || c[k] === null || c[k] === '') continue;
-        const forma = formaDeFlujo(c[k], { denyPaths });
-        if (forma.ok) d.comfyui[k] = c[k].trim();
-        else avisos.push(`imagenes.comfyui.${k} ${forma.motivo === 'está en deny_paths' ? 'está en deny_paths' : 'no es una ruta absoluta a un .json'}; se ignora`);
+        if (perfiles.formaDeArchivo(c[k], MAX_TEXTO) === null) d.comfyui[k] = c[k].trim();
+        else avisos.push(`imagenes.comfyui.${k} no es un nombre de archivo válido; se usa el de siempre`);
       }
-      if (c.nodo_salida !== undefined && c.nodo_salida !== null && c.nodo_salida !== '') {
-        if (RE_NODO.test(String(c.nodo_salida))) d.comfyui.nodo_salida = String(c.nodo_salida);
-        else avisos.push('imagenes.comfyui.nodo_salida no es un id de nodo; se ignora');
+      if (c.perfil_de !== undefined && c.perfil_de !== null) {
+        if (!esObjeto(c.perfil_de)) invalido('comfyui.perfil_de', 'tiene que ser un objeto { modelo: perfil }');
+        else {
+          const validos = [];
+          for (const [k, v] of Object.entries(c.perfil_de)) {
+            const m = formaDeClaveDeModelo(k);
+            if (m) invalido(`comfyui.perfil_de.${k}`, m);
+            else if (typeof v !== 'string' || !perfiles.RE_ID.test(v) || reservada(v)) invalido(`comfyui.perfil_de.${k}`, 'tiene que ser el id de un perfil');
+            else if (validos.length >= migracion.MAX_PERFIL_DE) invalido(`comfyui.perfil_de.${k}`, `pasa las ${migracion.MAX_PERFIL_DE} entradas`);
+            else validos.push([k, v]);
+          }
+          d.comfyui.perfil_de = Object.fromEntries(validos);
+        }
       }
-      for (const k of Object.keys(RANGOS)) {
+      if (c.flujos !== undefined && c.flujos !== null) {
+        if (!esObjeto(c.flujos)) invalido('comfyui.flujos', 'tiene que ser un objeto');
+        else {
+          const porPerfil = [];
+          for (const [id, casos] of Object.entries(c.flujos)) {
+            if (!perfiles.perfil(d, id)) { invalido(`comfyui.flujos.${id}`, 'no es un perfil que exista'); continue; }
+            if (!esObjeto(casos)) { invalido(`comfyui.flujos.${id}`, 'tiene que ser un objeto'); continue; }
+            const validos = [];
+            for (const [caso, e] of Object.entries(casos)) {
+              if (!flujosLib.CASOS_PROPIOS.includes(caso)) { invalido(`comfyui.flujos.${id}.${caso}`, caso === 'retoque' ? 'el retoque con flujo propio llega en una rebanada posterior' : 'no es un caso'); continue; }
+              const v = validarEntradaDeFlujo(e, { denyPaths });
+              if (v.ok) validos.push([caso, v.entrada]); else invalido(`comfyui.flujos.${id}.${caso}${v.campo}`, v.motivo);
+            }
+            if (validos.length) porPerfil.push([id, Object.fromEntries(validos)]);
+          }
+          d.comfyui.flujos = Object.fromEntries(porPerfil);
+        }
+      }
+      for (const [k, lista] of [['mascara', MASCARAS], ['retoque', RETOQUES]]) {
+        if (c[k] === undefined || c[k] === null) continue;
+        if (lista.includes(c[k])) d.comfyui[k] = c[k]; else avisos.push(`imagenes.comfyui.${k} tiene que ser ${lista.join(', ')}; se usa ${d.comfyui[k]}`);
+      }
+      for (const k of ['chequeo_zona', 'loras_activos']) {
+        if (c[k] === undefined || c[k] === null) continue;
+        if (typeof c[k] === 'boolean') d.comfyui[k] = c[k]; else avisos.push(`imagenes.comfyui.${k} tiene que ser true o false; se usa ${d.comfyui[k]}`);
+      }
+      if (c.loras !== undefined && c.loras !== null) {
+        const v = validarLoras(c.loras);
+        if (v.ok) d.comfyui.loras = v.loras; else avisos.push(`imagenes.comfyui.${v.campo} ${v.motivo}; se ignoran los LoRAs`);
+      }
+      for (const k of NUMEROS) {
         if (c[k] === undefined || c[k] === null) continue;
         d.comfyui[k] = rangoTolerante(c[k], k);
         if (d.comfyui[k] !== c[k]) avisos.push(`imagenes.comfyui.${k} tiene que ser un entero entre ${RANGOS[k].min} y ${RANGOS[k].max}; se usa ${RANGOS[k].defecto}`);
@@ -182,15 +251,7 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
     if (r.modelo) { if (texto(r.modelo)) d[campo].modelo = texto(r.modelo); else avisos.push(`imagenes.${campo}.modelo no es un nombre válido; se ignora`); }
     if (r.key_env) { if (RE_KEY_ENV.test(String(r.key_env))) d[campo].key_env = String(r.key_env); else avisos.push(`imagenes.${campo}.key_env tiene que ser el nombre de una variable (MAYÚSCULAS_Y_GUIONES); se ignora`); }
   }
-  return { imagenes: d, avisos };
-}
-
-/** El flujo efectivo de cada modo: el configurado o la plantilla del plugin (txt2img); img2img, solo si hay uno. */
-function flujosEfectivos(imagenes) {
-  return {
-    txt2img: imagenes.comfyui.flujo_txt2img || PLANTILLA_TXT2IMG,
-    img2img: imagenes.comfyui.flujo_img2img || null
-  };
+  return { imagenes: d, avisos, invalidos };
 }
 
 /** La política de lectura de la config (`permissions.deny_paths`), o la de siempre. */
@@ -199,18 +260,89 @@ function denyDe(datos) {
   return p && Array.isArray(p.deny_paths) ? p.deny_paths : ['.env*', '**/*.key', '**/*.pem'];
 }
 
-/** La sección, para la pantalla: los valores normalizados y, por flujo, sus marcadores o su problema. */
-function leerImagenes(datos, { almas = null } = {}) {
-  const { imagenes, avisos } = normalizar(datos.imagenes, { almas, denyPaths: denyDe(datos) });
-  const flujos = {};
-  const f = flujosEfectivos(imagenes);
-  for (const [modo, ruta] of Object.entries(f)) {
-    if (!ruta) { flujos[modo] = null; continue; }
-    const l = leerFlujo(ruta, { img2img: modo === 'img2img' });
-    flujos[modo] = l.ok ? { ok: true, marcadores: l.marcadores, plantilla: ruta === PLANTILLA_TXT2IMG } : { ok: false, motivo: l.motivo };
-    if (!l.ok) avisos.push(`El flujo de ${modo} no sirve: ${l.motivo}`);
+// La última migración en memoria: la clave es la sección cruda más el tamaño y la fecha de los dos flujos legados.
+let migrada = null;
+let avisosDeMigracion = [];
+
+function huellaDe(crudo, denyPaths) {
+  const h = crypto.createHash('sha256').update(JSON.stringify([crudo, denyPaths]));
+  for (const k of ['flujo_txt2img', 'flujo_img2img']) {
+    const r = crudo.comfyui[k];
+    try { if (typeof r === 'string' && flujosLib.formaDeFlujo(r, { denyPaths }).ok) { const st = fs.statSync(r.trim()); h.update(`${k}:${st.size}:${st.mtimeMs}`); } } catch {}
   }
-  return { imagenes, avisos, flujos };
+  return h.digest('hex');
+}
+
+/** La sección cruda, sin claves de 2.18: `{ crudo, avisos }`. Si las trae, las traduce en memoria (con caché). */
+function migrarCrudo(crudo, { denyPaths = [] } = {}) {
+  if (!migracion.tieneLegado(crudo)) return { crudo, avisos: [] };
+  const clave = huellaDe(crudo, denyPaths);
+  if (migrada && migrada.clave === clave) return { crudo: migrada.crudo, avisos: migrada.avisos };
+  const legado = Object.fromEntries(migracion.LEGADAS.filter((k) => Object.hasOwn(crudo.comfyui, k)).map((k) => [k, crudo.comfyui[k]]));
+  const r = migracion.traducirLegado(crudo, legado, { manda: 'nuevo', denyPaths, catalogo: catalogos.enCache(crudo.comfyui.url || URL_COMFYUI), normalizar, modeloPorDefecto: MODELO_POR_DEFECTO });
+  migrada = { clave, crudo: r.imagenes, avisos: r.avisos };
+  return { crudo: r.imagenes, avisos: r.avisos };
+}
+
+/** Los datos enteros con `imagenes` migrada. `{ datos, cambio, avisos }`. Deja los avisos para el GET de este proceso. */
+function migrarDatos(datos) {
+  if (!migracion.tieneLegado(datos.imagenes)) return { datos, cambio: false, avisos: [] };
+  const r = migrarCrudo(datos.imagenes, { denyPaths: denyDe(datos) });
+  avisosDeMigracion = r.avisos;
+  return { datos: { ...datos, imagenes: r.crudo }, cambio: true, avisos: r.avisos };
+}
+
+/**
+ * La lectura de la sección, la única: migra en memoria lo de 2.18 y normaliza. La usan la cola (`disponible`), el GET
+ * de Ajustes y la config del MCP. `{ imagenes, avisos, invalidos }`.
+ */
+function leerSeccion(datos, { almas = null } = {}) {
+  const d = esObjeto(datos) ? datos : {};
+  const denyPaths = denyDe(d);
+  const m = migrarCrudo(d.imagenes, { denyPaths });
+  const r = normalizar(m.crudo, { almas, denyPaths });
+  return { ...r, avisos: [...r.avisos, ...m.avisos] };
+}
+
+/** La vista de un caso, para la tarjeta de la pestaña. La ruta de una plantilla del plugin no viaja. */
+function vistaDeFlujo(imagenes, caso, catalogo) {
+  const casos = require('../imagenes/casos.js');
+  const modelo = casos.modeloDeCaso(imagenes, caso);
+  const p = perfiles.perfilDe(imagenes, modelo || imagenes.comfyui.modelo, catalogo);
+  const f = flujosLib.resolverFlujo(imagenes, p.perfil, caso);
+  let motivo = modelo ? f.motivo : 'falta el modelo';
+  if (modelo && f.ok && flujosLib.inyectaModelo(f.flujo) && p.cargaDelModelo !== p.perfil.carga.tipo) motivo = 'la carga del modelo no coincide con el perfil';
+  return {
+    modelo, perfil: p.perfil.id, familia: p.perfil.plantillas, archivo: f.archivo, nombre: f.nombre, propio: f.propio, salida: f.salida, salidas: f.salidas,
+    ok: motivo === null, motivo: motivo || p.aviso || null, marcadores: f.marcadores.filter((m) => !/^lora_/.test(m)), huecosLora: f.huecos.length, ficha: f.conFicha
+  };
+}
+
+/**
+ * La sección, para la pantalla: los valores normalizados, los campos viejos que lee Desktop v0.21.1 (con los valores
+ * efectivos) y lo que solo se lee: `perfiles`, `vistaFlujos` e `invalidos`.
+ */
+function leerImagenes(datos, { almas = null } = {}) {
+  const { imagenes, avisos, invalidos } = leerSeccion(datos, { almas });
+  const catalogo = catalogos.enCache(imagenes.comfyui.url);
+  const vistaFlujos = Object.fromEntries(perfiles.CASOS.map((c) => [c, vistaDeFlujo(imagenes, c, catalogo)]));
+  for (const c of ['nueva', 'variacion']) if (vistaFlujos[c].propio && !vistaFlujos[c].ok) avisos.push(`El flujo de ${c} no sirve: ${vistaFlujos[c].motivo}`);
+  const principal = perfiles.perfilDe(imagenes, imagenes.comfyui.modelo, catalogo).perfil;
+  const propio = (c) => flujosLib.flujoPropio(imagenes, principal.id, c);
+  const entradas = ['nueva', 'variacion'].map(propio).filter(Boolean);
+  const salidas = [...new Set(entradas.map((e) => e.salida))];
+  const compat = {
+    pasos: principal.muestreo.pasos, tope_prompt: principal.prompt.tope,
+    flujo_txt2img: propio('nueva') ? propio('nueva').archivo : null, flujo_img2img: propio('variacion') ? propio('variacion').archivo : null,
+    nodo_salida: salidas.length === 1 ? salidas[0] : null
+  };
+  const vieja = (v) => (v.ok ? { ok: true, marcadores: v.marcadores, plantilla: !v.propio } : { ok: false, motivo: v.motivo });
+  return {
+    imagenes: { ...imagenes, comfyui: { ...imagenes.comfyui, ...compat } },
+    avisos: [...avisos, ...avisosDeMigracion.filter((a) => !avisos.includes(a))],
+    flujos: { txt2img: vieja(vistaFlujos.nueva), img2img: vieja(vistaFlujos.variacion) },
+    perfiles: perfiles.perfilesEfectivos(imagenes), vistaFlujos, invalidos
+  };
 }
 
 /** Lo crudo de la sección, para su versión. */
@@ -229,6 +361,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
   const nuevo = { ...previo };
   for (const k of BOOLEANOS) {
     if (pedido[k] === undefined) continue;
+    if (pedido[k] === null || pedido[k] === '') { delete nuevo[k]; continue; }
     if (typeof pedido[k] !== 'boolean') throw new ErrorAjuste(`imagenes.${k} tiene que ser true o false`, `imagenes.${k}`);
     nuevo[k] = pedido[k];
   }
@@ -252,48 +385,135 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     }
     if (Object.keys(tabla).length) nuevo.por_alma = tabla; else delete nuevo.por_alma;
   }
+  if (pedido.perfiles_propios !== undefined) {
+    const p = pedido.perfiles_propios;
+    if (p !== null && !esObjeto(p)) throw new ErrorAjuste('imagenes.perfiles_propios tiene que ser un objeto { id: perfil }', 'imagenes.perfiles_propios');
+    let tabla = p === null ? {} : esObjeto(previo.perfiles_propios) ? previo.perfiles_propios : {};
+    for (const [id, v] of Object.entries(p || {})) {
+      if (v === null) { tabla = sinClave(tabla, id); continue; }
+      const r = perfiles.validarPerfil(id, esObjeto(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'id' && k !== 'origen')) : v);
+      if (!r.ok) throw new ErrorAjuste(`El perfil ${id}: ${r.campo ? `${r.campo} ` : ''}${r.motivo}`, `imagenes.perfiles_propios.${id}${r.campo ? `.${r.campo}` : ''}`);
+      const { id: _, ...resto } = r.perfil;
+      tabla = conClave(tabla, id, resto);
+    }
+    if (Object.keys(tabla).length > perfiles.MAX_PROPIOS) throw new ErrorAjuste(`Hasta ${perfiles.MAX_PROPIOS} perfiles propios`, 'imagenes.perfiles_propios');
+    if (Object.keys(tabla).length) nuevo.perfiles_propios = tabla; else delete nuevo.perfiles_propios;
+  }
   if (pedido.comfyui !== undefined) {
     const c = pedido.comfyui;
     if (!esObjeto(c)) throw new ErrorAjuste('imagenes.comfyui tiene que ser un objeto', 'imagenes.comfyui');
-    const permitidos = ['url', 'modelo', 'flujo_txt2img', 'flujo_img2img', 'nodo_salida', 'pasos', 'tiempo_s', 'tope_prompt', 'liberar_gpu'];
+    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', ...migracion.LEGADAS];
     for (const k of Object.keys(c)) if (!permitidos.includes(k)) throw new ErrorAjuste(`imagenes.comfyui.${k} no está permitido`, `imagenes.comfyui.${k}`);
-    const sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
+    let sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
     const quitar = (k) => { delete sal[k]; };
+    const cerrar = () => { if (Object.keys(sal).length) nuevo.comfyui = sal; else delete nuevo.comfyui; };
+    const efectiva = () => { cerrar(); return normalizar(nuevo, { denyPaths }).imagenes; };
     if (c.url !== undefined) {
       if (c.url === null || c.url === '') quitar('url');
       else if (!esLoopback(c.url)) throw new ErrorAjuste('La URL de ComfyUI tiene que ser de esta máquina (127.0.0.1, localhost o [::1])', 'imagenes.comfyui.url');
       else sal.url = String(c.url).trim().replace(/\/+$/, '');
     }
-    if (c.modelo !== undefined) {
-      if (c.modelo === null || c.modelo === '') quitar('modelo');
-      else if (!texto(c.modelo)) throw new ErrorAjuste(`El modelo tiene que ser un nombre (hasta ${MAX_TEXTO} caracteres)`, 'imagenes.comfyui.modelo');
-      else sal.modelo = texto(c.modelo);
-    }
-    for (const k of ['flujo_txt2img', 'flujo_img2img']) {
+    for (const k of ['modelo', 'modelo_edicion', 'modelo_retoque']) {
       if (c[k] === undefined) continue;
       if (c[k] === null || c[k] === '') { quitar(k); continue; }
-      const forma = formaDeFlujo(c[k], { denyPaths });
-      if (!forma.ok) throw new ErrorAjuste(`El flujo ${k === 'flujo_txt2img' ? 'de txt2img' : 'de img2img'} ${forma.motivo}`, `imagenes.comfyui.${k}`);
-      const l = leerFlujo(c[k].trim(), { img2img: k === 'flujo_img2img' });
-      if (!l.ok) throw new ErrorAjuste(`El flujo ${k === 'flujo_txt2img' ? 'de txt2img' : 'de img2img'}: ${l.motivo}`, `imagenes.comfyui.${k}`);
+      const m = perfiles.formaDeArchivo(c[k], MAX_TEXTO);
+      if (m) throw new ErrorAjuste(`El modelo ${m}`, `imagenes.comfyui.${k}`);
       sal[k] = c[k].trim();
     }
-    if (c.nodo_salida !== undefined) {
-      if (c.nodo_salida === null || c.nodo_salida === '') quitar('nodo_salida');
-      else if (!RE_NODO.test(String(c.nodo_salida))) throw new ErrorAjuste('El nodo de salida tiene que ser el id de un nodo del flujo', 'imagenes.comfyui.nodo_salida');
-      else sal.nodo_salida = String(c.nodo_salida);
-    }
-    for (const [k, r] of Object.entries(RANGOS)) {
+    for (const [k, lista] of [['mascara', MASCARAS], ['retoque', RETOQUES]]) {
       if (c[k] === undefined) continue;
-      if (c[k] === null) { quitar(k); continue; }
-      if (!Number.isInteger(c[k]) || c[k] < r.min || c[k] > r.max) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser un entero de ${r.min} a ${r.max}`, `imagenes.comfyui.${k}`);
+      if (c[k] === null || c[k] === '') quitar(k);
+      else if (!lista.includes(c[k])) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser ${lista.join(', ')}`, `imagenes.comfyui.${k}`);
+      else sal[k] = c[k];
+    }
+    for (const k of ['chequeo_zona', 'loras_activos', 'liberar_gpu']) {
+      if (c[k] === undefined) continue;
+      if (c[k] === null || c[k] === '') { quitar(k); continue; }
+      if (typeof c[k] !== 'boolean') throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser true o false`, `imagenes.comfyui.${k}`);
       sal[k] = c[k];
     }
-    if (c.liberar_gpu !== undefined) {
-      if (typeof c.liberar_gpu !== 'boolean') throw new ErrorAjuste('imagenes.comfyui.liberar_gpu tiene que ser true o false', 'imagenes.comfyui.liberar_gpu');
-      sal.liberar_gpu = c.liberar_gpu;
+    if (c.loras !== undefined) {
+      if (c.loras === null || c.loras === '') quitar('loras');
+      else {
+        const v = validarLoras(c.loras);
+        if (!v.ok) throw new ErrorAjuste(`imagenes.comfyui.${v.campo} ${v.motivo}`, `imagenes.comfyui.${v.campo}`);
+        if (v.loras.length) sal.loras = v.loras; else quitar('loras');
+      }
     }
-    if (Object.keys(sal).length) nuevo.comfyui = sal; else delete nuevo.comfyui;
+    for (const k of NUMEROS) {
+      const rg = RANGOS[k];
+      if (c[k] === undefined) continue;
+      if (c[k] === null || c[k] === '') { quitar(k); continue; }
+      if (!Number.isInteger(c[k]) || c[k] < rg.min || c[k] > rg.max) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser un entero de ${rg.min} a ${rg.max}`, `imagenes.comfyui.${k}`);
+      sal[k] = c[k];
+    }
+    if (c.perfil_de !== undefined) {
+      if (c.perfil_de !== null && !esObjeto(c.perfil_de)) throw new ErrorAjuste('imagenes.comfyui.perfil_de tiene que ser un objeto { modelo: perfil }', 'imagenes.comfyui.perfil_de');
+      const e = efectiva();
+      let tabla = c.perfil_de === null ? {} : esObjeto(sal.perfil_de) ? sal.perfil_de : {};
+      for (const [k, v] of Object.entries(c.perfil_de || {})) {
+        const campo = `imagenes.comfyui.perfil_de.${k}`;
+        if (v === null) { tabla = sinClave(tabla, k); continue; }
+        const m = formaDeClaveDeModelo(k);
+        if (m) throw new ErrorAjuste(`perfil_de: el modelo ${m}`, campo);
+        if (typeof v !== 'string' || !perfiles.perfil(e, v)) throw new ErrorAjuste(`perfil_de: "${v}" no es un perfil que exista`, campo);
+        tabla = conClave(tabla, k, v);
+      }
+      if (Object.keys(tabla).length > migracion.MAX_PERFIL_DE) throw new ErrorAjuste(`Hasta ${migracion.MAX_PERFIL_DE} modelos con perfil asignado`, 'imagenes.comfyui.perfil_de');
+      if (Object.keys(tabla).length) sal.perfil_de = tabla; else quitar('perfil_de');
+    }
+    // Los campos de Desktop v0.21.1: se traducen con la misma función que la migración.
+    const legado = Object.fromEntries(migracion.LEGADAS.filter((k) => c[k] !== undefined).map((k) => [k, c[k]]));
+    if (Object.keys(legado).length) {
+      if (legado.nodo_salida !== undefined && legado.nodo_salida !== null && legado.nodo_salida !== '' && !RE_NODO.test(String(legado.nodo_salida))) throw new ErrorAjuste('El nodo de salida tiene que ser el id de un nodo del flujo', 'imagenes.comfyui.nodo_salida');
+      cerrar();
+      const r = migracion.traducirLegado(nuevo, legado, { manda: 'legado', denyPaths, catalogo: catalogos.enCache(sal.url || URL_COMFYUI), normalizar, modeloPorDefecto: MODELO_POR_DEFECTO });
+      sal = esObjeto(r.imagenes.comfyui) ? r.imagenes.comfyui : {};
+      if (esObjeto(r.imagenes.perfiles_propios) && Object.keys(r.imagenes.perfiles_propios).length) nuevo.perfiles_propios = r.imagenes.perfiles_propios;
+    }
+    if (c.flujos !== undefined) {
+      if (c.flujos !== null && !esObjeto(c.flujos)) throw new ErrorAjuste('imagenes.comfyui.flujos tiene que ser un objeto { perfil: { caso: { archivo, salida } } }', 'imagenes.comfyui.flujos');
+      const e = efectiva();
+      let tabla = c.flujos === null ? {} : esObjeto(sal.flujos) ? sal.flujos : {};
+      for (const [id, porCaso] of Object.entries(c.flujos || {})) {
+        const base = `imagenes.comfyui.flujos.${id}`;
+        if (porCaso === null) { tabla = sinClave(tabla, id); continue; }
+        if (!esObjeto(porCaso)) throw new ErrorAjuste(`flujos.${id} tiene que ser un objeto`, base);
+        let del = esObjeto(tabla[id]) && Object.hasOwn(tabla, id) ? tabla[id] : {};
+        for (const [caso, v] of Object.entries(porCaso)) {
+          const campo = `${base}.${caso}`;
+          if (v === null) { del = sinClave(del, caso); continue; }
+          if (caso === 'retoque') throw new ErrorAjuste('El retoque con flujo propio llega en una rebanada posterior', campo);
+          if (!flujosLib.CASOS_PROPIOS.includes(caso)) throw new ErrorAjuste(`"${caso}" no es un caso con flujo propio`, campo);
+          const perfil = perfiles.perfil(e, id);
+          if (!perfil) throw new ErrorAjuste(`"${id}" no es un perfil que exista`, base);
+          const r = validarEntradaDeFlujo(v, { denyPaths });
+          if (!r.ok) throw new ErrorAjuste(`El flujo de ${caso}: ${r.motivo}`, `${campo}${r.campo}`);
+          const antes = Object.hasOwn(del, caso) && esObjeto(del[caso]) ? del[caso] : null;
+          // Lo que no cambia no se vuelve a validar: un archivo que se borró no traba el resto del guardado.
+          if (antes && antes.archivo === r.entrada.archivo && (antes.salida ?? null) === r.entrada.salida) continue;
+          const l = flujosLib.leerFlujo(r.entrada.archivo, { caso, denyPaths });
+          if (!l.ok) throw new ErrorAjuste(`El flujo de ${caso}: ${l.motivo}`, `${campo}.archivo`);
+          let salida = r.entrada.salida;
+          if (salida && !l.salidas.includes(salida)) throw new ErrorAjuste('El nodo de salida tiene que ser un SaveImage del flujo', `${campo}.salida`);
+          if (!salida && l.salidas.length > 1) throw new ErrorAjuste('El flujo tiene varios SaveImage: elegí el nodo de salida', `${campo}.salida`);
+          if (!salida) salida = l.salidas[0];
+          if (l.ficha.salida && l.ficha.salida !== salida) throw new ErrorAjuste('La salida no es la de la ficha del flujo', `${campo}.salida`);
+          if (!flujosLib.cargaCoincide(l.flujo, perfil.carga.tipo)) throw new ErrorAjuste(`El flujo de ${caso}: la carga del flujo no coincide con el perfil ${id}`, `${campo}.archivo`);
+          del = conClave(del, caso, { archivo: r.entrada.archivo, salida });
+        }
+        tabla = Object.keys(del).length ? conClave(tabla, id, del) : sinClave(tabla, id);
+      }
+      if (Object.keys(tabla).length) sal.flujos = tabla; else quitar('flujos');
+    }
+    cerrar();
+    // El modelo principal tiene que saber hacer una imagen nueva. Solo si el pedido lo trae: lo demás nunca se frena por él.
+    if (c.modelo !== undefined) {
+      const e = efectiva();
+      const p = perfiles.perfilDe(e, e.comfyui.modelo, catalogos.enCache(e.comfyui.url)).perfil;
+      const f = flujosLib.resolverFlujo(e, p, 'nueva');
+      if (!f.ok) throw new ErrorAjuste(`Ese modelo no puede ser el principal: con el perfil ${p.nombre}, ${f.motivo}`, 'imagenes.comfyui.modelo');
+    }
   }
   for (const campo of Object.values(REMOTOS)) {
     if (pedido[campo] === undefined) continue;
@@ -325,6 +545,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
 }
 
 module.exports = {
-  PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, RANGOS, URL_COMFYUI, PLANTILLA_TXT2IMG, PLANTILLA_IMG2IMG,
-  defectos, esLoopback, esHttps, formaDeFlujo, leerFlujo, marcadoresDe, normalizar, denyDe, flujosEfectivos, leerImagenes, crudoImagenes, aplicarImagenes
+  PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, RANGOS, MASCARAS, RETOQUES, MAX_LORAS, URL_COMFYUI, MODELO_POR_DEFECTO,
+  defectos, esLoopback, esHttps, formaDeFlujo: flujosLib.formaDeFlujo, leerFlujo: flujosLib.leerFlujo, marcadoresDe: flujosLib.marcadoresDe, resolverFlujo: flujosLib.resolverFlujo,
+  normalizar, denyDe, migrarDatos, leerSeccion, leerImagenes, crudoImagenes, aplicarImagenes
 };

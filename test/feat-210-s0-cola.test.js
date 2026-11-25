@@ -24,6 +24,8 @@ const indice = require('../mcp-server/imagenes/indice.js');
 const refinador = require('../mcp-server/imagenes/refinador.js');
 const codigos = require('../mcp-server/imagenes/codigos.js');
 const ajustesImagenes = require('../mcp-server/lib/ajustes-imagenes.js');
+const perfilesLib = require('../mcp-server/imagenes/perfiles.js');
+const casosLib = require('../mcp-server/imagenes/casos.js');
 const sondaVision = require('../mcp-server/imagenes/sonda-vision.js');
 const archivos = require('../mcp-server/almas/archivos.js');
 
@@ -74,20 +76,26 @@ function relojFalso() {
 
 async function main() {
   const tareas = await importar('telegram-bridge/tareas.js');
-  const { crearComfyui, probarComfyui, aplicarMarcadores, nodoDeSalida } = await importar('telegram-bridge/imagenes/comfyui.js');
+  const { crearComfyui, probarComfyui, aplicarMarcadores } = await importar('telegram-bridge/imagenes/comfyui.js');
   const agy = await importar('telegram-bridge/imagenes/antigravity.js');
   const { crearRemoto } = await importar('telegram-bridge/imagenes/remotos.js');
   const { crearColaImagenes, claveDe } = await importar('telegram-bridge/imagenes-cola.js');
 
   const tmp = path.join(raiz, 'tmp');
   fs.mkdirSync(tmp, { recursive: true });
-  const cfgComfy = config().comfyui;
-  const flujos = ajustesImagenes.flujosEfectivos(config());
+  const cfgComfy = config();
+  const conC = (extra) => ({ ...cfgComfy, comfyui: { ...cfgComfy.comfyui, ...extra } });
+  const SDXL = perfilesLib.PERFILES.get('sdxl');
+  // Sin catálogo (sin red) y con lo que la cola pone en cada pedido.
+  const comfy = (op) => {
+    const p = crearComfyui({ catalogoDe: () => null, ...op });
+    return { ...p, generar: (g) => p.generar({ caso: 'nueva', modelo: 'sd_xl_base_1.0.safetensors', perfil: SDXL, ...g }) };
+  };
 
   await group('ComfyUI: el camino feliz contra un servidor falso', async () => {
     const f = comfyFalso({ historiasVacias: 2 });
     const r0 = relojFalso();
-    const p = crearComfyui({ config: cfgComfy, flujos, fetchImpl: f.fetchImpl, ...r0 });
+    const p = comfy({ config: cfgComfy, fetchImpl: f.fetchImpl, ...r0 });
     const r = await p.generar({ prompt: 'un gato', negativo: 'feo', ancho: 1024, alto: 1024, semilla: 42, destino: path.join(tmp, 'c1') });
     check('termina bien', r.ok, JSON.stringify(r));
     check('escribe el destino con su extensión', r.ok && r.ruta === path.join(tmp, 'c1.png') && fs.existsSync(r.ruta));
@@ -102,45 +110,44 @@ async function main() {
     check('libera la GPU al terminar', f.pedidos.some((x) => x.ruta === '/free' && x.cuerpo.unload_models === true));
     const f2 = comfyFalso();
     const fotoRuta = path.join(tmp, 'foto.png'); fs.writeFileSync(fotoRuta, PNG);
-    const r2 = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: f2.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, foto: fotoRuta, destino: path.join(tmp, 'c2') });
-    check('…con fotoIgnorada y sin subir la foto', r2.ok && r2.fotoIgnorada === true && !f2.pedidos.some((x) => x.ruta === '/upload/image'));
+    const r2 = await comfy({ config: cfgComfy, fetchImpl: f2.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, foto: fotoRuta, destino: path.join(tmp, 'c2') });
+    check('una imagen nueva no sube la foto', r2.ok && !f2.pedidos.some((x) => x.ruta === '/upload/image'));
     const f3 = comfyFalso();
-    const conImg2img = { txt2img: flujos.txt2img, img2img: ajustesImagenes.PLANTILLA_IMG2IMG };
-    const r3 = await crearComfyui({ config: cfgComfy, flujos: conImg2img, fetchImpl: f3.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, foto: fotoRuta, destino: path.join(tmp, 'c3') });
-    check('con flujo de img2img sube la foto y la usa', r3.ok && !r3.fotoIgnorada && f3.pedidos.some((x) => x.ruta === '/upload/image') && JSON.stringify(f3.pedidos.find((x) => x.ruta === '/prompt').cuerpo).includes('subida.png'));
+    const r3 = await comfy({ config: cfgComfy, fetchImpl: f3.fetchImpl, ...relojFalso() }).generar({ caso: 'variacion', prompt: 'x', ancho: 64, alto: 64, foto: fotoRuta, destino: path.join(tmp, 'c3') });
+    check('una variación sube la foto y la usa', r3.ok && !r3.fotoIgnorada && f3.pedidos.some((x) => x.ruta === '/upload/image') && JSON.stringify(f3.pedidos.find((x) => x.ruta === '/prompt').cuerpo).includes('subida.png'));
     const sinLiberar = comfyFalso();
-    await crearComfyui({ config: { ...cfgComfy, liberar_gpu: false }, flujos, fetchImpl: sinLiberar.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c4') });
+    await comfy({ config: conC({ liberar_gpu: false }), fetchImpl: sinLiberar.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c4') });
     check('liberar_gpu apagado: no llama a /free', !sinLiberar.pedidos.some((x) => x.ruta === '/free'));
     const libre500 = comfyFalso();
     const con500 = async (url, op = {}) => (new URL(url).pathname === '/free' ? { ok: false, status: 500, json: async () => ({}) } : libre500.fetchImpl(url, op));
-    const r500 = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: con500, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c5') });
+    const r500 = await comfy({ config: cfgComfy, fetchImpl: con500, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c5') });
     check('/free con 500: la imagen igual queda bien (mejor esfuerzo)', r500.ok === true);
     // ComfyUI real: /free responde 200 sin cuerpo. No es un error ni se loguea.
     const vacio = comfyFalso();
     const logs = [];
     const sinCuerpo = async (url, op = {}) => (new URL(url).pathname === '/free' ? { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } } : vacio.fetchImpl(url, op));
-    const rVacio = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: sinCuerpo, log: (m) => logs.push(m), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c6') });
+    const rVacio = await comfy({ config: cfgComfy, fetchImpl: sinCuerpo, log: (m) => logs.push(m), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'c6') });
     check('/free 200 sin cuerpo: sin «falló» en el log', rVacio.ok === true && !logs.some((m) => m.includes('/free falló')), JSON.stringify(logs));
   });
 
   await group('ComfyUI: los errores y el corte', async () => {
-    const caido = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: comfyFalso({ caido: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e1') });
+    const caido = await comfy({ config: cfgComfy, fetchImpl: comfyFalso({ caido: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e1') });
     check('conexión rechazada → no-responde', caido.codigo === 'no-responde');
-    const ne = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: comfyFalso({ nodeErrors: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e2') });
+    const ne = await comfy({ config: cfgComfy, fetchImpl: comfyFalso({ nodeErrors: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e2') });
     check('node_errors con claves → fallo-del-flujo', ne.codigo === 'fallo-del-flujo');
-    const ef = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: comfyFalso({ errorFlujo: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e3') });
+    const ef = await comfy({ config: cfgComfy, fetchImpl: comfyFalso({ errorFlujo: true }).fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e3') });
     check('status_str error → fallo-del-flujo', ef.codigo === 'fallo-del-flujo');
     const roto = path.join(tmp, 'roto.json'); fs.writeFileSync(roto, '{"1":{"inputs":{"text":"sin marcador"},"class_type":"X"}}');
-    const sinMarcador = await crearComfyui({ config: cfgComfy, flujos: { txt2img: roto, img2img: null }, fetchImpl: comfyFalso().fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e4') });
+    const sinMarcador = await comfy({ config: conC({ flujos: { sdxl: { nueva: { archivo: roto, salida: null } } } }), fetchImpl: comfyFalso().fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e4') });
     check('un flujo sin {{prompt}} → fallo-del-flujo sin pedir nada', sinMarcador.codigo === 'fallo-del-flujo');
-    const remota = await crearComfyui({ config: { ...cfgComfy, url: 'http://192.168.0.2:8188' }, flujos, fetchImpl: comfyFalso().fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e5') });
+    const remota = await comfy({ config: conC({ url: 'http://192.168.0.2:8188' }), fetchImpl: comfyFalso().fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e5') });
     check('una url que no es loopback no se usa', remota.ok === false && remota.codigo === 'error');
 
     // El corte con el prompt corriendo: /interrupt y se confirma por /queue.
     const f = comfyFalso({ colgarHistoria: true, corriendo: true });
     const control = new AbortController();
     const reloj = relojFalso();
-    const prom = crearComfyui({ config: cfgComfy, flujos, fetchImpl: f.fetchImpl, ...reloj }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: control.signal, destino: path.join(tmp, 'e6') });
+    const prom = comfy({ config: cfgComfy, fetchImpl: f.fetchImpl, ...reloj }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: control.signal, destino: path.join(tmp, 'e6') });
     await esperarTicks(30);
     control.abort();
     const cortado = await prom;
@@ -151,7 +158,7 @@ async function main() {
     // ComfyUI no lo corta: colgado, para que la cola espere.
     const g = comfyFalso({ colgarHistoria: true, corriendo: true, noCorta: true });
     const c2 = new AbortController();
-    const prom2 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: g.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c2.signal, destino: path.join(tmp, 'e7') });
+    const prom2 = comfy({ config: cfgComfy, fetchImpl: g.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c2.signal, destino: path.join(tmp, 'e7') });
     await esperarTicks(30);
     c2.abort();
     const colgado = await prom2;
@@ -161,7 +168,7 @@ async function main() {
     const h = comfyFalso({ colgarHistoria: true });
     h.cola.pending.push([0, 'p1']);
     const c3 = new AbortController();
-    const prom3 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: h.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c3.signal, destino: path.join(tmp, 'e8') });
+    const prom3 = comfy({ config: cfgComfy, fetchImpl: h.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c3.signal, destino: path.join(tmp, 'e8') });
     await esperarTicks(30);
     c3.abort();
     await prom3;
@@ -170,7 +177,7 @@ async function main() {
     // Ni pendiente ni corriendo: nunca se interrumpe a ciegas.
     const k = comfyFalso({ colgarHistoria: true });
     const c4 = new AbortController();
-    const prom4 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: k.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c4.signal, destino: path.join(tmp, 'e9') });
+    const prom4 = comfy({ config: cfgComfy, fetchImpl: k.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c4.signal, destino: path.join(tmp, 'e9') });
     await esperarTicks(30);
     c4.abort();
     await prom4;
@@ -178,7 +185,7 @@ async function main() {
 
     // El tiempo: tiempo_s y corta.
     const t = comfyFalso({ colgarHistoria: true, corriendo: true });
-    const tarde = await crearComfyui({ config: { ...cfgComfy, tiempo_s: 3 }, flujos, fetchImpl: t.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e10') });
+    const tarde = await comfy({ config: conC({ tiempo_s: 3 }), fetchImpl: t.fetchImpl, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e10') });
     check('se pasa de tiempo → tiempo, y corta el prompt', tarde.codigo === 'tiempo' && t.pedidos.some((x) => x.ruta === '/interrupt'));
 
     // Un pedido que no contesta: el tope por pedido (y el signal del trabajo) lo cortan.
@@ -189,21 +196,21 @@ async function main() {
     // AbortSignal.timeout no retiene el proceso: en el test, algo tiene que seguir vivo (el daemon lo está).
     const vivo = setInterval(() => {}, 1000);
     const p1 = comfyFalso();
-    const sinRespuesta = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p1, '/prompt'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11') });
+    const sinRespuesta = await comfy({ config: cfgComfy, fetchImpl: colgante(p1, '/prompt'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11') });
     check('POST /prompt enviado sin respuesta → tiempo y colgado (no pasa a agy)', sinRespuesta.codigo === 'tiempo' && sinRespuesta.colgado === true, JSON.stringify(sinRespuesta));
     const rechazo = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
-    const apagadoAlMandar = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: async () => { throw rechazo; }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11b') });
+    const apagadoAlMandar = await comfy({ config: cfgComfy, fetchImpl: async () => { throw rechazo; }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11b') });
     check('conexión rechazada en /prompt → no-responde (no llegó)', apagadoAlMandar.codigo === 'no-responde', JSON.stringify(apagadoAlMandar));
     const cortadaRed = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
     const p1b = comfyFalso();
-    const resetTrasMandar = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: async (url, op) => { if (new URL(url).pathname === '/prompt') throw cortadaRed; return p1b.fetchImpl(url, op); }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11c') });
+    const resetTrasMandar = await comfy({ config: cfgComfy, fetchImpl: async (url, op) => { if (new URL(url).pathname === '/prompt') throw cortadaRed; return p1b.fetchImpl(url, op); }, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e11c') });
     check('conexión cortada tras mandar /prompt → tiempo y colgado', resetTrasMandar.codigo === 'tiempo' && resetTrasMandar.colgado === true, JSON.stringify(resetTrasMandar));
     const p2 = comfyFalso({ corriendo: true });
-    const historiaMuda = await crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p2, '/history/'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e12') });
+    const historiaMuda = await comfy({ config: cfgComfy, fetchImpl: colgante(p2, '/history/'), pedidoMs: 30, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e12') });
     check('/history sin respuesta → tiempo, y corta el prompt', historiaMuda.codigo === 'tiempo' && p2.pedidos.some((x) => x.ruta === '/interrupt'), JSON.stringify(historiaMuda));
     const p3 = comfyFalso({ corriendo: true });
     const c5 = new AbortController();
-    const prom5 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: colgante(p3, '/history/'), pedidoMs: 60000, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c5.signal, destino: path.join(tmp, 'e13') });
+    const prom5 = comfy({ config: cfgComfy, fetchImpl: colgante(p3, '/history/'), pedidoMs: 60000, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c5.signal, destino: path.join(tmp, 'e13') });
     await esperarTicks(30);
     c5.abort();
     const cortadaEnVuelo = await prom5;
@@ -216,13 +223,13 @@ async function main() {
     const conRuta = async (url, op = {}) => (new URL(url).pathname === '/prompt'
       ? { ok: true, status: 200, json: async () => ({ prompt_id: 'p1', node_errors: { 4: { errors: [{ details: 'ckpt_name: C:\\ComfyUI\\models\\checkpoints\\falta.safetensors y /home/u/modelos/x.bin' }] } } }) }
       : p4.fetchImpl(url, op));
-    await crearComfyui({ config: cfgComfy, flujos, fetchImpl: conRuta, log: (l) => logs.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e14') });
+    await comfy({ config: cfgComfy, fetchImpl: conRuta, log: (l) => logs.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e14') });
     const conEspacios = [];
     const p5 = comfyFalso();
     const conRutaEspacios = async (url, op = {}) => (new URL(url).pathname === '/prompt'
       ? { ok: true, status: 200, json: async () => ({ prompt_id: 'p1', node_errors: { 4: { errors: [{ details: 'falta C:\\Program Files\\ComfyUI\\models\\a b.safetensors', extra: '/home/user/My Documents/x.bin' }] } } }) }
       : p5.fetchImpl(url, op));
-    await crearComfyui({ config: cfgComfy, flujos, fetchImpl: conRutaEspacios, log: (l) => conEspacios.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e15') });
+    await comfy({ config: cfgComfy, fetchImpl: conRutaEspacios, log: (l) => conEspacios.push(l), ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, destino: path.join(tmp, 'e15') });
     check('rutas con espacios tampoco quedan en el log', conEspacios.length > 0 && !conEspacios.some((l) => /Program|Files|ComfyUI\\|My Documents|home/.test(l)), JSON.stringify(conEspacios));
     // /interrupt anda pero /queue da 503 al confirmar: no se da por cortado.
     const q = comfyFalso({ colgarHistoria: true, corriendo: true });
@@ -234,7 +241,7 @@ async function main() {
       return q.fetchImpl(url, op);
     };
     const c6 = new AbortController();
-    const prom6 = crearComfyui({ config: cfgComfy, flujos, fetchImpl: queueRoto, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c6.signal, destino: path.join(tmp, 'e16') });
+    const prom6 = comfy({ config: cfgComfy, fetchImpl: queueRoto, ...relojFalso() }).generar({ prompt: 'x', ancho: 64, alto: 64, signal: c6.signal, destino: path.join(tmp, 'e16') });
     await esperarTicks(30);
     c6.abort();
     const sinConfirmar = await prom6;
@@ -248,8 +255,6 @@ async function main() {
     check('los enteros quedan enteros y el número, número', m[1].inputs.seed === 7 && m[1].inputs.steps === 30 && m[1].inputs.denoise === 0.6);
     check('el texto se reemplaza dentro de una cadena', m[1].inputs.text === 'a gato');
     check('el flujo original no se toca', flujo[1].inputs.seed === '{{semilla}}');
-    check('sin nodo_salida: el primer SaveImage del flujo', nodoDeSalida(flujo, '') === '2');
-    check('con nodo_salida: ese', nodoDeSalida(flujo, '1') === '1');
     const ok = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl: comfyFalso().fetchImpl });
     check('probar: ok con la VRAM libre', ok.ok && ok.vramLibre === 123);
     const no = await probarComfyui({ url: 'http://127.0.0.1:8188', fetchImpl: comfyFalso({ caido: true }).fetchImpl });
@@ -265,7 +270,6 @@ async function main() {
     const seguridad = fuente.slice(fuente.indexOf('function buildSecurityRules('), fuente.indexOf('function buildSecurityRules(') + 4000);
     check('las reglas de permisos están en buildSecurityRules', agy.REGLAS_PERMISOS.every((r) => seguridad.includes(r.slice(2, 40))));
     check('el aspecto más cercano', agy.aspectoMasCercano(1024, 576) === '16:9' && agy.aspectoMasCercano(1000, 1000) === '1:1');
-    check('dimensiones estimadas: 1024 del lado largo', JSON.stringify(agy.dimensiones('9:16')) === JSON.stringify({ ancho: 576, alto: 1024 }));
 
     agy.olvidarSlashParaTests();
     const base = { leerAyuda: () => 'usage: agy --disable-slash-commands', estadoCuota: null, revisarCuota: () => null };
@@ -335,23 +339,24 @@ async function main() {
   await group('El refinador', async () => {
     check('parsea con cercos de código', refinador.parsearSalida('```json\n{"prompt":"a"}\n```').prompt === 'a');
     check('un texto sin JSON → null', refinador.parsearSalida('nada') === null);
-    const s = refinador.sanear({ prompt: 'x'.repeat(2000), negativo: 'y'.repeat(900), proporcion: '7:3' }, 300);
-    check('sanea: prompt al tope, negativo a 300, proporción fuera de lista → 1:1', s.prompt.length === 300 && s.negativo.length === 300 && s.proporcion === '1:1');
-    check('sin prompt → null', refinador.sanear({ negativo: 'a' }, 300) === null);
-    const sin = refinador.sinRefinar('un gato', 300);
-    check('sin refinar: el texto del alma, 1:1 y el negativo genérico', sin.prompt === 'un gato' && sin.proporcion === '1:1' && sin.negativo === refinador.NEGATIVO_GENERICO && sin.refinado === false);
+    const disponibles = casosLib.disponiblesDe(config(), { desdeFoto: true, manual: () => false });
+    const s = refinador.sanear({ prompt: 'x'.repeat(2000), negativo: 'y'.repeat(900), proporcion: '7:3' }, { disponibles });
+    check('sanea: prompt al tope del perfil, negativo a 500, proporción fuera de lista → 1:1', s.prompt.length === 450 && s.negativo.length === 500 && s.proporcion === '1:1' && s.caso === 'nueva');
+    check('sin prompt → null', refinador.sanear({ negativo: 'a' }, { disponibles }) === null);
+    const sin = refinador.sinRefinar('un gato', { disponibles });
+    check('sin refinar: el texto del alma, 1:1 y el negativo del perfil', sin.prompt === 'un gato' && sin.proporcion === '1:1' && sin.negativo === SDXL.prompt.negativoPorDefecto && sin.refinado === false && sin.caso === 'nueva');
     const llamadas = [];
     const vision = { llamar: async (o) => { llamadas.push(o); return o.partes.imagen ? { ok: false, sinVision: true } : { ok: true, texto: '{"prompt":"refinado","negativo":"n","proporcion":"16:9"}', modelo: 'm' }; } };
-    const r = await refinador.refinar({ pedido: 'un gato', mensaje: 'hola', foto: { ruta: '/x.png', descripcion: { ok: true, texto: 'una foto de un gato' } }, vision });
+    const r = await refinador.refinar({ pedido: 'un gato', mensaje: 'hola', foto: { ruta: '/x.png', descripcion: { ok: true, texto: 'una foto de un gato' } }, disponibles, vision });
     check('con foto: prueba primero con los bytes', llamadas[0].partes.imagen && llamadas[0].modo === 'refinar');
     check('si falla con la foto, usa la descripción', llamadas.length === 2 && llamadas[1].partes.texto.includes('una foto de un gato') && r.prompt === 'refinado' && r.proporcion === '16:9' && r.conFoto === false);
-    const noParsea = await refinador.refinar({ pedido: 'texto del alma', vision: { llamar: async () => ({ ok: true, texto: 'no es json' }) } });
+    const noParsea = await refinador.refinar({ pedido: 'texto del alma', disponibles, vision: { llamar: async () => ({ ok: true, texto: 'no es json' }) } });
     check('respondió pero no parsea → el texto del alma', noParsea.prompt === 'texto del alma' && noParsea.refinado === false);
     check('…con el motivo', /no es el JSON/.test(noParsea.motivo || ''));
-    const cae = await refinador.refinar({ pedido: 'texto del alma', vision: { llamar: async () => ({ ok: false, motivo: 'OpenCode Go rechazó el pedido (400)' }) } });
+    const cae = await refinador.refinar({ pedido: 'texto del alma', disponibles, vision: { llamar: async () => ({ ok: false, motivo: 'OpenCode Go rechazó el pedido (400)' }) } });
     check('el refinador no responde → el texto del alma con el motivo', cae.refinado === false && cae.prompt === 'texto del alma' && /400/.test(cae.motivo || ''));
     const control = new AbortController(); control.abort();
-    const cancel = await refinador.refinar({ pedido: 'x', signal: control.signal, vision: { llamar: async () => ({ ok: false, cancelado: true }) } });
+    const cancel = await refinador.refinar({ pedido: 'x', disponibles, signal: control.signal, vision: { llamar: async () => ({ ok: false, cancelado: true }) } });
     check('cancelado → { cancelado: true }', cancel.cancelado === true);
   });
 
@@ -422,7 +427,6 @@ async function main() {
   const registro = { tarea: (id) => tareas.obtener(id), actualizar: (id, c) => tareas.actualizar(id, c) };
   const proveedorFalso = (id, comportamiento) => ({
     id,
-    dimensiones: () => ({ ancho: 1024, alto: 768 }),
     llamadas: 0,
     async generar(op) {
       this.llamadas++;
@@ -432,10 +436,10 @@ async function main() {
     }
   });
   const sinVision = { llamar: async () => ({ ok: false, sinVision: true }) };
-  const refinadorFalso = { refinar: async () => ({ prompt: 'refinado', negativo: 'n', proporcion: '4:3', refinado: true }), sinRefinar: refinador.sinRefinar };
+  const refinadorFalso = { refinar: async ({ desdeFoto }) => ({ prompt: 'refinado', negativo: 'n', proporcion: '4:3', zona: '', instruccion: '', loras: [], caso: desdeFoto ? 'variacion' : 'nueva', casoPedido: desdeFoto ? 'variacion' : 'nueva', refinado: true }), sinRefinar: refinador.sinRefinar };
   const armarCola = ({ provs, cfg = {}, mirar = null }) => crearColaImagenes({
     registro, proveedor: (id) => provs[id] || null, leerConfig: () => config({ orden: Object.keys(provs), alma_la_ve: false, ...cfg }),
-    refinador: refinadorFalso, vision: mirar || sinVision, manual: () => false, env: process.env
+    refinador: refinadorFalso, vision: mirar || sinVision, manual: () => false, catalogoDe: async () => null, env: process.env
   });
   const entrada = (id, n = 1) => (tareas.obtener(id).imagenes || []).find((e) => e.n === n);
 
@@ -590,7 +594,7 @@ async function main() {
     // Reintentar conserva la proporción que dio el refinador (4:3), no vuelve a 1:1.
     const pedidasDims = [];
     let fallaDims = true;
-    const provDims = { ...proveedorFalso('comfyui', () => (fallaDims ? { ok: false, codigo: 'tiempo' } : { ok: true })), dimensiones: (p) => { pedidasDims.push(p); return { ancho: 1024, alto: 768 }; } };
+    const provDims = proveedorFalso('comfyui', (op) => { pedidasDims.push(`${op.ancho}x${op.alto}`); return fallaDims ? { ok: false, codigo: 'tiempo' } : { ok: true }; });
     const colaDims = armarCola({ provs: { comfyui: provDims } });
     const idDims = nuevaTarea();
     colaDims.encolar({ tareaId: idDims, clave, hilo: 'h10', pedido: 'x' });
@@ -598,7 +602,7 @@ async function main() {
     fallaDims = false;
     colaDims.reintentar(idDims, 1);
     await hasta(() => entrada(idDims).estado === 'lista');
-    check('reintentar conserva la proporción refinada', pedidasDims.length >= 2 && pedidasDims.every((p) => p === '4:3'), JSON.stringify(pedidasDims));
+    check('reintentar conserva la proporción refinada', pedidasDims.length === 2 && pedidasDims.every((p) => p === '1152x896'), JSON.stringify(pedidasDims));
   });
 
   await group('La cola: el tope por alma', async () => {
@@ -811,9 +815,9 @@ async function main() {
   const { rutasMutacionV2 } = await importar('telegram-bridge/web/v2/mutaciones.js');
 
   await group('API v2: la proyección, el evento y el contrato', async () => {
-    const lista = imagenesDe([{ n: 1, estado: 'lista', prompt: 'p'.repeat(1000), negativo: 'n'.repeat(400), mensaje: 'm'.repeat(300), archivo: '/x', semilla: 3, pedido: 'secreto' }, { n: 2, estado: 'nada' }]);
+    const lista = imagenesDe([{ n: 1, estado: 'lista', prompt: 'p'.repeat(2100), negativo: 'n'.repeat(600), mensaje: 'm'.repeat(300), archivo: '/x', semilla: 3, pedido: 'secreto' }, { n: 2, estado: 'nada' }]);
     check('imagenesDe: sin rutas ni campos fuera del esquema', lista.length === 1 && lista[0].archivo === undefined && lista[0].semilla === undefined && lista[0].pedido === undefined);
-    check('imagenesDe: los topes (900, 300, 200)', lista[0].prompt.length === 900 && lista[0].negativo.length === 300 && lista[0].mensaje.length === 200);
+    check('imagenesDe: los topes (2000, 500, 200)', lista[0].prompt.length === 2000 && lista[0].negativo.length === 500 && lista[0].mensaje.length === 200);
     const m = memoriaDe({ recordo: 1, imagen: { pedida: 'un gato', rechazo: 'raro' }, fotoSegura: 'marcada' });
     check('memoriaDe: imagen y fotoSegura (un rechazo fuera de lista → null)', m.imagen.pedida === 'un gato' && m.imagen.rechazo === null && m.fotoSegura === 'marcada');
     check('memoriaDe: fotoSegura fuera de lista se descarta', memoriaDe({ fotoSegura: 'otra' }) === null);

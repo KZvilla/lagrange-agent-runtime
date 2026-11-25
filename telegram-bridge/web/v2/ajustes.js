@@ -34,8 +34,13 @@ const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ALTERNATIVAS = 3;
 const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz', 'imagenes']);
 // FEAT-210 — Los campos de la sección `imagenes` (la forma; el núcleo valida el resto).
-const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'orden', 'por_alma', 'comfyui', 'openai_imagen', 'gemini_imagen']);
+const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
 const PROVEEDORES_IMAGEN = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
+// FEAT-212 — Los casos, las familias de plantillas y las cargas de un perfil de modelo.
+const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
+const FAMILIAS_IMAGEN = Object.freeze(['sdxl', 'flux', 'flux-fp8', 'flux-fill', 'flux-kontext']);
+const PROPORCIONES_IMAGEN = Object.freeze(['1:1', '3:4', '4:3', '16:9', '9:16']);
+const RE_PERFIL = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const texto = (v, tope = 128) => (typeof v === 'string' && v.length <= tope ? v : null);
 const numero = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -214,6 +219,59 @@ function identidadesV2(v) {
 
 const avisosV2 = (l) => listaDeTextos(l, 300).slice(0, 20);
 
+/** FEAT-212 — Un perfil de modelo, campo por campo. `null` si no tiene la forma. */
+function perfilImagenV2(id, p) {
+  const o = esObjeto(p) ? p : null;
+  if (!o || typeof id !== 'string' || !RE_PERFIL.test(id)) return null;
+  const q = esObjeto(o.prompt) ? o.prompt : {};
+  const s = esObjeto(o.muestreo) ? o.muestreo : {};
+  const c = esObjeto(o.carga) ? o.carga : {};
+  const m = esObjeto(o.medidas) ? o.medidas : {};
+  return {
+    id, nombre: texto(o.nombre, 40), plantillas: FAMILIAS_IMAGEN.includes(o.plantillas) ? o.plantillas : null,
+    carga: { tipo: c.tipo === 'unet' ? 'unet' : 'checkpoint', ...Object.fromEntries(['clip1', 'clip2', 'vae'].filter((k) => texto(c[k], 200)).map((k) => [k, c[k]])) },
+    prompt: { estilo: texto(q.estilo, 20), reglas: texto(q.reglas, 4000), tope: numero(q.tope), negativo: texto(q.negativo, 20), negativoPorDefecto: texto(q.negativoPorDefecto, 500), pesos: q.pesos === true },
+    muestreo: { pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza), fuerzaRetoque: numero(s.fuerzaRetoque) },
+    medidas: Object.fromEntries(PROPORCIONES_IMAGEN.filter((k) => Array.isArray(m[k]) && m[k].length === 2).map((k) => [k, [numero(m[k][0]), numero(m[k][1])]])),
+    casos: (Array.isArray(o.casos) ? o.casos : []).filter((x) => CASOS_IMAGEN.includes(x))
+  };
+}
+
+/** FEAT-212 — Lo que suma `imagenes.comfyui`. Los flujos propios son rutas que eligió el usuario. */
+function comfyuiV2(c) {
+  const perfilDe = Object.entries(esObjeto(c.perfil_de) ? c.perfil_de : {}).filter(([k, v]) => k.length <= 200 && typeof v === 'string' && RE_PERFIL.test(v)).slice(0, 50);
+  const flujos = Object.entries(esObjeto(c.flujos) ? c.flujos : {}).filter(([id, v]) => RE_PERFIL.test(id) && esObjeto(v)).slice(0, 26).map(([id, porCaso]) => [
+    id, Object.fromEntries(CASOS_IMAGEN.filter((k) => Object.hasOwn(porCaso, k) && esObjeto(porCaso[k]) && texto(porCaso[k].archivo, 500)).map((k) => [k, { archivo: porCaso[k].archivo, salida: texto(porCaso[k].salida, 40) }]))
+  ]);
+  return {
+    modelo_edicion: texto(c.modelo_edicion, 200), modelo_retoque: texto(c.modelo_retoque, 200),
+    perfil_de: Object.fromEntries(perfilDe), flujos: Object.fromEntries(flujos),
+    mascara: ['florence2', 'sam2', 'no'].includes(c.mascara) ? c.mascara : 'florence2', retoque: ['crop-stitch', 'fill', 'no'].includes(c.retoque) ? c.retoque : 'crop-stitch',
+    chequeo_zona: c.chequeo_zona !== false, loras_activos: c.loras_activos !== false,
+    loras: (Array.isArray(c.loras) ? c.loras : []).filter((l) => esObjeto(l) && texto(l.archivo, 200) && texto(l.clave, 30)).slice(0, 20).map((l) => ({
+      archivo: l.archivo, clave: l.clave, familias: (Array.isArray(l.familias) ? l.familias : []).filter((f) => FAMILIAS_IMAGEN.includes(f)), fuerza: numero(l.fuerza), activo: l.activo === true
+    }))
+  };
+}
+
+/** FEAT-212 — Lo que solo se lee (GET y 409): los perfiles efectivos, la vista de cada caso y lo que no valió del archivo. */
+function soloLecturaImagenesV2(i) {
+  const o = esObjeto(i) ? i : {};
+  const vista = esObjeto(o.vistaFlujos) ? o.vistaFlujos : {};
+  return {
+    perfiles: (Array.isArray(o.perfiles) ? o.perfiles : []).slice(0, 26).map((p) => { const v = perfilImagenV2(p && p.id, p); return v && { ...v, origen: ['plugin', 'copia', 'propio'].includes(p.origen) ? p.origen : 'plugin' }; }).filter(Boolean),
+    vistaFlujos: Object.fromEntries(CASOS_IMAGEN.filter((k) => esObjeto(vista[k])).map((k) => {
+      const f = vista[k];
+      return [k, {
+        modelo: texto(f.modelo, 200), perfil: texto(f.perfil, 40), familia: texto(f.familia, 20), propio: f.propio === true,
+        archivo: f.propio === true ? texto(f.archivo, 500) : null, nombre: texto(f.nombre, 260), salida: texto(f.salida, 40), salidas: listaDeTextos(f.salidas, 40).slice(0, 20),
+        ok: f.ok === true, motivo: typeof f.motivo === 'string' ? f.motivo.slice(0, 120) : null, marcadores: listaDeTextos(f.marcadores, 40).slice(0, 30), huecosLora: numero(f.huecosLora) || 0, ficha: f.ficha === true
+      }];
+    })),
+    invalidos: (Array.isArray(o.invalidos) ? o.invalidos : []).filter(esObjeto).slice(0, 40).map((x) => ({ donde: texto(x.donde, 200), motivo: texto(x.motivo, 120) })).filter((x) => x.donde)
+  };
+}
+
 /** FEAT-210 — La sección `imagenes`, campo por campo. Los flujos son rutas que eligió el usuario: salen como texto. */
 function imagenesV2(i) {
   const o = esObjeto(i) ? i : {};
@@ -225,12 +283,14 @@ function imagenesV2(i) {
   const flujos = esObjeto(o.flujos) ? o.flujos : {};
   return {
     activas: b(o.activas), refinar: b(o.refinar), alma_la_ve: b(o.alma_la_ve), otra_version: b(o.otra_version),
-    fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias),
+    fotos_seguras: b(o.fotos_seguras), reconocer_propias: b(o.reconocer_propias), reconocer_telegram: b(o.reconocer_telegram),
+    perfiles_propios: Object.fromEntries(Object.entries(esObjeto(o.perfiles_propios) ? o.perfiles_propios : {}).slice(0, 20).map(([id, p]) => [id, perfilImagenV2(id, p)]).filter(([, p]) => p)),
     orden: (Array.isArray(o.orden) ? o.orden : []).filter((p) => PROVEEDORES_IMAGEN.includes(p)),
     por_alma: Object.fromEntries(Object.entries(esObjeto(o.por_alma) ? o.por_alma : {}).filter(([k, v]) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k) && v === false)),
     comfyui: {
       url: texto(c.url, 300), modelo: texto(c.modelo, 200), flujo_txt2img: texto(c.flujo_txt2img, 500), flujo_img2img: texto(c.flujo_img2img, 500),
-      nodo_salida: texto(c.nodo_salida, 40), pasos: entero(c.pasos), tiempo_s: entero(c.tiempo_s), tope_prompt: entero(c.tope_prompt), liberar_gpu: b(c.liberar_gpu)
+      nodo_salida: texto(c.nodo_salida, 40), pasos: entero(c.pasos), tiempo_s: entero(c.tiempo_s), tope_prompt: entero(c.tope_prompt), liberar_gpu: b(c.liberar_gpu),
+      ...comfyuiV2(c)
     },
     openai_imagen: remoto(o.openai_imagen), gemini_imagen: remoto(o.gemini_imagen),
     flujos: { txt2img: flujo(flujos.txt2img), img2img: flujo(flujos.img2img) }
@@ -242,7 +302,7 @@ function imagenesV2(i) {
  * cuentas con su `configDir`, entorno, lo que pisa el proyecto, el CSS de los colores, catálogo, sesiones, almas,
  * roles editables y el estado de las keys.
  */
-export function ajustesV2(vista) {
+export function ajustesV2(vista, { completo = false } = {}) {
   const v = esObjeto(vista) ? vista : {};
   const versiones = esObjeto(v.versiones) ? v.versiones : {};
   const motores = esObjeto(v.motores) ? v.motores : {};
@@ -267,7 +327,7 @@ export function ajustesV2(vista) {
     proyectoFija: proyectoFijaV2(v.pisadoPorProyecto),
     colores: { nombres: listaDeTextos(colores.nombres, 16) },
     // FEAT-210
-    imagenes: imagenesV2(v.imagenes),
+    imagenes: { ...imagenesV2(v.imagenes), ...(completo ? soloLecturaImagenesV2(v.imagenes) : {}) },
     avisos: { identidades: avisosV2(avisos.identidades), voz: avisosV2(avisos.voz), imagenes: avisosV2(avisos.imagenes) }
   };
 }
@@ -276,14 +336,15 @@ export function ajustesV2(vista) {
 export function ajustesRespuestaV2(r, { guardar = false } = {}) {
   if (!esObjeto(r)) return error(500, 'El núcleo no respondió.');
   if (r.ok !== false) {
-    const v = ajustesV2(r);
+    // FEAT-212 — Lo que solo se lee sale en el GET (y en el estado de un 409), no en la respuesta de guardar.
+    const v = ajustesV2(r, { completo: !guardar });
     return guardar ? { ...v, guardado: Boolean(r.guardado) } : v;
   }
   const codigo = Number.isInteger(r.codigo) ? r.codigo : 500;
   if (codigo === 409) {
-    return { codigo, ok: false, error: texto(r.error, 300) || 'La configuración cambió en otra parte.', conflictos: listaDeTextos(r.conflictos), estado: esObjeto(r.estado) ? ajustesV2(r.estado) : null };
+    return { codigo, ok: false, error: texto(r.error, 300) || 'La configuración cambió en otra parte.', conflictos: listaDeTextos(r.conflictos), estado: esObjeto(r.estado) ? ajustesV2(r.estado, { completo: true }) : null };
   }
-  if (codigo === 400) return error(400, texto(r.error, 300) || 'Pedido inválido.', texto(r.campo, 80));
+  if (codigo === 400) return error(400, texto(r.error, 300) || 'Pedido inválido.', texto(r.campo, 160));
   // El resto (422 archivo ilegible, 503 lock ocupado o sin Ajustes, 500): el mensaje del núcleo puede nombrar la ruta
   // del archivo, así que va uno propio por código.
   if (codigo === 422) return error(422, 'No se pudo leer la configuración global (antigravity.json); arreglala a mano.');

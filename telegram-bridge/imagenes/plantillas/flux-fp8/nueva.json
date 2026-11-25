@@ -1,0 +1,139 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{semilla}}",
+      "steps": "{{pasos}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1,
+      "model": [
+        "104",
+        0
+      ],
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "{{modelo}}"
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": "{{ancho}}",
+      "height": "{{alto}}",
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": [
+        "4",
+        1
+      ]
+    }
+  },
+  "7": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "lagrange",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  },
+  "15": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ],
+      "guidance": "{{guia}}"
+    }
+  },
+  "101": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "{{lora_1}}",
+      "strength_model": "{{lora_1_fuerza}}"
+    }
+  },
+  "102": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "101",
+        0
+      ],
+      "lora_name": "{{lora_2}}",
+      "strength_model": "{{lora_2_fuerza}}"
+    }
+  },
+  "103": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "102",
+        0
+      ],
+      "lora_name": "{{lora_3}}",
+      "strength_model": "{{lora_3_fuerza}}"
+    }
+  },
+  "104": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "103",
+        0
+      ],
+      "lora_name": "{{lora_4}}",
+      "strength_model": "{{lora_4_fuerza}}"
+    }
+  }
+}

@@ -600,14 +600,13 @@ through it:
    with the GPU and its free VRAM. From Lagrange Desktop, Ajustes → Imágenes →
    **Probar conexión** does the same (`POST /api/v2/imagenes:probar`).
 5. **Nothing to configure for the defaults:** URL `http://127.0.0.1:8188`, model
-   `sd_xl_base_1.0.safetensors`, 30 steps, 300 s per image, and the plugin's
-   SDXL text-to-image workflow. For img2img or another model family (Flux,
-   SD 1.5), the user exports a workflow in **API format** from ComfyUI, puts the
-   markers (`{{prompt}}`, `{{negativo}}`, `{{semilla}}`, `{{ancho}}`, `{{alto}}`,
-   `{{pasos}}`, `{{modelo}}`, and `{{foto}}` and `{{fuerza}}` for img2img) where
-   the values go, and points `imagenes.comfyui.flujo_txt2img` /
-   `flujo_img2img` at the absolute path of that `.json`. The plugin ships
-   `telegram-bridge/imagenes/plantillas/sdxl-img2img.json` as a starting point.
+   `sd_xl_base_1.0.safetensors` with the `sdxl` profile (30 steps, CFG 7), 300 s
+   per image, and the plugin's workflow for each case. Another family (Flux,
+   Kontext, Fill, Lightning) has its own profile and templates since 2.19.0: the
+   user only picks the model in Ajustes → Imágenes. Their own workflow (exported
+   in **API format**, with markers) goes per profile and case there too. The
+   markers, the profiles, the LoRAs and the custom nodes that inpainting needs
+   are in the wiki page «Image Models» (`wiki/Image-Models.md`).
 6. **One image in a chat:** ask a Soul for one («dibujame un gato»). The footer
    says «🖼️ va a hacer una imagen», and the image arrives by itself when it is
    ready (Telegram sends it as a photo; the terminal shows it under the reply).

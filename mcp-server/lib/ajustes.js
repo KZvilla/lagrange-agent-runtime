@@ -178,7 +178,7 @@ function leerAjustes({ homeDir = configMotores.homeDeConfig(), almas = null } = 
     // FEAT-169 F4 — `sesiones_claude`, con sus modos y el tope.
     sesiones: { ...ses.sesiones, modos: ses.modos, tope: ses.tope },
     // FEAT-210 — La sección normalizada y, por flujo de ComfyUI, sus marcadores o su problema.
-    imagenes: { ...img.imagenes, flujos: img.flujos },
+    imagenes: { ...img.imagenes, flujos: img.flujos, perfiles: img.perfiles, vistaFlujos: img.vistaFlujos, invalidos: img.invalidos },
     colores: { nombres: Object.keys(NOMBRES), css: COLORES_CSS },
     // BE-117 — Modelos y esfuerzos por motor: los mismos que valida la
     // escritura (y que usa la ficha del alma); los guardados a mano se suman.
@@ -491,6 +491,8 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
         if (pedido.sesiones !== undefined) nuevos = sesiones.aplicarSesiones(nuevos, cuerpo('sesiones'), { homeDir });
         // FEAT-210 — Los flujos de ComfyUI pasan por la política de lectura (`deny_paths`).
         if (pedido.imagenes !== undefined) {
+          // FEAT-212 — Lo de 2.18 se migra y se borra del archivo (la versión ya se chequeó contra lo crudo).
+          nuevos = imagenes.migrarDatos(nuevos).datos;
           const deny = imagenes.denyDe(nuevos);
           nuevos = imagenes.aplicarImagenes(nuevos, cuerpo('imagenes'), { almas: almas || almasRutas.listarClaves(), denyPaths: deny });
         }
@@ -506,6 +508,29 @@ function guardarAjustes(pedido, { homeDir = configMotores.homeDeConfig(), rolesP
   } catch (err) {
     if (err && err.code === 'ELOCK') return { ok: false, codigo: 503, error: 'Otro proceso está guardando la configuración. Reintentá en unos segundos.' };
     throw err;
+  }
+}
+
+/**
+ * FEAT-212 §1.1 — Al arrancar el bridge: lo de 2.18 pasa a los perfiles y sus claves se borran del archivo. Con el lock
+ * ocupado no pasa nada: la lectura lo traduce en memoria. `{ cambio, avisos }`. Nunca lanza.
+ */
+function migrarImagenes({ homeDir = configMotores.homeDeConfig() } = {}) {
+  const ruta = configMotores.rutaConfigGlobal(homeDir);
+  try {
+    const previo = configMotores.leerParaModificar(ruta);
+    if (!previo.ok || !imagenes.migrarDatos(previo.datos).cambio) return { cambio: false, avisos: [] };
+    return conLock(ruta, () => {
+      const leido = configMotores.leerParaModificar(ruta);
+      if (!leido.ok) return { cambio: false, avisos: [] };
+      const r = imagenes.migrarDatos(leido.datos);
+      if (!r.cambio) return { cambio: false, avisos: [] };
+      respaldar(ruta);
+      guardarJson(ruta, r.datos);
+      return { cambio: true, avisos: r.avisos };
+    });
+  } catch (err) {
+    return { cambio: false, avisos: [], error: err && err.code === 'ELOCK' ? 'la configuración está ocupada' : 'no se pudo escribir' };
   }
 }
 
@@ -572,5 +597,5 @@ const textoDe = (v, tope) => (typeof v === 'string' ? v.slice(0, tope) : null);
 module.exports = {
   SECCIONES, ROLES_BASE, COLORES_CSS, canonico, versionesDe, leerAjustes, guardarAjustes,
   validarVozPorPerfil, validarVozPorAlma, leerVozPorAlma, aplicarIdentidad, perfilesAjustes, limitesDeAjustes,
-  TIEMPOS_VOICEBOX, CLAVES_VOZ
+  TIEMPOS_VOICEBOX, CLAVES_VOZ, migrarImagenes
 };

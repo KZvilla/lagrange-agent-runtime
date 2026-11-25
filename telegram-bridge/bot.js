@@ -13,6 +13,7 @@ import { crearColaImagenes } from './imagenes-cola.js';
 import { crearComfyui, probarComfyui } from './imagenes/comfyui.js';
 import { crearAntigravity } from './imagenes/antigravity.js';
 import { crearRemoto } from './imagenes/remotos.js';
+import { sinRutas } from './imagenes/sanear-texto.js';
 import { replyWithSmartChunks, formatExecutionMeta, sendSafeChunk, formatElapsed, finalProgressLabel, escapeHtml } from './formatter.js';
 import { redactSecrets } from './policy.js';
 import { startLogRotation } from './logrotate.js';
@@ -215,7 +216,7 @@ function leerConfigImagenes() {
 /** FEAT-210 §3 — El proveedor `id` con la config vigente. */
 export function proveedorDeImagen(id, config) {
   const log = (linea) => console.error(redactSecrets(linea));
-  if (id === 'comfyui') return crearComfyui({ config: config.comfyui, flujos: imgAjustes().flujosEfectivos(config), log });
+  if (id === 'comfyui') return crearComfyui({ config, log });
   if (id === 'antigravity') {
     return crearAntigravity({
       runAgyArgs,
@@ -267,15 +268,17 @@ export function alGuardarImagenes() {
 /**
  * FEAT-210 §2.2 — La foto del turno, con lo que vale de verdad: marcada (si `fotos_seguras`), reconocida por su
  * `sha256` (si además `reconocer_propias`), o de afuera. Se decide al correr el turno, con la config de ese momento.
+ * FEAT-212 §7 — Con `reconocer_telegram`, también por el `sha256` del JPEG con que Telegram la devolvió.
  */
-export function fotoDelTurno(imagen, config, { reconocer = (bytes) => colaImagenes().reconocer(bytes) } = {}) {
+export function fotoDelTurno(imagen, config, { reconocer = (bytes) => colaImagenes().reconocer(bytes), reconocerTelegram = (bytes) => colaImagenes().reconocerTelegram(bytes) } = {}) {
   if (!imagen || !imagen.ruta) return imagen || null;
   const deAfuera = { ruta: imagen.ruta, segura: false, origen: null };
   if (!config.fotos_seguras) return deAfuera;
   if (imagen.segura) return { ruta: imagen.ruta, segura: true, origen: 'marcada' };
   if (!config.reconocer_propias) return deAfuera;
   try {
-    if (reconocer(fs.readFileSync(imagen.ruta))) return { ruta: imagen.ruta, segura: true, origen: 'reconocida' };
+    const bytes = fs.readFileSync(imagen.ruta);
+    if (reconocer(bytes) || (config.reconocer_telegram && reconocerTelegram(bytes))) return { ruta: imagen.ruta, segura: true, origen: 'reconocida' };
   } catch {}
   return deAfuera;
 }
@@ -948,7 +951,7 @@ function encolarImagenDelTurno(task, turno, ref) {
     return colaImagenes().encolar({
       tareaId: task.tareaId, clave: task.clave, hilo: turno.hilo || null, pedido: p.texto, mensaje: task.prompt || '',
       desdeFoto: Boolean(p.desdeFoto), foto: p.foto || null, externo: Boolean(turno.bloqueado?.length),
-      envio: esChatWeb(task.chatId) ? null : crearEnvioImagen(ref, task.chatId, { tareaId: task.tareaId }),
+      envio: esChatWeb(task.chatId) ? null : crearEnvioImagen(ref, task.chatId, { tareaId: task.tareaId, clave: task.clave }),
       origen: task.programado ? 'programado' : 'usuario'
     });
   } catch (err) {
@@ -974,27 +977,98 @@ export function imagenDelMensaje(botId, chatId, messageId) {
 /**
  * FEAT-210 §4 — El cierre de envío de una imagen por Telegram: `sendPhoto`; si falla, `sendDocument` (sin
  * recompresión); si también falla, un mensaje honesto. Un error se cuenta con su texto fijo.
+ *
+ * FEAT-212 §7 — Con la `clave` del alma, después de mandarla (y fuera del turno) baja el JPEG que devolvió Telegram y
+ * guarda su `sha256`: así se reconoce si vuelve. Los interruptores se leen al mandar.
  */
-export function crearEnvioImagen(ref, chatId, { tareaId = null } = {}) {
-  return async ({ ok, n, ruta, mensaje, tareaId: deLaCola = null }) => {
-    const api = salidaPara(ref);
+export function crearEnvioImagen(ref, chatId, { tareaId = null, clave = null, descargar = (fileId) => descargarDeBot(ref, fileId), leerConfig = leerConfigImagenes, api: apiInyectada = null, cola = null, alTerminar = () => {} } = {}) {
+  return async ({ ok, n, ruta, mensaje, tareaId: deLaCola = null, idEnvio = null }) => {
+    const api = apiInyectada || salidaPara(ref);
     if (!api || typeof api.sendPhoto !== 'function') return;
     if (!ok) return void await api.sendMessage(chatId, `🖼️ No pude hacer la imagen: ${mensaje}`);
     let enviado = null;
     try {
       enviado = await api.sendPhoto(chatId, new InputFile(ruta), { caption: `🖼️ ${n}` });
     } catch (err) {
-      console.warn(`[imagenes] sendPhoto falló, pruebo como documento: ${redactSecrets(err?.message || String(err))}`);
+      console.warn(`[imagenes] sendPhoto falló, pruebo como documento: ${sinRutas(redactSecrets(err?.message || String(err)))}`);
       try {
         enviado = await api.sendDocument(chatId, new InputFile(ruta), { caption: `🖼️ ${n}` });
       } catch (err2) {
-        console.warn(`[imagenes] sendDocument también falló: ${redactSecrets(err2?.message || String(err2))}`);
-        return void await api.sendMessage(chatId, '🖼️ La imagen está hecha y guardada, pero no pude mandarla por Telegram.');
+        console.warn(`[imagenes] sendDocument también falló: ${sinRutas(redactSecrets(err2?.message || String(err2)))}`);
+        try {
+          await api.sendMessage(chatId, '🖼️ La imagen está hecha y guardada, pero no pude mandarla por Telegram.');
+        } catch (err3) {
+          console.warn(`[imagenes] tampoco pude avisarlo: ${sinRutas(redactSecrets(err3?.message || String(err3)))}`);
+        }
+        return;
       }
     }
     const id = tareaId || deLaCola;
     if (enviado?.message_id && id && ref && typeof ref === 'object') recordarMensajeImagen(claveMensajeImagen(ref.bot, chatId, enviado.message_id), { tareaId: id, n });
+    // La foto más grande (un documento no trae `photo`: sus bytes ya son los originales). Fuera del turno.
+    const foto = Array.isArray(enviado?.photo) && enviado.photo.length ? enviado.photo.reduce((m, p) => ((p.width || 0) * (p.height || 0) >= (m.width || 0) * (m.height || 0) ? p : m)) : null;
+    if (!foto?.file_id || !clave || !id || !idEnvio) return void alTerminar(false);
+    let config = null;
+    try { config = leerConfig(); } catch {}
+    if (!config || !config.reconocer_propias || !config.reconocer_telegram) return void alTerminar(false);
+    anotarShaDeTelegram({ clave, tareaId: id, n, idEnvio, fileId: foto.file_id, descargar, cola }).then(alTerminar, () => alTerminar(false));
   };
+}
+
+const TOPE_DESCARGA_FOTO = 10 * 1024 * 1024;
+
+/** FEAT-212 §7 — Baja una foto que mandó el bot de `ref`: 10 s y 10 MB (sobre los bytes que llegan) como mucho. Lanza. */
+async function descargarDeBot(ref, fileId, { fetchImpl = globalThis.fetch } = {}) {
+  const bot = bots.get(String(ref?.bot))?.bot;
+  if (!bot || !bot.token) throw new Error('sin bot');
+  const signal = AbortSignal.timeout(10 * 1000);
+  const archivo = await bot.api.getFile(fileId, signal);
+  const r = await fetchImpl(`https://api.telegram.org/file/bot${bot.token}/${archivo.file_path}`, { signal });
+  if (!r.ok) throw new Error('respuesta');
+  return leerConTope(r, TOPE_DESCARGA_FOTO);
+}
+
+/** El cuerpo de una respuesta, cortado si pasa el tope mientras llega. */
+export async function leerConTope(r, tope) {
+  const partes = [];
+  let total = 0;
+  for await (const parte of r.body) {
+    total += parte.byteLength;
+    if (total > tope) throw new Error('pesa demasiado');
+    partes.push(Buffer.from(parte));
+  }
+  return Buffer.concat(partes);
+}
+
+/**
+ * FEAT-212 §7 — Guarda el `sha256` de lo que devolvió Telegram en la entrada de esa imagen, si sigue siendo el mismo intento. El
+ * lock no se espera (dormiría el proceso): hasta tres intentos, con 200 ms entre uno y otro. Nunca lanza.
+ */
+export async function anotarShaDeTelegram({ clave, tareaId, n, idEnvio, fileId, descargar, cola = null, esperaMs = 200 }) {
+  let sha;
+  try {
+    sha = imgIndice().sha256(await descargar(fileId));
+  } catch {
+    // Texto fijo: ni el error, ni la URL (lleva el token), ni el file_path.
+    console.warn('[imagenes] no se pudo bajar la foto para el reconocimiento');
+    return false;
+  }
+  for (let i = 0; i < 3; i++) {
+    try {
+      let anotado = false;
+      imgIndice().actualizar(clave, tareaId, n, (p) => {
+        if (!p || !p.telegram || p.telegram.envio !== idEnvio) return null;
+        anotado = true;
+        return { ...p, telegram: { sha256: sha, envio: idEnvio } };
+      }, process.env, { esperaMs: 0 });
+      if (anotado) (cola || colaImagenes()).invalidarMapas();
+      return anotado;
+    } catch {
+      if (i < 2) await new Promise((r) => setTimeout(r, esperaMs));
+    }
+  }
+  console.warn('[imagenes] no se pudo guardar el reconocimiento de la foto (índice ocupado)');
+  return false;
 }
 
 function pick(objeto, claves) {
@@ -4071,7 +4145,8 @@ export async function comandoOtra(ctx) {
   const ref = refDe(ctx);
   const donde = imagenDelMensaje(ref?.bot, ctx.chat.id, resp.message_id);
   if (!donde) return ctx.reply('No sé de qué imagen es esa (no es mía, o me reinicié desde que la mandé).');
-  const r = colaImagenes().otra(donde.tareaId, donde.n, { envio: crearEnvioImagen(ref, ctx.chat.id, { tareaId: donde.tareaId }) });
+  // FEAT-212 §7 — La cola sabe la clave del alma y la `n` nueva recién al encolar: le va una fábrica.
+  const r = colaImagenes().otra(donde.tareaId, donde.n, { crearEnvio: (clave) => crearEnvioImagen(ref, ctx.chat.id, { tareaId: donde.tareaId, clave }) });
   if (r.ok) return ctx.reply('🖼️ Hago otra versión.');
   const textos = {
     apagada: 'Otra versión está apagada (Ajustes → Imágenes).',
@@ -5984,7 +6059,8 @@ export function imagenesV2() {
     otra: (tareaId, n) => colaImagenes().otra(tareaId, n),
     cancelar: (tareaId, n) => cancelarImagenes({ tareaId, n }),
     // La `url` del cuerpo (así se prueba antes de guardar) o la configurada; siempre loopback (lo valida `probarComfyui`).
-    probar: (url) => probarComfyui({ url: url || leerConfigImagenes().comfyui.url })
+    // FEAT-212 §6 — Suma el catálogo y el estado de cada caso, con lo guardado.
+    probar: (url) => { const config = leerConfigImagenes(); return probarComfyui({ url: url || config.comfyui.url, config }); }
   };
 }
 
@@ -6773,6 +6849,16 @@ async function main() {
     if (n > 0) console.log(`[tareas] ${n} tarea(s) de la corrida anterior quedaron como interrumpidas.`);
   } catch (err) {
     console.error(`[tareas] No se pudo revisar el registro: ${redactSecrets(err.message)}`);
+  }
+  // FEAT-212 §1.1 — Lo de 2.18 de la sección `imagenes` pasa a los perfiles (un nodo no tiene esa config).
+  if (rolDaemon !== 'nodo') {
+    try {
+      const m = requireCjs('../mcp-server/lib/ajustes.js').migrarImagenes();
+      if (m.cambio) console.log(`[imagenes] La configuración de imágenes de 2.18 pasó a los perfiles.${m.avisos.length ? ` ${sinRutas(m.avisos.join('; '))}` : ''}`);
+      else if (m.error) console.warn(`[imagenes] La configuración de 2.18 no se pudo pasar al archivo (${m.error}); se usa traducida en memoria.`);
+    } catch (err) {
+      console.error(`[imagenes] No se pudo migrar la configuración: ${sinRutas(redactSecrets(err.message))}`);
+    }
   }
   // FEAT-210 §4 — Las imágenes que quedaron haciéndose (también de tareas cerradas) no van a terminar; los `.tmp/` de
   // las almas se vacían y se arma el mapa `sha256` de las imágenes propias.
