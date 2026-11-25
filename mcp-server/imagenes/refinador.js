@@ -106,7 +106,8 @@ function sanear(o, { disponibles, desdeFoto = false, base = null, fuerzaAutomati
 
 /** Sin refinador: el texto del alma, con la misma limpieza por perfil. `motivo`, por qué (al log de la cola). */
 function sinRefinar(pedido, { disponibles, desdeFoto = false, base = null, motivo = null }) {
-  const casoPedido = base === 'fija' || (desdeFoto && base !== 'opcional' && casos.estaDisponible(disponibles, 'variacion')) ? 'variacion' : 'nueva';
+  // FEAT-213 — Sin quien elija, una foto que podía no usarse también cuenta.
+  const casoPedido = base === 'fija' || (desdeFoto && casos.estaDisponible(disponibles, 'variacion')) ? 'variacion' : 'nueva';
   const extra = { refinado: false, ...(motivo ? { motivo } : {}) };
   const caso = casos.bajarCaso(casoPedido, disponibles, { prompt: texto(pedido) }, { base: base === 'fija' });
   if (!caso) return { sinCaso: true, casoPedido, ...extra };

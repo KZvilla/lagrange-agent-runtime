@@ -158,6 +158,12 @@ async function main() {
     check('ocupado: aceptó y no contestó', await r(async () => { const e = new Error('t'); e.name = 'TimeoutError'; throw e; }) === 'ocupado');
     const p = px.crearProceso({ fetchImpl: async () => { const e = new Error('t'); e.name = 'TimeoutError'; throw e; } });
     check('para la cola, uno ocupado sirve', await p.comprobar(configDe(null, 1)) === 'ok');
+    const deUrl = []; const pl = px.crearProceso({ fetchImpl: async (u) => { deUrl.push(u); return { ok: true, json: async () => ({ system: {}, devices: [] }) }; } });
+    await pl.comprobar({ comfyui: { url: 'http://localhost:8188', arranque: {} } });
+    check('con localhost se pregunta en 127.0.0.1', deUrl[0] === 'http://127.0.0.1:8188/system_stats');
+    const ocu = px.crearProceso({ plataforma: 'win32', lanzar: async () => { throw new Error('no tenía que lanzar'); }, fetchImpl: async () => { const e = new Error('t'); e.name = 'TimeoutError'; throw e; } });
+    const co = configDe(instalacion('ocupada'), 1);
+    check('uno ajeno ocupado está encendido, y no se lanza un segundo', (await ocu.estado(co)).estado === 'encendido' && (await ocu.levantar(co, { manual: true })).ok === true);
     const otroSo = px.crearProceso({ plataforma: 'linux', fetchImpl: async () => { throw new TypeError('x'); } });
     check('fuera de Windows no se levanta', otroSo.levantar(configDe('/x', 1)) === null && (await otroSo.levantar(configDe('/x', 1), { manual: true })).ok === false && (await otroSo.estado(configDe('/x', 1))).sePuede === false);
   });
@@ -337,6 +343,47 @@ async function main() {
     check('apagar_min 0: nunca, y cambia sin reiniciar', px.pidVivo(v.pid));
     m.p.anotarAjustes(m.config);
     check('…y al revés', await hasta(async () => !px.pidVivo(v.pid), 8000));
+  });
+
+  await group('El lock del guardián', async () => {
+    const m = await montar('diez');
+    await m.p.levantar(m.config);
+    await hasta(async () => px.leerJson(m.p.rutas.estado).fase === 'encendido');
+    const { pid } = m.visto(); const { guardian } = px.leerJson(m.p.rutas.estado);
+    check('el .ps1 que usa es la copia durable', fs.existsSync(path.join(m.dir, 'comfyui-proceso.ps1')));
+    fs.writeFileSync(m.p.rutas.lock, '');
+    await esperar(500);
+    check('un lock que no se puede leer no lo hace salir', px.pidVivo(guardian) && px.pidVivo(pid));
+    fs.rmSync(m.p.rutas.lock, { force: true });
+    check('si se lo borran, lo vuelve a tomar', await hasta(async () => px.leerLock(m.p.rutas)?.pid === guardian) && px.pidVivo(guardian));
+    fs.writeFileSync(m.p.rutas.lock, '{');
+    const otro = path.join(m.dir, 'pedido-x.json');
+    fs.writeFileSync(otro, JSON.stringify({ id: 'x', dir: m.dir, modo: 'adoptar', ps1: path.join(m.dir, 'comfyui-proceso.ps1') }));
+    const h = spawn(process.execPath, [px.RUTA_KEEPER, otro], { stdio: 'ignore', windowsHide: true, env: { ...process.env, ...TIEMPOS } });
+    await hasta(async () => !fs.existsSync(otro));
+    check('el pedido se borra al leerlo', !fs.existsSync(otro));
+    await esperar(800);
+    check('otro guardián no roba un lock reciente a medio escribir', px.leerJson(m.p.rutas.estado).guardian === guardian && px.pidVivo(guardian) && px.pidVivo(pid));
+    h.kill();
+    // Otro guardián que levantó uno distinto: el suyo no queda suelto.
+    const e = px.leerJson(m.p.rutas.estado);
+    fs.writeFileSync(m.p.rutas.estado, JSON.stringify({ ...e, proceso: null }));
+    fs.writeFileSync(m.p.rutas.lock, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    check('si otro tomó el lugar sin adoptarlo, apaga el suyo', await hasta(async () => !px.pidVivo(pid) && !px.pidVivo(guardian)));
+    fs.rmSync(m.p.rutas.lock, { force: true });
+  });
+
+  await group('No se pudo apagar', async () => {
+    const m = await montar('once', { modo: 'nunca', extra: { espera_s: 20 } });
+    const enVuelo = m.p.levantar(m.config, { manual: true });
+    await hasta(async () => Boolean(px.leerJson(m.p.rutas.estado)?.proceso));
+    const ps = path.join(m.dir, 'comfyui-proceso.ps1'); const bueno = fs.readFileSync(ps);
+    fs.writeFileSync(ps, 'exit 1');
+    check('el arranque termina en error', (await enVuelo).ok === false);
+    const e = px.leerJson(m.p.rutas.estado); const { pid } = m.visto();
+    check('si no se pudo matar, sigue siendo nuestro, con su pid', e.fase === 'error' && e.proceso.pid === pid && px.pidVivo(pid) && px.leerLock(m.p.rutas).vivo, JSON.stringify(e));
+    fs.writeFileSync(ps, bueno);
+    check('…y lo vuelve a intentar', await hasta(async () => !px.pidVivo(pid)) && await hasta(async () => px.leerJson(m.p.rutas.estado).proceso === null));
   });
 
   await group('El log se rota en marcha', async () => {

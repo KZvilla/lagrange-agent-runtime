@@ -202,6 +202,13 @@ export function crearColaImagenes({
     }
   }
 
+  /** FEAT-213 — ¿ComfyUI es el primero que puede con este trabajo? */
+  function primeroComfy(job, config) {
+    const conFoto = Boolean((job.desdeFoto || job.fotoOpcional) && job.foto);
+    const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual })[job.caso || (conFoto ? 'variacion' : 'nueva')];
+    return Boolean(d && d.proveedores[0] === 'comfyui');
+  }
+
   /**
    * FEAT-213 — ¿Hay que levantar ComfyUI para este trabajo? Si sí, el trabajo queda en `esperando` y vuelve a la cola cuando
    * ComfyUI responde o la espera se acaba. `true` si quedó esperando (o cerrado).
@@ -212,10 +219,7 @@ export function crearColaImagenes({
     const config = leerConfig();
     if (!config.comfyui.arranque || !config.comfyui.arranque.carpeta || !config.comfyui.arranque.automatico) return false;
     if (!habilitada(config, job.clave)) return false;
-    const conFoto = Boolean((job.desdeFoto || job.fotoOpcional) && job.foto);
-    const caso = job.caso || (conFoto ? 'variacion' : 'nueva');
-    const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual })[caso];
-    if (!d || d.proveedores[0] !== 'comfyui') return false;
+    if (!primeroComfy(job, config)) return false;
     if ((await comfy.comprobar(config)) !== 'no-responde') return false;
     if (job.control.signal.aborted) return false;
     const promesa = comfy.levantar(config);
@@ -371,6 +375,7 @@ export function crearColaImagenes({
       semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && !job.fotoOpcional && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
       loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString()
     });
+    job.hecha = true;
     podar(job.clave, job);
     cambio(job.clave);
     if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo, idEnvio: job.idEnvio, caso })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
@@ -425,10 +430,19 @@ export function crearColaImagenes({
   /** FEAT-213 — Una foto de base que se puede leer: la de los adjuntos o la de la carpeta de imágenes de un alma. */
   const fotoPermitida = (ruta) => indice.fotoPermitida(ruta, { dirAdjuntos: dirAdjuntos(), env });
 
+  // Una vez por imagen: se lista muchas veces.
+  const avisadas = new Set();
+  function avisarAfuera(e) {
+    const k = `${e.tareaId}#${e.n}`;
+    if (avisadas.has(k)) return;
+    avisadas.add(k);
+    log(`[imagenes] el archivo de ${k} está fuera de su carpeta; se saltea`);
+  }
+
   /** Borra el archivo de una entrada, solo si está en la carpeta de su alma. */
   function borrarArchivo(clave, e) {
     const ruta = indice.archivoDe(clave, e, env);
-    if (!ruta) { log(`[imagenes] el archivo de ${e.tareaId}#${e.n} está fuera de su carpeta; no se toca`); return false; }
+    if (!ruta) { avisarAfuera(e); return false; }
     try { fs.rmSync(ruta, { force: true }); return true; } catch { return false; }
   }
 
@@ -456,6 +470,8 @@ export function crearColaImagenes({
       if (sobran <= 0) break;
       if (enUso(clave, e)) continue;
       sobran--;
+      // Una que apunta afuera de su carpeta se saltea entera: ni el archivo ni la entrada.
+      if (!indice.archivoDe(clave, e, env)) { avisarAfuera(e); continue; }
       borrarArchivo(clave, e);
       const borrada = indice.borrar(clave, e.tareaId, e.n, { sha256: e.sha256 || null, envio: (e.telegram && e.telegram.envio) || null, env });
       // Un Reintento pudo haber escrito otra en la misma `n`: esa no se toca.
@@ -503,12 +519,25 @@ export function crearColaImagenes({
   /** ¿Tiene imágenes en la cola o en curso este turno? */
   const tieneAbiertas = (tareaId) => [...pendientes, ...esperando, enCurso].some((j) => j && j.tareaId === tareaId);
 
-  /** FEAT-213 — Al apagar ComfyUI a la fuerza: la que está haciendo y las que lo esperan terminan en error. */
+  /** FEAT-213 — Las que necesitan a ComfyUI: las que lo esperan, las pendientes que van a él y la que está refinando o haciéndose ahí. */
+  function lasDeComfy() {
+    const config = leerConfig();
+    const actual = enCurso && !enCurso.hecha && (enCurso.proveedor ? enCurso.proveedor === 'comfyui' : primeroComfy(enCurso, config)) ? [enCurso] : [];
+    return [...esperando, ...pendientes.filter((j) => primeroComfy(j, config)), ...actual];
+  }
+
+  /** FEAT-213 — Al apagar ComfyUI a la fuerza, terminan en error. */
   function cortarLasDeComfy(codigo = 'comfyui-apagado') {
-    let n = 0;
-    for (const j of [...esperando]) { esperando.delete(j); j.control.abort(); error(j, codigo); n++; }
-    if (enCurso && enCurso.proveedor === 'comfyui') { enCurso.codigoCorte = codigo; enCurso.control.abort(); error(enCurso, codigo); n++; }
-    return n;
+    const todas = lasDeComfy();
+    for (const j of todas) {
+      esperando.delete(j);
+      const i = pendientes.indexOf(j);
+      if (i >= 0) pendientes.splice(i, 1);
+      j.codigoCorte = codigo;
+      j.control.abort();
+      error(j, codigo);
+    }
+    return todas.length;
   }
 
   /**
@@ -531,7 +560,7 @@ export function crearColaImagenes({
       env, intento,
       alBorrar: (e) => {
         if (!e || !e.lista) { motivo = 'cambio'; return false; }
-        if (!indice.archivoDe(clave, e, env)) { motivo = 'no-existe'; log(`[imagenes] el archivo de ${tareaId}#${n} está fuera de su carpeta; no se borra`); return false; }
+        if (!indice.archivoDe(clave, e, env)) { motivo = 'no-existe'; avisarAfuera({ tareaId, n }); return false; }
         if (!borrarArchivo(clave, { ...e, tareaId, n })) { motivo = 'ocupada'; return false; }
         return true;
       }
@@ -556,7 +585,7 @@ export function crearColaImagenes({
 
   function bytesDeEntrada(clave, e, tipo = null) {
     const ruta = indice.archivoDe(clave, e, env);
-    if (!ruta) return { ok: false, codigo: 404 };
+    if (!ruta) { if (e.archivo) avisarAfuera(e); return { ok: false, codigo: 404 }; }
     try {
       const st = fs.statSync(ruta);
       if (!st.isFile() || st.size > 20 * 1024 * 1024) return { ok: false, codigo: 404 };
@@ -645,7 +674,7 @@ export function crearColaImagenes({
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length + esperando.size, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, cancelarImagenes, cortarLasDeComfy, tieneAbiertas, otra, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
+  return { encolar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
 }
 
 /** La clave del alma de una tarea de charla. */

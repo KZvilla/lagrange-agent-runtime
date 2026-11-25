@@ -179,6 +179,8 @@ async function main() {
     check('imagen: con foto, el refinador puede elegir nueva', gato.e.caso === 'nueva' && gato.e.desdeFoto === false && gato.e.fotoIgnorada === false && rn.vistos[0].base === 'opcional');
     const vo = await haz({ ref: refina({ caso: 'variacion', prompt: 'x' }) }, { desdeFoto: false, fotoOpcional: true, foto: { ruta: foto, segura: true } });
     check('…o partir de ella', vo.e.caso === 'variacion' && vo.e.desdeFoto === true);
+    const sinR = await haz({ cfg: () => config({ orden: ['comfyui'], refinar: false, alma_la_ve: false }) }, { desdeFoto: false, fotoOpcional: true, foto: { ruta: foto, segura: true } });
+    check('…y sin refinador que elija, la foto cuenta', sinR.e.caso === 'variacion' && sinR.e.desdeFoto === true);
     const ve = await haz({ ref: refina({ caso: 'nueva', prompt: 'x' }) }, { desdeFoto: false, fotoOpcional: true, foto: { ruta: foto, segura: false } });
     check('con una de afuera, la imagen es externa aunque salga nueva', ve.priv.externo === true);
     const c2 = prov('comfyui');
@@ -233,8 +235,8 @@ async function main() {
     check('imagen-desde-anterior se reconoce', x.imagenPedida.desdeAnterior === true && x.imagenPedida.desdeFoto === false && x.imagenPedida.texto === 'de noche');
     check('…y no se confunde con las otras', bloque.parsearImagen('imagen-desde-foto: a').desdeFoto === true && bloque.parsearImagen('imagen: a').desdeAnterior === false && bloque.parsearImagen('imagen-desde-otra: a') === null);
     check('la consigna la ofrece solo si se puede', /imagen-desde-anterior/.test(bloque.instruccionDeCierre({ puedePedirImagen: true, puedePedirAnterior: true })) && !/imagen-desde-anterior/.test(bloque.instruccionDeCierre({ puedePedirImagen: true })));
-    for (const t of ['cambiale el faro', 'hacela de noche', 'sacá el barco', 'poné una luna', 'ahora agregá gaviotas', '¿podés cambiar el cielo?', 'otra parecida', 'borrale el texto', 'change the sky', 'Dejala más oscura']) check(`responde a una imagen: «${t}» la pide`, pideImagen(t, { respondeImagen: true }) === true);
-    for (const t of ['qué linda', 'me pone contento', 'no le cambies nada', 'jaja', 'gracias, me encanta', 'el faro me hace acordar a casa', 'no la cambies, está perfecta', 'nunca cambiala']) check(`…«${t}» no`, pideImagen(t, { respondeImagen: true }) === false);
+    for (const t of ['cambiale el faro', 'hacela de noche', 'sacá el barco', 'poné una luna', 'ahora agregá gaviotas', '¿podés cambiar el cielo?', 'otra parecida', 'borrale el texto', 'quiero que cambies el faro', 'hacé que sea de noche', 'change the sky', 'Dejala más oscura']) check(`responde a una imagen: «${t}» la pide`, pideImagen(t, { respondeImagen: true }) === true);
+    for (const t of ['qué linda', 'me pone contento', 'no le cambies nada', 'jaja', 'gracias, me encanta', 'el faro me hace acordar a casa', 'no la cambies, está perfecta', 'nunca cambiala', 'dejame pensarlo', 'turn on the lights']) check(`…«${t}» no`, pideImagen(t, { respondeImagen: true }) === false);
     for (const t of ['otra parecida', 'haceme otra igual pero de noche', 'repetí la anterior', 'una como la anterior', 'otra versión']) check(`usar_ultima: «${t}» la pide`, pideImagen(t, { usarUltima: true }) === true);
     for (const t of ['la anterior me gustó más', 'cambiale el faro', 'no quiero otra parecida']) check(`…«${t}» no`, pideImagen(t, { usarUltima: true }) === false);
     check('sin los interruptores, lo de antes', pideImagen('otra parecida') === false && pideImagen('cambiale el faro') === false && pideImagen('dibujame un gato') === true);
@@ -312,6 +314,11 @@ async function main() {
     check('una que no está en el índice: perdida', bot.imagenRespondida(ctx(99), on).perdida === true && bot.imagenRespondida(ctx(99, { caption: '🖼️ 2 · variación' }), on).perdida === true);
     check('un mensaje que no es una imagen del bot: nada', bot.imagenRespondida(ctx(99, { caption: 'hola' }), on) === null && bot.imagenRespondida(ctx(99, { from: { id: 8 } }), on) === null && bot.imagenRespondida(ctx(99, { photo: undefined, text: 'x' }), on) === null && bot.imagenRespondida({ chat: { id: 7 }, message: {} }, on) === null);
     check('apagado: nada', bot.imagenRespondida(ctx(10), { leerConfig: () => config({ responder_usa_imagen: false }) }) === null);
+    // Recién mandada y sin anotar en el índice: por el mapa en memoria.
+    const tm = nuevaTarea(); const arch = path.join(indice.dirImagenes(clave), 'm.png'); fs.writeFileSync(arch, PNG);
+    indice.actualizar(clave, tm, 1, () => ({ archivo: arch, lista: true, externo: false, telegram: { envio: 'z' } }));
+    await bot.crearEnvioImagen({ bot: '50', chat: 7 }, 7, { tareaId: tm, api: { sendPhoto: async () => ({ message_id: 55 }) } })({ ok: true, n: 1, ruta: arch });
+    check('por el mapa en memoria también', indice.porMensaje({ bot: '50', chat: 7, id: 55 }) === null && bot.imagenRespondida(ctx(55), on).clave === 'alya');
     fs.rmSync(a.archivo);
     check('sin su archivo: perdida, con su alma', bot.imagenRespondida(ctx(10), on).perdida === true);
     check('fotoDelTurno conserva que es una respuesta', bot.fotoDelTurno({ ruta: otra.archivo, segura: false, respuesta: true }, config(), { reconocer: () => null, reconocerTelegram: () => null }).respuesta === true);
@@ -381,6 +388,24 @@ async function main() {
       check('apagar a la fuerza corta las que lo esperan', cola.cortarLasDeComfy() === 1 && entrada(id).codigo === 'comfyui-apagado');
       comfy.soltar(true);
     }
+    {
+      // Una refinando, una pendiente que va a ComfyUI y una de agy.
+      let soltar; const esp = new Promise((r) => { soltar = r; });
+      let orden = ['comfyui', 'antigravity'];
+      const ref = { async refinar(o) { await esp; return { ...R.sanear({ caso: 'nueva', prompt: 'x' }, { disponibles: o.disponibles }), refinado: true }; }, sinRefinar: R.sinRefinar };
+      const c = prov('comfyui'); const ag = prov('antigravity');
+      const cola = armar({ provs: { comfyui: c, antigravity: ag }, cfg: () => config({ orden, alma_la_ve: false }), ref });
+      const [a, b] = [nuevaTarea(), nuevaTarea()];
+      cola.encolar({ tareaId: a, clave, pedido: 'x' }); cola.encolar({ tareaId: b, clave, pedido: 'x' });
+      await hasta(() => cola._pendientes.length === 1);
+      check('cuentan la que refina y la pendiente', cola.lasDeComfy().length === 2);
+      orden = ['antigravity', 'comfyui'];
+      check('las que van a agy no', cola.lasDeComfy().length === 0);
+      orden = ['comfyui', 'antigravity'];
+      check('a la fuerza terminan las dos en error, y nadie gasta agy', cola.cortarLasDeComfy() === 2 && entrada(a).codigo === 'comfyui-apagado' && entrada(b).codigo === 'comfyui-apagado');
+      soltar(); await new Promise((r) => setTimeout(r, 50));
+      check('…tampoco después', c.vistos.length === 0 && ag.vistos.length === 0 && entrada(a).estado === 'error');
+    }
   });
 
   // ------------------------------------------------------------- el tope
@@ -399,7 +424,7 @@ async function main() {
     const k2 = 'tope2';
     poner({ archivo: ajeno, creada: '2000-01-01T00:00:00Z' }, k2); poner({}, k2);
     const id = nuevaTarea(k2); armar({ provs: { comfyui: prov('comfyui') }, cfg: () => config({ orden: ['comfyui'], alma_la_ve: false, tope_por_alma: 1 }) }).encolar({ tareaId: id, clave: k2, pedido: 'x' }); await termina(id);
-    check('podar no borra un archivo de afuera de la carpeta', fs.existsSync(ajeno) && indice.listar(k2).length === 1);
+    check('podar saltea una que apunta afuera: ni el archivo ni la entrada', fs.existsSync(ajeno) && indice.listar(k2).length === 2 && indice.listar(k2)[0].archivo === ajeno);
   });
 
   // ------------------------------------------------------------- la galería
@@ -415,12 +440,12 @@ async function main() {
     const p3 = g.listar({ alma: k1, limite: '2', antes: p2.siguiente });
     check('de la más nueva a la más vieja, por páginas', [...p1.imagenes, ...p2.imagenes, ...p3.imagenes].map((i) => i.tareaId).join() === ids.slice(0, 5).reverse().join() && p3.siguiente === null, JSON.stringify(p3.siguiente));
     const todas = g.listar({});
-    check('todas las almas, con el resumen', todas.imagenes.filter((i) => [k1, k2].includes(i.alma)).length === 7 && todas.resumen[k1].n === 5 && todas.resumen[k1].bytes === 500 && todas.resumen[k2].tope === 9);
+    check('todas las almas, con el resumen', todas.imagenes.filter((i) => [k1, k2].includes(i.alma)).length === 7 && todas.resumen[k1].n === 5 && todas.resumen[k1].bytes === ids.slice(0, 5).reduce((s, id) => s + fs.statSync(indice.leer(k1, id, 1).archivo).size, 0) && todas.resumen[k2].tope === 9);
     const f = g.listar({ alma: k1, busca: 'lighthouse' });
     check('busca en el prompt, sin mayúsculas', f.imagenes.length === 1 && f.imagenes[0].tareaId === ids[3]);
     check('filtra por caso', g.listar({ alma: k1, caso: 'variacion' }).imagenes.length === 2);
     const fila = f.imagenes[0];
-    check('la fila', fila.proveedor === 'comfyui' && fila.ancho === 10 && fila.bytes === 100 && fila.cambio === 'leve' && fila.fuerza === 0.45 && fila.loras[0].fuerza === 0.5 && fila.externo === false && fila.segura === true && fila.enRegistro === false && fila.intento === 1);
+    check('la fila', fila.proveedor === 'comfyui' && fila.ancho === 10 && fila.bytes === fs.statSync(indice.leer(k1, ids[3], 1).archivo).size && fila.cambio === 'leve' && fila.fuerza === 0.45 && fila.loras[0].fuerza === 0.5 && fila.externo === false && fila.segura === true && fila.enRegistro === false && fila.intento === 1);
     const crudo = JSON.stringify(todas);
     check('nunca rutas, hilo, mensaje ni vista', !crudo.includes('secret') && !crudo.includes('Users') && !crudo.includes('archivo') && !crudo.includes('telegram'));
     cfg = config({ fotos_seguras: false });
@@ -444,6 +469,7 @@ async function main() {
     check('una entrada que apunta afuera no se lista ni se baja', g.listar({ alma: 'viejas' }).imagenes.length === 1 && g.bytes('viejas', mala.id, 1).ok === false && g.referencia({ alma: 'viejas', tareaId: mala.id, n: 1, intento: 1 }).ok === false);
     fs.rmSync(v.archivo);
     check('sin su archivo no es una fila', g.listar({ alma: 'viejas' }).imagenes.length === 0);
+    check('el resumen no cuenta la que apunta afuera', crearGaleria({ cola, registro, leerConfig: () => cfg }).listar({}).resumen.viejas === undefined);
     const falla = await haz({ provs: { comfyui: prov('comfyui', () => ({ ok: false, codigo: 'error' })) } });
     check('una fallida no es una fila', !g.listar({ alma: clave, limite: '100' }).imagenes.some((i) => i.tareaId === falla.id));
     check('la referencia: el archivo original', g.referencia({ alma: k1, tareaId: ids[0], n: 1, intento: 1 }).ok === true && g.referencia({ alma: k1, tareaId: ids[0], n: 1, intento: 2 }).codigo === 409 && g.referencia({ alma: k1, tareaId: 't_nada1', n: 1, intento: 1 }).codigo === 404 && g.referencia('x').codigo === 400);

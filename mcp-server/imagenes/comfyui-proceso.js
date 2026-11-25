@@ -22,6 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { escribirAtomico } = require('../lib/fs-atomico.js');
+const { terminateTree } = require('../lib/process-tree.js');
 const { esLoopback } = require('./loopback.js');
 const flagsLib = require('./comfyui-flags.js');
 
@@ -54,12 +55,22 @@ function rutasDe(dir) {
 }
 
 function leerJson(ruta) {
-  try {
-    const o = JSON.parse(fs.readFileSync(ruta, 'utf8'));
-    return o && typeof o === 'object' && !Array.isArray(o) ? o : null;
-  } catch {
-    return null;
+  // En Windows, leer mientras el otro proceso lo reemplaza puede fallar un instante: se prueba de nuevo antes de decir que no está.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const o = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : null;
+    } catch (err) {
+      if (err.code === 'ENOENT') return null;
+      if (i < 2) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
   }
+  return null;
+}
+
+/** ¿Se escribió hace poco? Un lock que no se puede leer ahora, pero reciente, es de alguien. */
+function esReciente(ruta, ahora = Date.now()) {
+  try { return ahora - fs.statSync(ruta).mtimeMs < LATIDO_VIEJO_MS; } catch { return false; }
 }
 
 function pidVivo(pid) {
@@ -152,10 +163,15 @@ async function leerFlags(inst, { ejecutar = execFile, env = process.env } = {}) 
   const previa = ayudas.get(inst.main);
   if (previa && previa.huella === huella) return previa.promesa;
   const promesa = new Promise((resolve) => {
-    ejecutar(inst.python, [...inst.args, inst.main, '--help'], { shell: false, windowsHide: true, cwd: inst.cwd, env: entornoLimpio(env), timeout: AYUDA_MS, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' }, (err, salida) => {
+    let reloj = null;
+    const hijo = ejecutar(inst.python, [...inst.args, inst.main, '--help'], { shell: false, windowsHide: true, cwd: inst.cwd, env: entornoLimpio(env), maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' }, (err, salida) => {
+      clearTimeout(reloj);
       const flags = err ? [] : flagsLib.parsearAyuda(salida);
       resolve(flags.length ? { ok: true, flags } : { ok: false, motivo: 'no pude leer sus flags (main.py --help)' });
     });
+    // Si vence se mata su árbol: el python.exe de un entorno lanza otro.
+    reloj = setTimeout(() => terminateTree(hijo, 1000), AYUDA_MS);
+    reloj.unref?.();
   });
   ayudas.set(inst.main, { huella, promesa });
   const r = await promesa;
@@ -178,9 +194,9 @@ function armarArgs({ inst, donde, flags, catalogo }) {
 const POWERSHELL = () => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
 /** Corre `comfyui-proceso.ps1` con `-File` y parámetros (nunca un comando armado con texto). `{ codigo, salida }`. */
-function correrPs1(parametros, { ejecutar = execFile } = {}) {
+function correrPs1(parametros, { ejecutar = execFile, ruta = RUTA_PS1 } = {}) {
   return new Promise((resolve) => {
-    ejecutar(POWERSHELL(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', RUTA_PS1, ...parametros], { shell: false, windowsHide: true, timeout: PS_MS, encoding: 'utf8' }, (err, salida) => {
+    ejecutar(POWERSHELL(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ruta, ...parametros], { shell: false, windowsHide: true, timeout: PS_MS, encoding: 'utf8' }, (err, salida) => {
       resolve({ codigo: err ? (Number.isInteger(err.code) ? err.code : 1) : 0, salida: String(salida || '').trim() });
     });
   });
@@ -301,6 +317,7 @@ function crearProceso({
 
   let comprobado = { clave: null, vale: false, hasta: 0 };
   let adoptando = null;
+  let lanzando = false;
   /**
    * El estado guardado, y si su proceso sigue siendo el nuestro: con su guardián vivo lo dice él; sin guardián (o tras reiniciar la
    * máquina, con el pid de otro), se compara la hora de inicio, como mucho una vez por minuto.
@@ -326,7 +343,7 @@ function crearProceso({
 
   /** Lo mira la cola antes de usarlo: `'ok'`, `'no-responde'` u `'otro-programa'`. Uno ocupado sirve: decide el pedido de verdad. */
   async function comprobar(config) {
-    const r = await responde(base(config), { fetchImpl, tiempoMs: T.comprobar || COMPROBAR_MS });
+    const r = await responde(salud(config), { fetchImpl, tiempoMs: T.comprobar || COMPROBAR_MS });
     return r === 'ocupado' ? 'ok' : r;
   }
 
@@ -335,6 +352,8 @@ function crearProceso({
     const { e, vivo } = await guardado();
     const [r, cola] = await Promise.all([responde(salud(config), { fetchImpl }), colaDe(salud(config), { fetchImpl })]);
     const suyo = vivo && deEstaConfig(e, config);
+    // Uno nuestro que se quedó sin guardián: se le pone otro.
+    if (vivo && !lanzando) { const lock = leerLock(rutas, ahora()); if (!lock || !lock.vivo) adoptar().catch(() => {}); }
     const inst = arranqueDe(config).carpeta ? resolverInstalacion(arranqueDe(config).carpeta) : null;
     const donde = escucha(base(config));
     const motivoNo = plataforma !== 'win32' ? 'Solo se puede levantar en Windows.' : !inst ? 'Elegí la carpeta de ComfyUI.' : !inst.ok ? `No se puede: ${inst.motivo}.` : !donde.ok ? `No se puede: ${donde.motivo}.` : null;
@@ -343,7 +362,7 @@ function crearProceso({
       sePuede: motivoNo === null, motivo: motivoNo ? motivoNo.slice(0, 300) : null, instalacion: inst ? (inst.ok ? inst.tipo : null) : null
     };
     if (suyo && (e.fase === 'levantando' || e.fase === 'apagando')) return { ...salida, estado: r === 'ok' && e.fase === 'levantando' ? 'encendido' : e.fase, mensaje: e.mensaje ? seguro(e.mensaje) : null };
-    if (r === 'ok' || (r === 'ocupado' && suyo)) return { ...salida, estado: 'encendido', mensaje: r === 'ok' ? null : 'ComfyUI está ocupado y no contesta ahora.' };
+    if (r === 'ok' || r === 'ocupado') return { ...salida, estado: 'encendido', mensaje: r === 'ok' ? null : 'ComfyUI está ocupado y no contesta ahora.' };
     if (enVuelo) return { ...salida, estado: 'levantando' };
     if (vivo && !suyo && r === 'no-responde') return { ...salida, mensaje: 'Hay un ComfyUI levantado con otra configuración.' };
     if (suyo) return { ...salida, estado: 'error', mensaje: 'ComfyUI está abierto pero no responde.' };
@@ -358,7 +377,11 @@ function crearProceso({
     asegurarDir();
     const id = crypto.randomUUID();
     const ruta = path.join(dir, `pedido-${id}.json`);
-    escribirAtomico(ruta, JSON.stringify({ ...pedido, id, dir }));
+    // El guardián usa una copia del .ps1: la carpeta del plugin puede irse con una actualización.
+    const copia = path.join(dir, path.basename(RUTA_PS1));
+    fs.copyFileSync(RUTA_PS1, copia);
+    escribirAtomico(ruta, JSON.stringify({ ...pedido, id, dir, ps1: copia }));
+    lanzando = true;
     try {
       if (lanzar) await lanzar({ nodo, keeper: RUTA_KEEPER, pedido: ruta });
       else {
@@ -373,6 +396,8 @@ function crearProceso({
       }
       throw new Error('el guardián de ComfyUI no arrancó');
     } finally {
+      lanzando = false;
+      // Si el guardián no lo leyó a tiempo, ya no tiene que lanzarlo.
       try { fs.rmSync(ruta, { force: true }); } catch {}
     }
   }
@@ -397,7 +422,8 @@ function crearProceso({
     const donde = escucha(base(config));
     if (!donde.ok) throw new Error(donde.motivo);
     const r = await responde(donde.salud, { fetchImpl });
-    if (r === 'ok') return { ok: true };
+    // Ocupado: ya hay uno ahí (aceptó la conexión), y no se lanza un segundo.
+    if (r === 'ok' || r === 'ocupado') return { ok: true };
     if (r === 'otro-programa') throw new Error('en esa dirección responde otro programa, no ComfyUI');
     const { e, vivo } = await guardado();
     let id = vivo && e.fase === 'levantando' ? e.pedido : null;
@@ -457,7 +483,8 @@ function crearProceso({
     let { e, vivo } = await guardado();
     // Un arranque que todavía no tiene proceso: se espera a que lo tenga, para no dejarlo levantarse después.
     const limite = ahora() + T.tomar;
-    while (!vivo && enVuelo && ahora() < limite) { await esperar(Math.min(250, T.sondeo)); ({ e, vivo } = await guardado()); }
+    const arrancando = () => { const l = leerLock(rutas, ahora()); return Boolean(enVuelo || (e && e.fase === 'levantando' && !e.proceso && l && l.vivo)); };
+    while (!vivo && arrancando() && ahora() < limite) { await esperar(Math.min(250, T.sondeo)); ({ e, vivo } = await guardado()); }
     if (!vivo) {
       const r = await responde(salud(config), { fetchImpl });
       return r === 'no-responde' ? { ok: false, codigo: 'apagado', motivo: 'ComfyUI ya está apagado.' } : { ok: false, codigo: 'ajeno', motivo: 'Ese ComfyUI no lo levantó Lagrange: se cierra desde donde se abrió.' };
@@ -539,5 +566,5 @@ function crearProceso({
 
 module.exports = {
   RUTA_KEEPER, RUTA_PS1, TOPE_LOG, LATIDO_VIEJO_MS, dirEstado, rutasDe, leerJson, pidVivo, leerLock, resolverInstalacion, escucha, entornoLimpio, leerFlags, armarArgs,
-  correrPs1, horaDeInicio, matarArbol, responde, colaDe, sinCredenciales, ultimasLineas, crearProceso
+  correrPs1, horaDeInicio, matarArbol, esReciente, responde, colaDe, sinCredenciales, ultimasLineas, crearProceso
 };

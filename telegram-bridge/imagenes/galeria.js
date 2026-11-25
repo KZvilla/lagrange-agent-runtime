@@ -64,15 +64,16 @@ function medidasDePng(ruta) {
  * `alCambiar(clave)`: el evento `imagenes.cambio`.
  */
 export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {}, env = process.env }) {
-  // El tamaño de una imagen de antes de 2.20, que no está en el índice: se lee una vez por archivo.
+  // El tamaño de cada archivo, mirado una vez (`null` si no está o apunta afuera): con miles, no se vuelve al disco por cada pedido.
   const tamanos = new Map();
   const bytesDe = (clave, e) => {
-    if (Number.isInteger(e.bytes)) return e.bytes;
     const k = `${clave}/${e.tareaId}-${e.n}-${e.intento || 1}`;
     if (!tamanos.has(k)) {
       let b = null;
       const ruta = indice.archivoDe(clave, e, env);
+      if (!ruta) cola.avisarAfuera?.(e);
       try { b = ruta ? fs.statSync(ruta).size : null; } catch {}
+      // Que no esté puede ser de ahora: solo se recuerda lo que hay.
       if (b === null) return null;
       tamanos.set(k, b);
       if (tamanos.size > 20000) tamanos.delete(tamanos.keys().next().value);
@@ -86,6 +87,7 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
   /** Una fila, o `null` si su archivo no está o apunta afuera de su carpeta. */
   function fila(clave, e, config) {
     const ruta = indice.archivoDe(clave, e, env);
+    if (!ruta) cola.avisarAfuera?.(e);
     if (!ruta || !fs.existsSync(ruta)) return null;
     const t = registro.tarea(e.tareaId);
     const del = t && Array.isArray(t.imagenes) ? t.imagenes.find((i) => i.n === e.n && (i.intento || 1) === (e.intento || 1)) : null;
@@ -93,7 +95,7 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
     let ancho = entero(de('ancho'));
     let alto = entero(de('alto'));
     if (!ancho || !alto) { const m = medidasDePng(ruta); ancho = m ? m.ancho : null; alto = m ? m.alto : null; }
-    const loras = Array.isArray(e.lorasUsadas) ? e.lorasUsadas : Array.isArray(e.loras) ? e.loras.map((clave2) => ({ clave: clave2, fuerza: null })) : [];
+    const loras = Array.isArray(e.lorasUsadas) ? e.lorasUsadas : del && Array.isArray(del.loras) ? del.loras : Array.isArray(e.loras) ? e.loras.map((clave2) => ({ clave: clave2, fuerza: null })) : [];
     const externo = indice.esExterna(e);
     return {
       alma: clave, tareaId: e.tareaId, n: e.n, intento: e.intento || 1, creada: texto(e.creada, 40),
@@ -110,8 +112,8 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
   function resumen(config) {
     const salida = {};
     for (const clave of claves()) {
-      const lista = terminadas(clave);
-      if (lista.length) salida[clave] = { n: lista.length, bytes: lista.reduce((s, e) => s + (bytesDe(clave, e) || 0), 0), tope: config.tope_por_alma };
+      const tam = terminadas(clave).map((e) => bytesDe(clave, e)).filter((b) => b !== null);
+      if (tam.length) salida[clave] = { n: tam.length, bytes: tam.reduce((s, b) => s + b, 0), tope: config.tope_por_alma };
     }
     return salida;
   }

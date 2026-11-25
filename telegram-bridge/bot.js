@@ -1030,6 +1030,14 @@ function imagenPorMensaje(botId, chatId, messageId) {
   try { return imgIndice().porMensaje({ bot: botId, chat: chatId, id: messageId }); } catch { return null; }
 }
 
+/** La misma, por el mapa en memoria: recién mandada, o si no se pudo anotar en el índice. */
+function imagenEnMemoria(botId, chatId, messageId) {
+  const m = mensajesDeImagen.get(claveMensajeImagen(botId, chatId, messageId));
+  const clave = m ? registroTareas.obtener(m.tareaId)?.sujeto?.clave : null;
+  const entrada = clave ? imgIndice().leer(clave, m.tareaId, m.n) : null;
+  return entrada ? { clave, entrada } : null;
+}
+
 const NOMBRE_CASO = Object.freeze({ nueva: 'nueva', variacion: 'variación', retoque: 'retoque', edicion: 'edición' });
 /** El pie de una imagen: el número y, FEAT-213, qué se hizo. */
 const pieDeImagen = (n, caso) => `🖼️ ${n}${NOMBRE_CASO[caso] ? ` · ${NOMBRE_CASO[caso]}` : ''}`;
@@ -1046,7 +1054,7 @@ export function imagenRespondida(ctx, { clave = null, leerConfig = leerConfigIma
   try { config = leerConfig(); } catch {}
   if (!config || !config.responder_usa_imagen) return null;
   const ref = refDe(ctx);
-  const p = imagenPorMensaje(ref?.bot, ctx.chat.id, resp.message_id);
+  const p = imagenPorMensaje(ref?.bot, ctx.chat.id, resp.message_id) || imagenEnMemoria(ref?.bot, ctx.chat.id, resp.message_id);
   if (p && (!clave || p.clave === clave)) {
     const ruta = p.entrada.lista ? imgIndice().archivoDe(p.clave, p.entrada) : null;
     if (ruta && fs.existsSync(ruta)) return { clave: p.clave, imagen: { ruta, segura: false, respuesta: true } };
@@ -6175,7 +6183,7 @@ export function imagenesV2() {
     probar: (url) => { const config = leerConfigImagenes(); return probarComfyui({ url: url || config.comfyui.url, config }); },
     // FEAT-213 §2 — La galería, desde el índice.
     galeria: crearGaleria({
-      cola: { borrarImagen: (x) => colaImagenes().borrarImagen(x), bytesDelIndice: (...x) => colaImagenes().bytesDelIndice(...x) },
+      cola: { borrarImagen: (x) => colaImagenes().borrarImagen(x), avisarAfuera: (e) => colaImagenes().avisarAfuera(e), bytesDelIndice: (...x) => colaImagenes().bytesDelIndice(...x) },
       registro: { tarea: (id) => registroTareas.obtener(id) }, leerConfig: leerConfigImagenes, alCambiar: avisarImagenes
     })
   };
@@ -6183,9 +6191,14 @@ export function imagenesV2() {
 
 /** FEAT-213 §1 — Lo que la API v2 usa del proceso de ComfyUI. `alCambiar`: publica `comfyui.estado` en el acto. */
 export function comfyuiV2({ alCambiar = () => {} } = {}) {
-  const abiertas = () => { const e = colaImagenes().estadoDeImagenes(); return e.pendientes + e.enCurso; };
+  const abiertas = () => colaImagenes().lasDeComfy().length;
   const guardas = (forzar) => ({ forzar, imagenes: abiertas, alForzar: () => colaImagenes().cortarLasDeComfy() });
-  const avisando = async (p) => { const r = await p; alCambiar(); return r; };
+  // Al empezar (cuando el guardián ya anotó que lo está apagando) y al terminar.
+  const avisando = async (p) => {
+    const reloj = setTimeout(alCambiar, 1500);
+    alCambiar();
+    try { return await p; } finally { clearTimeout(reloj); alCambiar(); }
+  };
   return {
     estado: () => procesoComfy().estado(leerConfigImagenes()),
     levantar: async () => {

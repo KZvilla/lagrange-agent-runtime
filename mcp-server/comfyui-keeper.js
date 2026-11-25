@@ -28,7 +28,10 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   const pedido = px.leerJson(process.argv[2]);
   if (!pedido || !pedido.id || !pedido.dir) return 1;
+  try { fs.rmSync(process.argv[2], { force: true }); } catch {}
   const rutas = px.rutasDe(pedido.dir);
+  // El .ps1 sale de la carpeta durable: la del plugin puede irse con una actualización mientras este proceso sigue.
+  const ps1 = (parametros) => px.correrPs1(parametros, { ruta: pedido.ps1 });
   fs.mkdirSync(rutas.dir, { recursive: true });
   const log = (t) => {
     try {
@@ -37,22 +40,37 @@ async function main() {
     } catch {}
   };
 
-  // Un solo guardián: el lock se roba solo si su dueño no está (o dejó de renovarlo).
+  // Un solo guardián. El lock se publica entero (un enlace a un archivo ya escrito): nadie lo lee a medias. Se roba solo si su dueño
+  // no está o dejó de renovarlo; uno que no se puede leer ahora es de alguien, salvo que sea viejo.
+  const propio = `${rutas.lock}.${process.pid}`;
   const tomar = () => {
     for (let i = 0; i < 3; i++) {
-      try { fs.writeFileSync(rutas.lock, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: 'wx' }); return true; } catch (err) { if (err.code !== 'EEXIST') return false; }
+      try {
+        fs.writeFileSync(propio, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+        try { fs.linkSync(propio, rutas.lock); } catch (err) {
+          if (err.code === 'EEXIST') throw err;
+          fs.writeFileSync(rutas.lock, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: 'wx' });
+        }
+        return true;
+      } catch (err) { if (err.code !== 'EEXIST') return false; } finally { try { fs.rmSync(propio, { force: true }); } catch {} }
       const l = px.leerLock(rutas);
-      if (l && l.vivo) return false;
+      if (l ? l.vivo : px.esReciente(rutas.lock)) return false;
       try { fs.unlinkSync(rutas.lock); } catch {}
     }
     return false;
   };
+  /** ¿Lo tiene otro? Si el archivo no está, se vuelve a tomar; si no se puede leer ahora, sigue siendo mío. */
+  const perdido = () => {
+    const l = px.leerJson(rutas.lock);
+    if (l) return l.pid !== process.pid;
+    return !fs.existsSync(rutas.lock) && !tomar();
+  };
+  const conseguir = async () => { if (!tomar()) return false; await esperar(Math.min(250, CICLO_MS * 2)); return !perdido(); };
   // Al reiniciar, el guardián anterior puede estar terminando.
-  let tengo = tomar();
-  for (let i = 0; i < 30 && !tengo; i++) { await esperar(300); tengo = tomar(); }
+  let tengo = await conseguir();
+  for (let i = 0; i < 30 && !tengo; i++) { await esperar(300); tengo = await conseguir(); }
   if (!tengo) { log('ya hay un guardián; salgo'); return 0; }
-  const mio = () => { const l = px.leerJson(rutas.lock); return Boolean(l && l.pid === process.pid); };
-  const soltar = () => { if (mio()) try { fs.unlinkSync(rutas.lock); } catch {} };
+  const soltar = () => { const l = px.leerJson(rutas.lock); if (l && l.pid === process.pid) try { fs.unlinkSync(rutas.lock); } catch {} };
 
   const previo = px.leerJson(rutas.estado);
   let estado;
@@ -65,7 +83,7 @@ async function main() {
   let salida = null; // el código con que salió el que lancé
   if (pedido.modo === 'adoptar') {
     if (!previo || !previo.proceso || !px.pidVivo(previo.proceso.pid)) { soltar(); return 0; }
-    if ((await px.horaDeInicio(previo.proceso.pid)) !== previo.proceso.inicio) { log('el proceso guardado es otro; no se adopta'); soltar(); return 0; }
+    if ((await px.horaDeInicio(previo.proceso.pid, { ps1 })) !== previo.proceso.inicio) { log('el proceso guardado es otro; no se adopta'); soltar(); return 0; }
     estado = previo;
     // La fase la dice la salud: uno que quedó «apagando» sigue siendo nuestro.
     guardar({ pedido: pedido.id, fase: previo.fase === 'levantando' ? 'levantando' : 'encendido', mensaje: null });
@@ -92,7 +110,7 @@ async function main() {
     if (fallo) { guardar({ fase: 'error', mensaje: `no se pudo lanzar (${fallo.code || 'error'})` }); soltar(); return 0; }
     hijo.once('exit', (codigo) => { salida = codigo === null ? -1 : codigo; });
     hijo.unref();
-    const inicio = await px.horaDeInicio(hijo.pid);
+    const inicio = await px.horaDeInicio(hijo.pid, { ps1 });
     if (!inicio && salida === null) {
       // Sin su hora no se puede decir que es nuestro: no se deja suelto.
       try { hijo.kill(); } catch {}
@@ -108,7 +126,7 @@ async function main() {
   const vivo = () => (hijo ? salida === null : px.pidVivo(proceso.pid));
   const matar = async () => {
     guardar({ fase: 'apagando', mensaje: null });
-    const ok = await px.matarArbol(proceso.pid, proceso.inicio);
+    const ok = await px.matarArbol(proceso.pid, proceso.inicio, { ps1 });
     for (let i = 0; i < 20 && vivo(); i++) await esperar(250);
     return ok || !vivo();
   };
@@ -139,7 +157,14 @@ async function main() {
   const pasado = () => minutos() > 0 && Date.now() - ultimoUso > minutos() * MINUTO_MS;
 
   for (;;) {
-    if (!mio()) { log('otro guardián tomó el lugar; salgo'); return 0; }
+    if (perdido()) {
+      // Si el otro lo adoptó, es de él. Si levantó otro, este quedaría suelto.
+      const e = px.leerJson(rutas.estado);
+      const suyo = Boolean(e && e.proceso && proceso && e.proceso.pid === proceso.pid);
+      log(`otro guardián tomó el lugar; salgo${suyo ? '' : ' y apago el mío'}`);
+      if (!suyo && proceso && vivo()) await px.matarArbol(proceso.pid, proceso.inicio, { ps1 });
+      return 0;
+    }
     const t = Date.now();
     if (t - latido >= LATIDO_MS) {
       latido = t;
@@ -172,9 +197,21 @@ async function main() {
         log('ComfyUI responde');
       } else if (Date.now() - arranque > ARRANQUE_MAX_MS) {
         log('nunca respondió; lo apago');
-        await matar();
-        terminar({ fase: 'error', mensaje: 'ComfyUI arrancó pero nunca respondió' });
-        return 0;
+        if (await matar()) { terminar({ fase: 'error', mensaje: 'ComfyUI arrancó pero nunca respondió' }); return 0; }
+        // No se pudo: sigue siendo nuestro, con su pid, y se vuelve a intentar.
+        log('no se pudo apagar');
+        guardar({ fase: 'error', mensaje: 'ComfyUI arrancó pero nunca respondió, y no se pudo apagar' });
+        mirada = Date.now();
+      }
+    } else if (estado.fase === 'error') {
+      if (t - mirada >= MIRAR_USO_MS) {
+        mirada = t;
+        if ((await px.responde(estado.url)) === 'ok') guardar({ fase: 'encendido', mensaje: null });
+        else {
+          const mensaje = estado.mensaje;
+          if (await matar()) { terminar({ fase: 'error', mensaje: 'ComfyUI arrancó pero nunca respondió' }); return 0; }
+          guardar({ fase: 'error', mensaje });
+        }
       }
     } else if (t - mirada >= MIRAR_USO_MS) {
       mirada = t;
