@@ -274,6 +274,13 @@ async function main() {
     check('loaders mixtos: la variación queda con su motivo', F.resolverFlujo(mixto.im, P.perfil(mixto.im, 'sdxl'), 'variacion').motivo === 'la carga del flujo no coincide con el perfil' && F.resolverFlujo(mixto.im, P.perfil(mixto.im, 'sdxl'), 'nueva').ok);
     const pl = migrar({ modelo: 'mi-modelo.safetensors', flujo_txt2img: path.join(F.DIR_PLANTILLAS, 'sdxl-txt2img.json'), flujo_img2img: unFoto });
     check('una plantilla del plugin no migra ni sugiere la carga', !pl.crudo.flujos['sdxl-unet'].nueva && Boolean(pl.crudo.flujos['sdxl-unet'].variacion), JSON.stringify(pl.crudo));
+    const { id: __, ...base20 } = copia(P.PERFILES.get('sdxl'));
+    const lleno = { perfiles_propios: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`p${i}`, base20])), comfyui: { modelo: 'mi-modelo.safetensors' } };
+    const unet = flujo('sin-lugar.json', { loader: 'UNETLoader' });
+    const post = tira(() => A.aplicarImagenes({ imagenes: copia(lleno) }, { comfyui: { flujo_txt2img: unet } }));
+    check('sin lugar para el perfil nuevo: el POST da 400', /Hasta 20 perfiles/.test(post?.message || ''), post?.message);
+    const mig = A.leerSeccion({ imagenes: { ...copia(lleno), comfyui: { ...lleno.comfyui, flujo_txt2img: unet } } });
+    check('…y la migración no se pasa de 20, conserva el flujo y avisa', Object.keys(mig.imagenes.perfiles_propios).length === 20 && Boolean(mig.imagenes.comfyui.flujos.sdxl.nueva) && mig.avisos.some((x) => /No hay lugar/.test(x)), JSON.stringify(mig.avisos));
     check('sin flujos (null): sigue la plantilla', migrar({ flujo_txt2img: null, flujo_img2img: '' }).crudo.flujos === undefined);
     const dosSal = flujo('v-dos.json', { salidas: ['9', '12'] });
     const dosSalFoto = flujo('v-una-foto.json', { salidas: ['15'], extra: FOTO });
@@ -423,6 +430,8 @@ async function main() {
     const kon = todo.edicion;
     const aj = C.ajustarAlCaso({ prompt: 'make the (hat:1.3) red', negativo: 'x' }, 'edicion', kon);
     check('edición con solo prompt: se copia a instrucción, sin pesos ni negativo', aj.instruccion === 'make the hat red' && aj.negativo === '');
+    const ilarga = C.ajustarAlCaso({ prompt: 'p'.repeat(1900), instruccion: 'i'.repeat(2500) }, 'edicion', { ...kon, tope: 500 });
+    check('la instrucción va hasta 2000 y el prompt, al tope del perfil', ilarga.instruccion.length === 2000 && ilarga.prompt.length === 500);
     check('edición con solo instrucción: se copia al prompt', C.ajustarAlCaso({ instruccion: 'x' }, 'edicion', kon).prompt === 'x');
     const sd = todo.nueva;
     check('SDXL conserva los pesos', C.ajustarAlCaso({ prompt: '(a:1.2)' }, 'nueva', sd).prompt === '(a:1.2)');
@@ -548,6 +557,11 @@ async function main() {
       fs.writeFileSync(path.join(dir, 'v2.json'), '{');
       return A.leerImagenes(datos).vistaFlujos.nueva.motivo === 'el flujo no es JSON';
     })());
+    for (const [que, o, motivo] of [['sin SaveImage', { salidas: [] }, 'el flujo no tiene SaveImage'], ['sin prompt', { textos: ['hola'] }, 'el flujo no tiene {{prompt}}'], ['otra carga', { loader: 'UNETLoader' }, 'la carga del flujo no coincide con el perfil'], ['un marcador ajeno', { textos: ['{{prompt}} {{foto}}'] }, 'el flujo usa {{foto}} y este caso no lo da']]) {
+      flujo('v2.json', o);
+      const v = A.leerImagenes(datos).vistaFlujos.nueva;
+      check(`${que}: su motivo llega a la vista`, !v.ok && v.motivo === motivo, v.motivo);
+    }
     const { id, ...sdxl } = copia(P.PERFILES.get('sdxl'));
     const veinte = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`p${i}`, { ...sdxl, prompt: { ...sdxl.prompt, reglas: 'r'.repeat(4000) } }]));
     check('veinte perfiles con reglas de 4000 entran en 256 KB', JSON.stringify({ imagenes: { perfiles_propios: veinte } }).length < 256 * 1024 && Object.keys(A.aplicarImagenes({}, { perfiles_propios: veinte }).imagenes.perfiles_propios).length === 20);

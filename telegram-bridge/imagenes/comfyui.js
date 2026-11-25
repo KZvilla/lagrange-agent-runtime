@@ -37,6 +37,24 @@ const PRUEBA_MS = 5000;
 const PEDIDO_MS = 30 * 1000;
 const TOPE_BYTES = 20 * 1024 * 1024;
 
+/** El cuerpo de una respuesta, o `null` si pasa el tope (se corta mientras llega). */
+async function leerHasta(r, tope) {
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    const bytes = Buffer.from(await r.arrayBuffer());
+    return bytes.length > tope ? null : bytes;
+  }
+  const lector = r.body.getReader();
+  const partes = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) return Buffer.concat(partes);
+    total += value.byteLength;
+    if (total > tope) { try { await lector.cancel(); } catch {} return null; }
+    partes.push(Buffer.from(value));
+  }
+}
+
 /** Las medidas de un PNG (su cabecera), o `null`. */
 function medidasDe(bytes) {
   if (bytes.length < 24 || bytes.readUInt32BE(0) !== 0x89504e47 || bytes.toString('latin1', 12, 16) !== 'IHDR') return null;
@@ -132,8 +150,8 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
       const q = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: img.type || 'temp' });
       const v = await pedir(`/view?${q}`, { signal });
       if (!v.ok) return 'ilegible';
-      const bytes = Buffer.from(await v.arrayBuffer());
-      return bytes.length > TOPE_MASCARA ? 'ilegible' : chequearMascara(bytes);
+      const bytes = await leerHasta(v, TOPE_MASCARA);
+      return bytes ? chequearMascara(bytes) : 'ilegible';
     } catch (err) {
       if (signal && signal.aborted) throw err;
       return 'ilegible';

@@ -174,7 +174,10 @@ export function crearColaImagenes({
     const disponiblesDe = async (c) => casosLib.disponiblesDe(c, {
       desdeFoto: conFoto, catalogo: c.orden.includes('comfyui') ? await catalogoDe(c.comfyui.url) : null, ...opcionesManual
     });
-    const sinCaso = (d) => error(job, 'sin-caso', { motivo: d.nueva.motivo || '' });
+    // Si otro proveedor del orden hace imágenes pero no puede ahora (agy en manual), se nombra a cada uno con su motivo.
+    const sinCaso = (d) => (d.nueva.afuera.some((a) => a.proveedor !== 'comfyui')
+      ? error(job, 'sin-proveedor', { intentos: d.nueva.afuera })
+      : error(job, 'sin-caso', { motivo: d.nueva.motivo || '' }));
 
     // 1. Refinar (salvo que la entrada ya traiga su prompt: «otra versión» y reintentar). Todo pasa por `bajarCaso`.
     let disponibles = await disponiblesDe(config);

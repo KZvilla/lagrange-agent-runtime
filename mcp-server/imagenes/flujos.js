@@ -272,12 +272,9 @@ function puentear(flujo, huecos, usados) {
     }
     return e;
   };
-  const salida = {};
-  for (const [id, n] of Object.entries(flujo)) {
-    if (fuera.has(id)) continue;
-    salida[id] = esObjeto(n) && esObjeto(n.inputs) ? { ...n, inputs: Object.fromEntries(Object.entries(n.inputs).map(([k, v]) => [k, destino(v)])) } : n;
-  }
-  return salida;
+  return Object.fromEntries(Object.entries(flujo).filter(([id]) => !fuera.has(id)).map(([id, n]) => [
+    id, esObjeto(n) && esObjeto(n.inputs) ? { ...n, inputs: Object.fromEntries(Object.entries(n.inputs).map(([k, v]) => [k, destino(v)])) } : n
+  ]));
 }
 
 /** El primer marcador del grafo que los datos no dan (o que es un número que no lo es), o `null`. */

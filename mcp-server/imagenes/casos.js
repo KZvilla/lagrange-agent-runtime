@@ -152,7 +152,7 @@ function ajustarAlCaso(r, caso, d) {
   const pesos = (t) => (reglas.pesos ? t : sinPesos(t));
   let instruccion = pesos(limpio(r.instruccion, MAX_INSTRUCCION));
   let prompt = pesos(limpio(r.prompt, 2000)) || instruccion;
-  if (caso === 'edicion') instruccion = (instruccion || prompt).slice(0, Math.min(MAX_INSTRUCCION, d.tope));
+  if (caso === 'edicion') instruccion = (instruccion || prompt).slice(0, MAX_INSTRUCCION);
   prompt = prompt.slice(0, d.tope);
   if (!prompt) return null;
   const propio = limpio(r.negativo, MAX_NEGATIVO);

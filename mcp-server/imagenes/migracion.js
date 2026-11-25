@@ -82,7 +82,11 @@ function traducirLegado(crudo, legado, { manda = 'nuevo', denyPaths = [], catalo
       let id = `${perfil.id}-${sugerida}`.slice(0, 40);
       const hay = perfiles.perfil(n, id);
       if (hay && hay.carga.tipo !== sugerida) id = `${id.slice(0, 38)}-2`;
-      if (!perfiles.perfil(n, id)) {
+      const lugar = Object.keys(esObjeto(raiz.perfiles_propios) ? raiz.perfiles_propios : {}).length < perfiles.MAX_PROPIOS;
+      if (!perfiles.perfil(n, id) && !lugar) {
+        if (estricto) throw new ErrorAjuste(`Hasta ${perfiles.MAX_PROPIOS} perfiles propios`, 'imagenes.perfiles_propios');
+        avisos.push(`No hay lugar para el perfil ${id} (hasta ${perfiles.MAX_PROPIOS}): el flujo de 2.18 queda en ${perfil.nombre} y no coincide con su carga`);
+      } else if (!perfiles.perfil(n, id)) {
         const { id: _, origen: __, ...resto } = copia(perfil);
         raiz.perfiles_propios = conClave(raiz.perfiles_propios, id, { ...resto, nombre: `${perfil.nombre} (${sugerida})`.slice(0, 40), carga: { tipo: sugerida } });
         n = norm();

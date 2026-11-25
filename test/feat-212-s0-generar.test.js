@@ -150,6 +150,9 @@ async function main() {
     const win = { checkpoints: [{ valor: 'SDXL\\m.safetensors' }], unets: [], clips: [], vaes: [], loras: [{ valor: 'a\\l0.safetensors' }] };
     const r4 = await generar(config(), 'nueva', 'sdxl', { modelo: 'SDXL/m.safetensors', loras: [{ clave: 'c0', archivo: 'a/l0.safetensors', fuerza: 1 }] }, g4, () => {}, win);
     check('con `/` en Ajustes va el nombre exacto que lista ComfyUI', r4.ok && g4.grafo()[4].inputs.ckpt_name === 'SDXL\\m.safetensors' && Object.values(g4.grafo()).some((x) => x.inputs.lora_name === 'a\\l0.safetensors'));
+    const conProto = JSON.parse('{"__proto__":{"class_type":"Nota","inputs":{}},"11":{"class_type":"LoraLoaderModelOnly","inputs":{"model":["4",0]}},"3":{"class_type":"KSampler","inputs":{"model":["11",0]}}}');
+    const pu = F.puentear(conProto, ['11'], 0);
+    check('puentear no pierde un nodo llamado __proto__', Object.keys(pu).join() === '3,__proto__' && pu[3].inputs.model[0] === '4');
     check('sin catálogo no se saltea ninguno', Object.values(g3.grafo()).filter((x) => x.class_type === 'LoraLoader').length === 2);
   });
 
@@ -213,6 +216,12 @@ async function main() {
     const logs = [];
     const ileg = await ret(comfyFalso({ mascara: png(8, 8, 1, { bits: 16 }) }), d, (l) => logs.push(l));
     check('ilegible: sigue, sin chequeo y con aviso', ileg.ok && ileg.sinChequeoZona === true && logs.some((l) => /sin chequeo/.test(l)));
+    let leidos = 0;
+    const sinFin = comfyFalso();
+    const crudo = sinFin.fetchImpl;
+    sinFin.fetchImpl = async (u, o) => (String(u).includes('m.png') ? new Response(new ReadableStream({ pull(c) { leidos += 65536; c.enqueue(new Uint8Array(65536)); if (leidos > 50 * 65536) c.close(); } })) : crudo(u, o));
+    const cortada = await ret(sinFin);
+    check('una máscara enorme se corta mientras llega', cortada.ok && cortada.sinChequeoZona === true && leidos < 10 * 65536, String(leidos));
     check('más de 256 KB es ilegible', (await ret(comfyFalso({ mascara: Buffer.alloc(300 * 1024) }))).sinChequeoZona === true);
     const apagado = comfyFalso({ mascara: png(256, 256, 0) });
     check('chequeo_zona apagado: no se baja la máscara', (await ret(apagado, config({}, { chequeo_zona: false }))).ok && !apagado.pedidos.some((p) => p.query.includes('m.png')));
@@ -288,7 +297,20 @@ async function main() {
     check('nueva con agy en manual: sin-proveedor nombra a los dos', m.codigo === 'sin-proveedor' && m.mensaje === 'ComfyUI no responde; agy está en modo manual.', m.mensaje);
     const sinModelo = { checkpoints: [], unets: [], clips: [], vaes: [], loras: [], nodos: new Set(['CheckpointLoaderSimple', 'KSampler', 'CLIPTextEncode', 'EmptyLatentImage', 'VAEDecode', 'SaveImage']) };
     const q = await corre({ provs: { comfyui: cae(), antigravity: agy }, manual: () => true, cat: sinModelo });
-    check('ComfyUI sin el modelo y agy en manual: sin-caso con el motivo', q.codigo === 'sin-caso' && q.mensaje === 'No hay ningún flujo disponible para este pedido (falta el modelo).', q.mensaje);
+    check('ComfyUI sin el modelo y agy en manual: sin-proveedor nombra a los dos', q.codigo === 'sin-proveedor' && q.mensaje === 'ComfyUI no tiene lo que necesita para esto; agy está en modo manual.', q.mensaje);
+    const soloC = await corre({ provs: { comfyui: cae() }, cat: sinModelo });
+    check('solo ComfyUI, sin el modelo: sin-caso con el motivo', soloC.codigo === 'sin-caso' && soloC.mensaje === 'No hay ningún flujo disponible para este pedido (falta el modelo).', soloC.mensaje);
+    // El catálogo de verdad, con la caché fría: un solo /object_info para las dos miradas de la cola.
+    const catReal = require('../mcp-server/imagenes/catalogo.js');
+    catReal.olvidarParaTests();
+    const info = { KSampler: { input: { required: { sampler_name: [['euler']], scheduler: [['simple']] } } }, CheckpointLoaderSimple: { input: { required: { ckpt_name: [['flux1-dev-fp8.safetensors']] } } } };
+    for (const n of ['CLIPTextEncode', 'EmptySD3LatentImage', 'EmptyLatentImage', 'VAEDecode', 'SaveImage', 'FluxGuidance', 'ConditioningZeroOut']) info[n] = {};
+    let pedidosCat = 0;
+    const cf = prov('comfyui'); const idF = nuevaTarea();
+    crearColaImagenes({ registro, proveedor: () => cf, leerConfig: () => config({ orden: ['comfyui'], alma_la_ve: false }, { modelo: 'flux1-dev-fp8.safetensors' }), refinador: refina({ caso: 'nueva', prompt: 'x' }), vision: { llamar: async () => ({ ok: false }) }, manual: () => false, catalogoDe: (u) => catReal.catalogoDe(u, { fetchImpl: async () => { pedidosCat++; return new Response(JSON.stringify(info)); } }), env: process.env }).encolar({ tareaId: idF, clave, pedido: 'x' });
+    await termina(idF);
+    check('con la caché fría: un solo /object_info y flux-fp8', pedidosCat === 1 && cf.vistos[0] && cf.vistos[0].perfil.id === 'flux-fp8', `${pedidosCat} ${JSON.stringify(entrada(idF).mensaje || null)}`);
+    catReal.olvidarParaTests();
     for (const orden of [['comfyui', 'antigravity'], ['antigravity', 'comfyui']]) {
       const a = prov('antigravity');
       const e = await corre({ provs: { comfyui: cae(), antigravity: a }, cfg: () => config({ orden, alma_la_ve: false }), cat: sinModelo });
