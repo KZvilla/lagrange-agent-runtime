@@ -55,6 +55,7 @@ const CAMBIAN = '(?:cambia|saca|quita|pone|agrega|suma|borra|move|pinta|aclara|o
 const CLITICO = '(?:le|les|la|lo|las|los|mela|melo|sela|selo)';
 const CON_CLITICO = new RegExp(`\\b(?:${CAMBIAN}|cambiar|sacar|quitar|poner|agregar|sumar|borrar|mover|pintar|aclarar|oscurecer|agrandar|achicar|reemplazar|eliminar|dejar|modificar|convertir|hace|haz|hacer)${CLITICO}\\b`, 'g');
 const AL_ABRIR = new RegExp(`^\\s*(?:(?:y|ahora|che|dale|ok|bueno|por favor|porfa|mejor|entonces)\\s+)*(?:${CAMBIAN}|cambie|saque|ponga|agregue|change|remove|add|replace|make it|make the|turn (?:it|this)|hace que)\\b`, 'g');
+const ME_LO = /\bme (?:lo|la|los|las|le) (?:cambias|sacas|quitas|pones|agregas|sumas|borras|moves|pintas|aclaras|oscureces|agrandas|achicas|haces|dejas)\b|\b(?:cambia|saca|quita|agrega|suma|borra|pinta|hace)me\b/g;
 const QUIERO_QUE = /\bquiero que (?:le |la |lo )?(?:cambies|saques|quites|pongas|agregues|sumes|borres|muevas|pintes|aclares|oscurezcas|agrandes|achiques|reemplaces|elimines|sea|este|tenga|quede)\b/g;
 const PODES = /\b(?:podes|podras|podrias|puedes|quiero|quisiera|me gustaria|can you|could you)\s+(?:me\s+)?(?:cambiar|sacar|quitar|poner|agregar|sumar|borrar|mover|pintar|aclarar|oscurecer|agrandar|achicar|reemplazar|eliminar|modificar|convertir|change|remove|add|replace|make)/g;
 // Con `usar_ultima`: pedir otra como la que está.
@@ -66,7 +67,7 @@ const LA_ANTERIOR = new RegExp(`\\b(?:${VERBOS}|repeti|repetir|como|desde|a part
  * responde a una imagen; `usarUltima`: puede partir de la última del hilo.
  */
 function pideImagen(texto, { respondeImagen = false, usarUltima = false } = {}) {
-  const extras = [...(respondeImagen ? [CON_CLITICO, AL_ABRIR, PODES, QUIERO_QUE, OTRA] : []), ...(usarUltima ? [OTRA, LA_ANTERIOR] : [])];
+  const extras = [...(respondeImagen ? [CON_CLITICO, AL_ABRIR, PODES, QUIERO_QUE, ME_LO, OTRA] : []), ...(usarUltima ? [OTRA, LA_ANTERIOR] : [])];
   for (const c of clausulas(texto)) {
     const hallados = [];
     for (const re of extras) for (const m of c.matchAll(re)) hallados.push(m.index);

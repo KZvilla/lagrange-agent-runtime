@@ -235,7 +235,7 @@ async function main() {
     check('imagen-desde-anterior se reconoce', x.imagenPedida.desdeAnterior === true && x.imagenPedida.desdeFoto === false && x.imagenPedida.texto === 'de noche');
     check('…y no se confunde con las otras', bloque.parsearImagen('imagen-desde-foto: a').desdeFoto === true && bloque.parsearImagen('imagen: a').desdeAnterior === false && bloque.parsearImagen('imagen-desde-otra: a') === null);
     check('la consigna la ofrece solo si se puede', /imagen-desde-anterior/.test(bloque.instruccionDeCierre({ puedePedirImagen: true, puedePedirAnterior: true })) && !/imagen-desde-anterior/.test(bloque.instruccionDeCierre({ puedePedirImagen: true })));
-    for (const t of ['cambiale el faro', 'hacela de noche', 'sacá el barco', 'poné una luna', 'ahora agregá gaviotas', '¿podés cambiar el cielo?', 'otra parecida', 'borrale el texto', 'quiero que cambies el faro', 'hacé que sea de noche', 'change the sky', 'Dejala más oscura']) check(`responde a una imagen: «${t}» la pide`, pideImagen(t, { respondeImagen: true }) === true);
+    for (const t of ['cambiale el faro', 'hacela de noche', 'sacá el barco', 'poné una luna', 'ahora agregá gaviotas', '¿podés cambiar el cielo?', 'otra parecida', 'borrale el texto', 'quiero que cambies el faro', '¿me lo cambiás?', 'haceme de noche', 'hacé que sea de noche', 'change the sky', 'Dejala más oscura']) check(`responde a una imagen: «${t}» la pide`, pideImagen(t, { respondeImagen: true }) === true);
     for (const t of ['qué linda', 'me pone contento', 'no le cambies nada', 'jaja', 'gracias, me encanta', 'el faro me hace acordar a casa', 'no la cambies, está perfecta', 'nunca cambiala', 'dejame pensarlo', 'turn on the lights']) check(`…«${t}» no`, pideImagen(t, { respondeImagen: true }) === false);
     for (const t of ['otra parecida', 'haceme otra igual pero de noche', 'repetí la anterior', 'una como la anterior', 'otra versión']) check(`usar_ultima: «${t}» la pide`, pideImagen(t, { usarUltima: true }) === true);
     for (const t of ['la anterior me gustó más', 'cambiale el faro', 'no quiero otra parecida']) check(`…«${t}» no`, pideImagen(t, { usarUltima: true }) === false);
@@ -278,6 +278,9 @@ async function main() {
     const g4 = guion(ANTERIOR, 'conv-b');
     const ex2 = await turno(g4, { fresco: false, ultimaImagen: ultima(FUERA) }, 'haceme otra parecida');
     check('si la pidió, se ofrece, se usa y contamina el hilo', /imagen-desde-anterior/.test(g4.llamadas[0]) && ex2.imagenPedida?.foto.segura === false && ex2.bloqueado && contaminados.contaminado('alya', 'conv-b', process.env), JSON.stringify(ex2.imagenRechazo));
+    const g5 = guion(ANTERIOR, 'conv-d'); conHilo('conv-d');
+    const ns = await turno(g5, { fresco: false, ultimaImagen: ultima({ ...DENTRO, segura: false }) }, 'haceme otra parecida');
+    check('con fotos_seguras apagado, una propia cuenta como de afuera', Boolean(ns.imagenPedida) && ns.bloqueado && contaminados.contaminado('alya', 'conv-d', process.env));
     // El hilo que venció solo.
     const est = hilos.rutaEstado ? hilos.rutaEstado() : path.join(process.env.LAGRANGE_ALMAS_DIR, 'estado.json');
     const o = JSON.parse(fs.readFileSync(est, 'utf8')); o.almas.alya.conversation_id = 'conv-vieja'; o.almas.alya.ultimo_turno = '2020-01-01T00:00:00Z'; fs.writeFileSync(est, JSON.stringify(o));
@@ -401,6 +404,10 @@ async function main() {
       check('cuentan la que refina y la pendiente', cola.lasDeComfy().length === 2);
       orden = ['antigravity', 'comfyui'];
       check('las que van a agy no', cola.lasDeComfy().length === 0);
+      const op = { fotoOpcional: true, foto: { ruta: foto, segura: true } };
+      Object.assign(cola._pendientes[0], op);
+      check('…ni una con una foto que puede no usarse', cola.lasDeComfy().length === 0);
+      delete cola._pendientes[0].foto; delete cola._pendientes[0].fotoOpcional;
       orden = ['comfyui', 'antigravity'];
       check('a la fuerza terminan las dos en error, y nadie gasta agy', cola.cortarLasDeComfy() === 2 && entrada(a).codigo === 'comfyui-apagado' && entrada(b).codigo === 'comfyui-apagado');
       soltar(); await new Promise((r) => setTimeout(r, 50));

@@ -94,6 +94,7 @@ async function main() {
     try { fs.rmSync(rutas.orden, { force: true }); } catch {}
     const desde = new Date().toISOString();
     estado = { version: 1, pedido: pedido.id, fase: 'levantando', proceso: null, url: pedido.url, carpeta: pedido.carpeta, desde, mensaje: Array.isArray(pedido.avisos) && pedido.avisos.length ? pedido.avisos.join(' ') : null };
+    if (!px.redEsperada(pedido.args, pedido.url)) { guardar({ fase: 'error', mensaje: 'el pedido no es válido' }); soltar(); return 0; }
     let fd = null;
     try {
       // 'a' abre solo para agregar: la rotación puede vaciar el archivo en marcha y lo que sigue se escribe al final.
@@ -123,7 +124,9 @@ async function main() {
   }
 
   const proceso = estado.proceso;
-  const vivo = () => (hijo ? salida === null : px.pidVivo(proceso.pid));
+  // El adoptado no es hijo: si Windows le dio su pid a otro, se ve por la hora (en cada mirada de uso).
+  let esOtro = false;
+  const vivo = () => (hijo ? salida === null : !esOtro && px.pidVivo(proceso.pid));
   const matar = async () => {
     guardar({ fase: 'apagando', mensaje: null });
     const ok = await px.matarArbol(proceso.pid, proceso.inicio, { ps1 });
@@ -180,6 +183,10 @@ async function main() {
         ? { fase: 'error', mensaje: `ComfyUI se cerró${estado.fase === 'levantando' ? ' al arrancar' : ''}${salida === null ? '' : ` (código ${salida})`}${lineas ? `: ${lineas}` : ''}`.slice(0, 600) }
         : { fase: 'apagado', mensaje: null });
       return 0;
+    }
+    if (!hijo && t - mirada >= MIRAR_USO_MS) {
+      const hora = await px.horaDeInicio(proceso.pid, { ps1 });
+      if (hora && hora !== proceso.inicio) { esOtro = true; continue; }
     }
     const orden = px.leerJson(rutas.orden);
     if (orden) {

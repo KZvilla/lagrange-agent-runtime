@@ -132,6 +132,7 @@ async function main() {
     const r = px.armarArgs({ inst, donde: px.escucha('http://localhost:8188'), flags: [{ flag: '--cpu', valor: null }, { flag: '--ya-no-esta', valor: 'x' }, { flag: '--cache-lru', valor: '5" --listen=0.0.0.0' }], catalogo: cat });
     check('el argv: una que desapareció se saltea, un valor es un solo argumento y la red va al final', JSON.stringify(r.args) === JSON.stringify(['-s', 'M', '--windows-standalone-build', '--cpu', '--cache-lru=5" --listen=0.0.0.0', '--disable-auto-launch', '--listen=127.0.0.1', '--port=8188']) && r.avisos.length === 1 && /ya-no-esta/.test(r.avisos[0]), JSON.stringify(r));
     check('sin poder leer su ayuda: ninguna flag, con aviso', px.armarArgs({ inst, donde: px.escucha('http://127.0.0.1:1'), flags: [{ flag: '--cpu', valor: null }], catalogo: null }).args.length === 5);
+    check('la red del pedido', px.redEsperada(['x', '--listen=127.0.0.1', '--port=8188'], 'http://127.0.0.1:8188') && !px.redEsperada(['--listen=127.0.0.1', '--port=8188', '--listen=0.0.0.0'], 'http://127.0.0.1:8188') && !px.redEsperada(null, 'http://127.0.0.1:8188'));
     check('una ayuda que no es argparse', F.parsearAyuda('Traceback…').length === 0);
   });
 

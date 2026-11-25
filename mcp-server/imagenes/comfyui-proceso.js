@@ -31,7 +31,6 @@ const RUTA_PS1 = path.join(__dirname, '..', 'comfyui-proceso.ps1');
 const AYUDA_MS = 20 * 1000;
 const PS_MS = 20 * 1000;
 const PEDIDO_MS = 3000;
-const COMPROBAR_MS = 10 * 1000;
 /** Lo que puede tardar el guardián en tomar el pedido. */
 const TOMAR_MS = 20 * 1000;
 /** Sin renovar el lock por este tiempo, el guardián no está (aunque otro proceso tenga su pid). */
@@ -182,6 +181,8 @@ async function leerFlags(inst, { ejecutar = execFile, env = process.env } = {}) 
 /** Los argumentos de Python, con la red al final: el último gana. `catalogo`, las flags de su versión (o `null`: ninguna). */
 function armarArgs({ inst, donde, flags, catalogo }) {
   const { usadas, avisos } = catalogo ? flagsLib.filtrar(flags, catalogo) : { usadas: [], avisos: flags.length ? ['No pude leer las flags de esa versión: no se usa ninguna.'] : [] };
+  // Cada flag es un solo argumento `--flag` o `--flag=valor`, y ninguna es de las que pone el plugin.
+  if (!usadas.every((u) => /^--[A-Za-z][\w-]*(=.*)?$/.test(flagsLib.comoArgumento(u)) && !flagsLib.prohibida(u.flag))) throw new Error('las flags de ComfyUI no son válidas');
   const sinNavegador = catalogo && catalogo.some((f) => f.flag === '--disable-auto-launch') ? ['--disable-auto-launch'] : [];
   return {
     args: [...inst.args, inst.main, ...inst.extra, ...usadas.map(flagsLib.comoArgumento), ...sinNavegador, `--listen=${donde.host}`, `--port=${donde.puerto}`],
@@ -200,6 +201,12 @@ function correrPs1(parametros, { ejecutar = execFile, ruta = RUTA_PS1 } = {}) {
       resolve({ codigo: err ? (Number.isInteger(err.code) ? err.code : 1) : 0, salida: String(salida || '').trim() });
     });
   });
+}
+
+/** Lo último de los argumentos es la red de esa url: el guardián no lanza otra cosa. */
+function redEsperada(args, url) {
+  const d = escucha(url);
+  return Boolean(d.ok && Array.isArray(args) && args.at(-2) === `--listen=${d.host}` && args.at(-1) === `--port=${d.puerto}`);
 }
 
 /** La hora de inicio de un proceso, como texto, o `null`. */
@@ -343,7 +350,7 @@ function crearProceso({
 
   /** Lo mira la cola antes de usarlo: `'ok'`, `'no-responde'` u `'otro-programa'`. Uno ocupado sirve: decide el pedido de verdad. */
   async function comprobar(config) {
-    const r = await responde(salud(config), { fetchImpl, tiempoMs: T.comprobar || COMPROBAR_MS });
+    const r = await responde(salud(config), { fetchImpl });
     return r === 'ocupado' ? 'ok' : r;
   }
 
@@ -566,5 +573,5 @@ function crearProceso({
 
 module.exports = {
   RUTA_KEEPER, RUTA_PS1, TOPE_LOG, LATIDO_VIEJO_MS, dirEstado, rutasDe, leerJson, pidVivo, leerLock, resolverInstalacion, escucha, entornoLimpio, leerFlags, armarArgs,
-  correrPs1, horaDeInicio, matarArbol, esReciente, responde, colaDe, sinCredenciales, ultimasLineas, crearProceso
+  correrPs1, horaDeInicio, matarArbol, redEsperada, esReciente, responde, colaDe, sinCredenciales, ultimasLineas, crearProceso
 };

@@ -202,9 +202,12 @@ export function crearColaImagenes({
     }
   }
 
-  /** FEAT-213 — ¿ComfyUI es el primero que puede con este trabajo? */
-  function primeroComfy(job, config) {
-    const conFoto = Boolean((job.desdeFoto || job.fotoOpcional) && job.foto);
+  /**
+   * FEAT-213 — ¿ComfyUI es el primero que puede con este trabajo? Una foto que podía no usarse, sin refinar todavía, puede ir a
+   * cualquiera de los dos: para levantarlo cuenta (`opcional: true`); para cortarla, solo si una nueva también va a él.
+   */
+  function primeroComfy(job, config, { opcional = false } = {}) {
+    const conFoto = Boolean((job.desdeFoto || (job.fotoOpcional && (opcional || job.caso))) && job.foto);
     const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual })[job.caso || (conFoto ? 'variacion' : 'nueva')];
     return Boolean(d && d.proveedores[0] === 'comfyui');
   }
@@ -219,7 +222,7 @@ export function crearColaImagenes({
     const config = leerConfig();
     if (!config.comfyui.arranque || !config.comfyui.arranque.carpeta || !config.comfyui.arranque.automatico) return false;
     if (!habilitada(config, job.clave)) return false;
-    if (!primeroComfy(job, config)) return false;
+    if (!primeroComfy(job, config, { opcional: true })) return false;
     if ((await comfy.comprobar(config)) !== 'no-responde') return false;
     if (job.control.signal.aborted) return false;
     const promesa = comfy.levantar(config);

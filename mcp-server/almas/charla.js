@@ -453,6 +453,8 @@ async function charlar({
       return null;
     }
   };
+  // Con `fotos_seguras` o `reconocer_propias` apagados, una propia cuenta como de afuera: el bot no la da por segura.
+  const deAfuera = (u) => u.externo !== false || !u.segura;
   // El hilo de antes, si el de este turno nació porque el otro venció solo (nunca con `/charla nuevo`).
   let hiloAnterior = null;
   let ofreceAnterior = false;
@@ -524,7 +526,7 @@ async function charlar({
     // FEAT-213 — La línea `imagen-desde-anterior:`, solo sin foto en el turno. Si la última es de afuera, solo si la pidió.
     if (!turno) {
       const u = puedePedirImagen && !imagen ? ultimaDe([hilo, hiloAnterior]) : null;
-      ofreceAnterior = Boolean(u && (u.externo === false || pideEnEste()));
+      ofreceAnterior = Boolean(u && (!deAfuera(u) || pideEnEste()));
     }
     const mensajeConVistas = !turno && vistas && vistas.length ? `${bloqueDeVistas(vistas)}\n\n${mensajeAlma}` : mensajeAlma;
     const pedido = {
@@ -691,10 +693,10 @@ async function charlar({
     else if (linea.desdeAnterior || (linea.desdeFoto && fotoCuenta)) {
       const u = ultimaDe([hiloNuevo, hilo, hiloAnterior]);
       if (!u) baseImagen.rechazo = linea.desdeAnterior ? 'sin-anterior' : 'sin-foto';
-      else if (u.externo !== false && !pideEnEste()) baseImagen.rechazo = 'hilo-externo';
+      else if (deAfuera(u) && !pideEnEste()) baseImagen.rechazo = 'hilo-externo';
       else {
         baseImagen = { tipo: 'fija', foto: { ruta: u.ruta, segura: Boolean(u.segura), descripcion: null }, rechazo: null };
-        if (u.externo !== false) externo = sumarExterno(externo, { motivos: ['imagen'], tokens: [] });
+        if (deAfuera(u)) externo = sumarExterno(externo, { motivos: ['imagen'], tokens: [] });
       }
     }
   }
