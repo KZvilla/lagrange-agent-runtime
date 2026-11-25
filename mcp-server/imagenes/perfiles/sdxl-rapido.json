@@ -19,7 +19,8 @@
     "guia": null,
     "sampler": "euler",
     "scheduler": "sgm_uniform",
-    "fuerza": 0.6
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
   },
   "medidas": {
     "1:1": [

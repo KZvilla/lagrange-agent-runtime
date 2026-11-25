@@ -21,6 +21,7 @@ const NEGATIVOS = Object.freeze(['si', 'no', 'opcional']);
 const RESERVADAS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const RE_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_PROPIOS = 20;
+const FUERZA_RETOQUE = 0.9;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 // Las reglas llevan saltos de línea.
 const CONTROLES_TEXTO = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
@@ -72,7 +73,7 @@ function validarPerfil(id, p) {
 
   const s = p.muestreo;
   if (!esObjeto(s)) return mal('muestreo', 'tiene que ser un objeto');
-  for (const k of Object.keys(s)) if (!['pasos', 'cfg', 'guia', 'sampler', 'scheduler', 'fuerza'].includes(k)) return mal(`muestreo.${k}`, 'no está permitido');
+  for (const k of Object.keys(s)) if (!['pasos', 'cfg', 'guia', 'sampler', 'scheduler', 'fuerza', 'fuerzaRetoque'].includes(k)) return mal(`muestreo.${k}`, 'no está permitido');
   if (!Number.isInteger(s.pasos) || s.pasos < 1 || s.pasos > 150) return mal('muestreo.pasos', 'tiene que ser un entero de 1 a 150');
   if (!Number.isFinite(s.cfg) || s.cfg < 0 || s.cfg > 30) return mal('muestreo.cfg', 'tiene que ser un número de 0 a 30');
   const guia = s.guia === undefined ? null : s.guia;
@@ -82,6 +83,9 @@ function validarPerfil(id, p) {
     if (typeof s[k] !== 'string' || !s[k].trim() || s[k].trim().length > 40 || CONTROLES.test(s[k])) return mal(`muestreo.${k}`, 'tiene que ser un nombre de hasta 40 caracteres');
   }
   if (!Number.isFinite(s.fuerza) || s.fuerza < 0 || s.fuerza > 1) return mal('muestreo.fuerza', 'tiene que ser un número de 0 a 1');
+  // Repintar una zona pide más fuerza que variar la foto entera (con 0,6 casi no cambia).
+  const fuerzaRetoque = s.fuerzaRetoque === undefined ? FUERZA_RETOQUE : s.fuerzaRetoque;
+  if (!Number.isFinite(fuerzaRetoque) || fuerzaRetoque < 0 || fuerzaRetoque > 1) return mal('muestreo.fuerzaRetoque', 'tiene que ser un número de 0 a 1');
 
   if (!esObjeto(p.medidas)) return mal('medidas', 'tiene que ser un objeto');
   for (const k of Object.keys(p.medidas)) if (!PROPORCIONES.includes(k)) return mal(`medidas.${k}`, 'no es una proporción');
@@ -101,7 +105,7 @@ function validarPerfil(id, p) {
     perfil: {
       id, nombre: p.nombre.trim(), plantillas: p.plantillas, carga,
       prompt: { estilo: q.estilo, reglas: q.reglas, tope: q.tope, negativo: q.negativo, negativoPorDefecto: q.negativoPorDefecto, pesos: q.pesos },
-      muestreo: { pasos: s.pasos, cfg: s.cfg, guia, sampler: s.sampler.trim(), scheduler: s.scheduler.trim(), fuerza: s.fuerza },
+      muestreo: { pasos: s.pasos, cfg: s.cfg, guia, sampler: s.sampler.trim(), scheduler: s.scheduler.trim(), fuerza: s.fuerza, fuerzaRetoque },
       medidas: Object.fromEntries(medidas), casos: CASOS.filter((c) => p.casos.includes(c))
     }
   };

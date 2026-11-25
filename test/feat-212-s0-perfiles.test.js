@@ -74,6 +74,7 @@ async function main() {
     check('2048×1216 entra en 2,5 MP', con((p) => { p.medidas['16:9'] = [2048, 1216]; }).ok);
     for (const id of ['con/barra', '..', 'constructor', 'prototype', '__proto__', 'Mayus', '']) check(`el id "${id}" no vale`, P.validarPerfil(id, base()).ok === false);
     check('Flux sin guía: no', (() => { const { id, ...p } = copia(P.PERFILES.get('flux')); p.muestreo.guia = null; return P.validarPerfil('flux', p).campo === 'muestreo.guia'; })());
+    check('fuerzaRetoque: 0,9 si falta, y de 0 a 1', con((p) => { delete p.muestreo.fuerzaRetoque; }).perfil.muestreo.fuerzaRetoque === 0.9 && con((p) => { p.muestreo.fuerzaRetoque = 1.5; }).campo === 'muestreo.fuerzaRetoque');
     check('SDXL con guía null: sí', con((p) => { p.muestreo.guia = null; }).ok);
     check('reglas y negativo vacíos valen', con((p) => { p.prompt.reglas = ''; p.prompt.negativoPorDefecto = ''; }).ok);
     check('una carga unet sin clip ni vae se puede guardar', con((p) => { p.carga = { tipo: 'unet' }; }).ok);

@@ -31,7 +31,7 @@ const ESTILOS = Object.freeze({
 const QUE_ES = Object.freeze({
   nueva: 'a new image from scratch (no photo is used)',
   variacion: 'another image based on the attached photo: same idea, freely redrawn',
-  retoque: 'change only one part of the attached photo and leave the rest untouched; "zona" names that part and "prompt" describes what must appear there and right around it',
+  retoque: 'change only one part of the attached photo and leave the rest untouched; "zona" names that part and "prompt" describes what must appear there and right around it. Choose it only if the photo really shows that part',
   edicion: 'change the attached photo by following one instruction, keeping its identity; the instruction goes in "instruccion"'
 });
 

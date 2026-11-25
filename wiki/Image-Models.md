@@ -82,10 +82,17 @@ ComfyUI; until then Ajustes lists which ones are missing and the case is lowered
 | Mask with GroundingDINO + SAM 2 (`"sam2"`) | [ComfyUI-SAM2](https://github.com/neverbiasu/ComfyUI-SAM2) |
 | Crop and stitch, with either | [ComfyUI-Inpaint-CropAndStitch](https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch) |
 
-- Both mask nodes download their own model the first time they run.
+- Florence-2 needs its model (`microsoft/Florence-2-large`) in `ComfyUI\models\LLM\Florence-2-large`. The node tries to
+  download it on the first run; with a recent `huggingface_hub`, get it yourself: `hf download
+  microsoft/Florence-2-large --exclude pytorch_model.bin --local-dir <that folder>` (1.5 GB).
+- ComfyUI-SAM2 asks for `numpy<2`, which does not exist for Python 3.13: on a recent ComfyUI portable, its
+  requirements can break the installation. Prefer Florence-2 there.
+- **Strength:** inpainting has its own (`fuerzaRetoque`, 0.9): with the 0.6 of a variation the part barely changes.
 - `comfyui.retoque` is `crop-stitch` (your main SDXL model), `fill` (Flux.1 Fill, in `comfyui.modelo_retoque`) or `no`.
 - **The zone check:** the mask comes back at 256×256. If it marks less than 0.05 % of the photo, or more than 98 %, the
-  image is not used and the turn says why. Retrying then makes a variation. It turns off with
+  image is not used and the turn says why. Florence-2 always marks something, even when the part is not in the photo, so
+  for it the check only catches an empty or full mask; the refiner is told to choose inpainting only if the photo shows
+  the part. Retrying then makes a variation. It turns off with
   `comfyui.chequeo_zona: false`.
 
 ## Recognising an image that came back through Telegram

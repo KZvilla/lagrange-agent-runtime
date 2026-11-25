@@ -36,6 +36,14 @@ const PRUEBA_MS = 5000;
 const PEDIDO_MS = 30 * 1000;
 const TOPE_BYTES = 20 * 1024 * 1024;
 
+/** Las medidas de un PNG (su cabecera), o `null`. */
+function medidasDe(bytes) {
+  if (bytes.length < 24 || bytes.readUInt32BE(0) !== 0x89504e47 || bytes.toString('latin1', 12, 16) !== 'IHDR') return null;
+  const ancho = bytes.readUInt32BE(16);
+  const alto = bytes.readUInt32BE(20);
+  return ancho > 0 && alto > 0 && ancho <= 16384 && alto <= 16384 ? { ancho, alto } : null;
+}
+
 const tipoDe = (nombre) => (/\.png$/i.test(nombre) ? 'image/png' : /\.webp$/i.test(nombre) ? 'image/webp' : /\.jpe?g$/i.test(nombre) ? 'image/jpeg' : 'image/png');
 const extDe = (tipo) => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' })[tipo] || 'png';
 
@@ -146,7 +154,7 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
     const m = perfil.muestreo;
     const datos = {
-      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: m.fuerza,
+      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : m.fuerza,
       ...casosLib.valoresDeCarga(modelo, perfil)
     };
     if (caso === 'retoque') datos.zona = zona;
@@ -226,7 +234,9 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
       const tipo = tipoDe(img.filename);
       const ruta = `${destino}.${extDe(tipo)}`;
       fs.writeFileSync(ruta, bytes);
-      return { ok: true, ruta, tipo, ancho, alto, semilla: seed, proveedor: 'comfyui', modelo, fotoIgnorada: false, loras: usadas.map((l) => ({ clave: l.clave, fuerza: l.fuerza })), ...(sinChequeoZona ? { sinChequeoZona: true } : {}) };
+      // Un retoque o una edición conservan el tamaño de la foto: las medidas son las del archivo, no las pedidas.
+      const real = medidasDe(bytes) || { ancho, alto };
+      return { ok: true, ruta, tipo, ancho: real.ancho, alto: real.alto, semilla: seed, proveedor: 'comfyui', modelo, fotoIgnorada: false, loras: usadas.map((l) => ({ clave: l.clave, fuerza: l.fuerza })), ...(sinChequeoZona ? { sinChequeoZona: true } : {}) };
     } catch (err) {
       // Cortado a mitad de un pedido: si ya estaba en la cola de ComfyUI, se corta ahí también.
       if (signal && signal.aborted) {

@@ -22,7 +22,8 @@
     "guia": 30,
     "sampler": "euler",
     "scheduler": "normal",
-    "fuerza": 1
+    "fuerza": 1,
+    "fuerzaRetoque": 1
   },
   "medidas": {
     "1:1": [

@@ -112,7 +112,7 @@ async function main() {
           check(`${que}: sale`, r.ok, JSON.stringify(r));
           check(`${que}: sin marcadores sueltos`, F.marcadoresDe(g).size === 0);
           check(`${que}: pasos, cfg, sampler y scheduler del perfil`, ks.steps === m.pasos && ks.cfg === m.cfg && typeof ks.cfg === 'number' && ks.sampler_name === m.sampler && ks.scheduler === m.scheduler);
-          if (caso === 'variacion' || caso === 'retoque') check(`${que}: la fuerza del perfil`, ks.denoise === m.fuerza);
+          if (caso === 'variacion' || caso === 'retoque') check(`${que}: la fuerza del perfil para ese caso`, ks.denoise === (caso === 'retoque' ? m.fuerzaRetoque : m.fuerza));
           if (m.guia !== null) check(`${que}: la guía`, Object.values(g).find((n) => n.class_type === 'FluxGuidance').inputs.guidance === m.guia);
           if (caso === 'nueva') { const l = Object.values(g).find((n) => /Latent(Image)?$/.test(n.class_type) && n.inputs.width); check(`${que}: las medidas`, l.inputs.width === p.medidas['3:4'][0] && l.inputs.height === p.medidas['3:4'][1]); }
           if (p.carga.tipo === 'unet') check(`${que}: unet, clips y vae`, g[4].inputs.unet_name === 'modelo.safetensors' && g[13].inputs.clip_name1 === p.carga.clip1 && g[14].inputs.vae_name === p.carga.vae);
@@ -188,6 +188,10 @@ async function main() {
     check('20000×20000 se rechaza antes de descomprimir', leerPng(enorme) === null);
     const bomba = Buffer.concat([png(8, 8, 0).subarray(0, 33), (() => { const d = zlib.deflateSync(Buffer.alloc(40 * 1024 * 1024)); const h = Buffer.alloc(8); h.writeUInt32BE(d.length); h.write('IDAT', 4, 'latin1'); return Buffer.concat([h, d, Buffer.alloc(4)]); })()]);
     check('una bomba de compresión se corta', leerPng(bomba) === null);
+    // Las salidas reales del nodo de Florence-2 (ComfyUI 0.46): la zona que está y una que no está, que el modelo inventa.
+    const real = (n) => fs.readFileSync(path.join(__dirname, 'fixtures', 'feat-212', n));
+    check('la máscara real de Florence-2 se lee', Math.abs(parteMarcada(real('mascara-florence2.png')) - 0.00665) < 0.0001 && chequearMascara(real('mascara-florence2.png')) === 'ok');
+    check('una zona inventada también marca algo: el chequeo no la distingue', chequearMascara(real('mascara-florence2-inventada.png')) === 'ok');
     check('basura y un PNG cortado: ilegible', chequearMascara(Buffer.from('hola')) === 'ilegible' && chequearMascara(MASCARA_OK.subarray(0, 60)) === 'ilegible');
   });
 
@@ -196,6 +200,7 @@ async function main() {
     const ret = (falso, cfg = d, log) => generar(cfg, 'retoque', 'sdxl', {}, falso, log);
     const bien = await ret(comfyFalso());
     check('con la zona encontrada sigue', bien.ok && !bien.sinChequeoZona);
+    check('las medidas son las del archivo, no las pedidas', bien.ancho === 8 && bien.alto === 8);
     const vacia = await ret(comfyFalso({ mascara: png(256, 256, 0) }));
     check('vacía: zona-no-encontrada, sin dejar el temporal', vacia.codigo === 'zona-no-encontrada' && !fs.existsSync(path.join(tmp, `d${nDestino - 1}.png`)));
     check('…con su texto', codigos.mensajeDe(vacia.codigo, vacia.extra) === 'No encontré «the hat» en la foto.');

@@ -19,7 +19,8 @@
     "guia": null,
     "sampler": "dpmpp_2m",
     "scheduler": "karras",
-    "fuerza": 0.6
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
   },
   "medidas": {
     "1:1": [

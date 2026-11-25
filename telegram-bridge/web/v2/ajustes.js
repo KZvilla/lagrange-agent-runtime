@@ -231,7 +231,7 @@ function perfilImagenV2(id, p) {
     id, nombre: texto(o.nombre, 40), plantillas: FAMILIAS_IMAGEN.includes(o.plantillas) ? o.plantillas : null,
     carga: { tipo: c.tipo === 'unet' ? 'unet' : 'checkpoint', ...Object.fromEntries(['clip1', 'clip2', 'vae'].filter((k) => texto(c[k], 200)).map((k) => [k, c[k]])) },
     prompt: { estilo: texto(q.estilo, 20), reglas: texto(q.reglas, 4000), tope: numero(q.tope), negativo: texto(q.negativo, 20), negativoPorDefecto: texto(q.negativoPorDefecto, 500), pesos: q.pesos === true },
-    muestreo: { pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza) },
+    muestreo: { pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza), fuerzaRetoque: numero(s.fuerzaRetoque) },
     medidas: Object.fromEntries(PROPORCIONES_IMAGEN.filter((k) => Array.isArray(m[k]) && m[k].length === 2).map((k) => [k, [numero(m[k][0]), numero(m[k][1])]])),
     casos: (Array.isArray(o.casos) ? o.casos : []).filter((x) => CASOS_IMAGEN.includes(x))
   };
