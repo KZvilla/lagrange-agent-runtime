@@ -410,7 +410,7 @@ async function main() {
     check('reconocerTelegram lo reconoce; reconocer no', cola.reconocerTelegram(JPEG)?.tareaId === id && cola.reconocer(JPEG) === null && cola.reconocerTelegram(PNG) === null);
     const jpg = path.join(tmp, 'vuelta.jpg'); fs.writeFileSync(jpg, JPEG);
     const rec = { reconocer: (b) => cola.reconocer(b), reconocerTelegram: (b) => cola.reconocerTelegram(b) };
-    check('fotoDelTurno: reconocida, sin campos nuevos', JSON.stringify(Object.keys(bot.fotoDelTurno({ ruta: jpg }, config(), rec))) === JSON.stringify(['ruta', 'segura', 'origen']) && bot.fotoDelTurno({ ruta: jpg }, config(), rec).origen === 'reconocida');
+    check('fotoDelTurno: reconocida, con su número', JSON.stringify(Object.keys(bot.fotoDelTurno({ ruta: jpg }, config(), rec))) === JSON.stringify(['ruta', 'segura', 'origen', 'num']) && bot.fotoDelTurno({ ruta: jpg }, config(), rec).origen === 'reconocida');
     check('con reconocer_telegram apagado no', bot.fotoDelTurno({ ruta: jpg }, config({ reconocer_telegram: false }), rec).segura === false);
     check('con reconocer_propias apagado tampoco', bot.fotoDelTurno({ ruta: jpg }, config({ reconocer_propias: false }), rec).segura === false);
     bajadas.length = 0;

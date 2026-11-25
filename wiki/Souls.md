@@ -85,8 +85,13 @@ when it is ready: Telegram sends it as a photo (`🖼️ <n> · <case>`), the te
 - **The prompt:** a separate, Soul-blind model (OpenCode Go vision) rewrites the Soul's request into a technical
   prompt, looking at the photo of the turn if there is one. Since 2.19.0 it follows the rules of the model in use and
   chooses the case (a new image, a variation, inpainting or an edit): [[Image Models]].
-- **The Soul sees what it made:** a vision model describes the finished image, and the next turn of the same thread
-  gets that description as text (never the bytes).
+- **The Soul sees with its own model** (since 2.21.0, `vision_propia`): on OpenCode Go with `deepseek-v4.1-flash`, safe photos
+  and the Soul's own images go to the model as images, not as a description. The last two images of the thread stay in view in
+  the turns that follow. Outside photos still go through the mediator, as text. Any other engine, a fallback, or an image over
+  6 MB (all the images of a request together) gets the description. The footer says which: «👁 la vio», «👁 la sigue viendo» or
+  «👁 la recibió descripta».
+- **The Soul sees what it made:** the next turn of the same thread gets the finished image that way, or described by a vision
+  model, with its number and where it came from.
 - **When it does not:** with images off (globally or for that Soul), in a reaction or a scheduled job, in an isolated
   turn, more than once per reply, or in a thread that already carries outside content unless you asked for an image
   in that message.
@@ -96,10 +101,10 @@ when it is ready: Telegram sends it as a photo (`🖼️ <n> · <case>`), the te
   recognised as one of the Soul's own images (by `sha256`, also of the JPEG Telegram returned) does not mark the thread as outside content: memory and
   the board stay open, and a vision model describes it in full. The risk of a hidden instruction in a marked photo is
   yours.
-- **Controls:** `/cancel imagen` cuts what is queued, `/otra` replying to an image makes another version, and
+- **Controls:** `/cancel imagen` cuts what is queued, `/otra` replying to an image makes another version, `/variar` a variation of it, and
   everything turns off from Ajustes → Imágenes (Desktop or the phone console): on/off, provider order, per Soul,
   refining, the Soul seeing its image, safe photos, recognising your images (also through Telegram), another version,
-  inpainting, its zone check, LoRAs and editing.
+  inpainting, its zone check, LoRAs, editing, the Soul's own vision, varying, starting from one and several edits at once.
 
 At most four images per turn (another version counts) and four waiting in the queue; each Soul keeps its last 500
 (`tope_por_alma`), the oldest deleted first.

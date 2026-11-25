@@ -111,11 +111,10 @@ function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = ne
   const previo = hilo && !aislado ? hiloLocal.leerHilo(clave, hilo, env) : null;
   const sistema = typeof pedido.sistema === 'string' && pedido.sistema.trim() ? pedido.sistema : agente.vozDelAlma();
   const user = `[Hoy es ${fechaDeHoy(ahora)}]\n\n${String(prompt || '')}`;
-  const partes = imagenes.map((i) => ({ type: 'image_url', image_url: { url: i.url } }));
   const messages = [
     { role: 'system', content: sistema },
     ...hiloLocal.paraEnviar(previo ? previo.mensajes : [], { delTurno: imagenes.length, ver }),
-    { role: 'user', content: partes.length ? [{ type: 'text', text: user }, ...partes] : user }
+    { role: 'user', content: imagenes.length ? hiloLocal.conPartes(user, imagenes.map((i) => i.url)) : user }
   ];
 
   // S2 — El modelo del pedido (ya validado contra la tabla); `thinking` y `reasoning_effort` viajan si el modelo los usa.

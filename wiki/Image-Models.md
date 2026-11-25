@@ -109,6 +109,19 @@ Since 2.20.0. Each one has its own switch in the `imagenes` section, on by defau
 - **`fuerza_automatica`:** a variation changes as much as the request does. The refiner says `leve`, `medio` or
   `fuerte`, and the strength is the profile's one −0.15, +0 or +0.2 (0.45, 0.6 or 0.8 with SDXL).
 
+### Which image is which
+
+Since 2.21.0. Every finished image has a number per Soul (`#41`) that is never reused, also the older ones. It is the same in
+Telegram, in the terminal and for the Soul, which is told where each one came from: «otra versión de la #7», «partió de la #5».
+
+- **Another version** (`/otra`) repeats the request from the same base with another seed. **Varying** (`/variar`, switch
+  `variar`) starts from that image: the refiner looks at it and writes its own prompt.
+- **By number:** the Soul can write `imagen-desde #7: …` (any image of hers) or `imagen-desde #7 #8: …`, one edit for each, up
+  to 4 (switch `varias_bases`).
+- **Which one it starts from:** the photo of the turn or the image you replied to; the number; the one you marked with «Partir de
+  esta» (switch `partir`), until a newer one is made; the only one since the Soul's last request. With several and none
+  chosen, `varias_versiones: "preguntar"` (the default) makes nothing and says between which; `"ultima"` uses the newest.
+
 An image made from an outside photo is never safe again by itself, through any of these roads. Your own mark
 (`#segura`, the box in the terminal) still decides.
 

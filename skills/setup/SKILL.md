@@ -613,7 +613,7 @@ through it:
    The first one, cold, pays the model load.
 7. **Say the switches:** Ajustes → Imágenes in Desktop (or in the phone console:
    on/off, provider order, per Soul); `/cancel imagen` cuts what is queued;
-   `/otra` replying to an image makes another version. Turning images off stops
+   `/otra` replying to an image makes another version, `/variar` a variation of it. Turning images off stops
    the queue at once.
 
 ## After a Lagrange update

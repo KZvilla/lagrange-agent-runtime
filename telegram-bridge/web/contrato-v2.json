@@ -468,13 +468,11 @@
                 },
                 "desde": {
                   "type": "array",
-                  "maxItems": 4,
                   "items": { "type": "integer", "minimum": 1 },
                   "description": "FEAT-215 — Los números de las imágenes de las que parte."
                 },
                 "candidatas": {
                   "type": "array",
-                  "maxItems": 8,
                   "items": { "type": "integer", "minimum": 1 },
                   "description": "FEAT-215 — Con detalle cual-version, los números entre los que hay que elegir."
                 }

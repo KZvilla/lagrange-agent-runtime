@@ -323,7 +323,8 @@ function fotoConSuOrigen(imagen, config, { reconocer, reconocerTelegram, clave =
     // FEAT-215 — De quién es y su número: «que hiciste vos» solo si la hizo esta alma.
     if (propia && propia.externo === false) {
       const suya = clave === null || propia.clave === clave;
-      return { ruta: imagen.ruta, segura: true, origen: 'reconocida', ...(suya ? { num: numeroDe(propia) } : { deOtra: true }) };
+      const num = suya ? numeroDe(propia) : null;
+      return { ruta: imagen.ruta, segura: true, origen: 'reconocida', ...(num ? { num } : {}), ...(suya ? {} : { deOtra: true }) };
     }
   } catch {}
   return deAfuera;
@@ -4234,6 +4235,7 @@ function instalarPerfilDeAlma(bot, clave, { recibirAdjunto = null } = {}) {
           `• \`/alma\`: ver lo que ${voz} recuerda (\`/alma olvidar <id>\` para borrar)`,
           '• `/cancel`: cortar la charla en curso (y sus imágenes; `/cancel imagen`, solo las imágenes)',
           '• `/otra`: respondiendo a una imagen mía, hago otra versión',
+          '• `/variar`: respondiendo a una imagen mía, hago una parecida que parte de esa',
           '',
           'Para trabajar (planes, casts, archivos), usá el bot general.'
         ].join('\n'));
@@ -4449,6 +4451,7 @@ Puente móvil autónomo conectado a tu entorno local.
 • \`/logs [N]\` — Últimas líneas del log del daemon, para ver por qué falló algo. Si el bot está caído, esto tampoco responde.
 • \`/cancel\` — Aborta lo que esté en curso y vacía las colas. \`/cancel cast\` corta solo el cast, sin tocar un /run; \`/cancel imagen\`, solo las imágenes.
 • \`/otra\` — Respondiendo a una imagen de un alma: otra versión.
+• \`/variar\` — Respondiendo a una imagen de un alma: una parecida que parte de esa.
 • \`/reset\` — Reinicia la conversación y olvida el contexto actual.
 • \`/charla [voz] <mensaje>\` — Habla con un alma: responde en personaje y recuerda lo tuyo. Mientras la charla esté fresca (30 min) el texto suelto sigue con ella, y cualquier comando de trabajo vuelve al workspace. Responder a un mensaje suyo también sigue la charla. \`/charla nuevo\` arranca un hilo limpio.
 • \`/alma [voz]\` — Su memoria con ids y lo que sabe de vos. \`/alma olvidar <id>\` borra una entrada.
