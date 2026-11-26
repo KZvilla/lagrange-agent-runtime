@@ -195,9 +195,10 @@ function claveEtiqueta(etiqueta) {
   let t = String(etiqueta || '').trim();
   for (let i = 0; i < 5; i++) {
     let n = t;
-    if (/^\(.*\)$/s.test(n)) n = n.slice(1, -1).replace(RE_PESO, '');
+    if (/^\(.*\)$/s.test(n)) n = n.slice(1, -1);
     else if (/^\[.*\]$/s.test(n)) n = n.slice(1, -1);
-    n = n.trim();
+    // El peso, envuelta o no: `nsfw:1.2` dentro de un grupo también es `nsfw`.
+    n = n.replace(RE_PESO, '').trim();
     if (n === t) break;
     t = n;
   }
@@ -234,7 +235,8 @@ function grupoDe(e) {
   const peso = (RE_PESO.exec(adentro) || [''])[0];
   const partes = etiquetasDe(peso ? adentro.slice(0, -peso.length) : adentro);
   if (partes.length < 2 && !(partes.length === 1 && grupoDe(partes[0]))) return null;
-  return { partes, armar: (quedan) => `(${quedan.join(', ')}${peso})` };
+  // Si la que queda última ya trae su peso (`(nsfw:1.2, explicit:1.3)` sin `explicit`), el del grupo no se le suma.
+  return { partes, armar: (quedan) => `(${quedan.join(', ')}${RE_PESO.test(quedan[quedan.length - 1]) ? '' : peso})` };
 }
 
 /** La etiqueta sin las partes que `fuera(clave)` descarta: un grupo se rearma con las que quedan. `''` si no queda nada. */

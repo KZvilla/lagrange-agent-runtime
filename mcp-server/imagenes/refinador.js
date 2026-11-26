@@ -27,6 +27,9 @@ const ESTILOS = Object.freeze({
   instruccion: 'Write one imperative instruction that says what to change and what to keep, for example "change the hat to red, keep everything else". Do not describe the whole image.'
 });
 
+/** FEAT-216 — La línea de etiquetas de un perfil con prefijo: sin etiquetas de calidad (las pone el sistema). */
+const ESTILO_CON_PREFIJO = 'Write comma-separated tags and short phrases, most important first. Do not write quality tags. Use (word:1.2) weights only if the profile allows them.';
+
 /** Qué es cada caso, para que el modelo elija. */
 const QUE_ES = Object.freeze({
   nueva: 'a new image from scratch (no photo is used)',
@@ -63,7 +66,9 @@ function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
     lineas.push(`- ${caso}: ${QUE_ES[caso]}. ${hay ? 'Available.' : 'Not available now.'}`);
     if (!hay) continue;
     const p = d.perfil.prompt;
-    lineas.push(`  Model profile: ${d.perfil.nombre}. ${ESTILOS[p.estilo]}`);
+    // FEAT-216 — Con prefijo, la calidad la pone el sistema: la línea de estilo no la pide.
+    const estilo = p.prefijo && p.estilo === 'etiquetas' ? ESTILO_CON_PREFIJO : ESTILOS[p.estilo];
+    lineas.push(`  Model profile: ${d.perfil.nombre}. ${estilo}`);
     if (p.reglas) for (const l of p.reglas.split('\n')) lineas.push(`  ${l}`);
     lineas.push(`  Weights like (word:1.2) are ${p.pesos ? 'allowed' : 'not allowed'}.`);
     lineas.push(`  ${p.negativo === 'no' ? 'This model has no negative prompt: leave "negativo" empty.' : p.negativo === 'si' ? 'Write a "negativo".' : 'Write a "negativo" only if something specific must be avoided.'}`);
@@ -85,8 +90,9 @@ function lineasFijas(p, seguro) {
   if (p.negativoFijo && p.negativo !== 'no') salida.push(`The system adds "${p.negativoFijo}" to the negative by itself: do not repeat those tags.`);
   const s = p.seguro;
   if (s && seguro) {
-    const neg = s.negativo && p.negativo !== 'no' ? ` and "${s.negativo}" to the negative` : '';
-    salida.push(`Safe for work only: the system adds "${s.positivo}" to the prompt${neg}. Do not write rating tags${s.quitar ? ` (${s.quitar})` : ''}, and keep the image safe for work.`);
+    const partes = [s.positivo ? `"${s.positivo}" to the prompt` : '', s.negativo && p.negativo !== 'no' ? `"${s.negativo}" to the negative` : ''].filter(Boolean);
+    const agrega = partes.length ? ` the system adds ${partes.join(' and ')}.` : '';
+    salida.push(`Safe for work only:${agrega} Do not write rating tags${s.quitar ? ` (${s.quitar})` : ''}, and keep the image safe for work.`);
   } else if (s) {
     const opciones = [...new Set([s.positivo, s.quitar].join(', ').split(',').map((x) => x.trim()).filter(Boolean))];
     if (opciones.length) salida.push(`Rating: write the one rating tag that fits the request, from: ${opciones.join(', ')}.`);

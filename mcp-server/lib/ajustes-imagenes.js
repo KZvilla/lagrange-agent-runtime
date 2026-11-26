@@ -637,12 +637,14 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     }
     if (c.seguro_de !== undefined) {
       if (c.seguro_de !== null && !esObjeto(c.seguro_de)) throw new ErrorAjuste('imagenes.comfyui.seguro_de tiene que ser un objeto { perfil: true|false }', 'imagenes.comfyui.seguro_de');
+      const e = efectiva();
       let tabla = c.seguro_de === null ? {} : esObjeto(sal.seguro_de) ? sal.seguro_de : {};
       for (const [k, v] of Object.entries(c.seguro_de || {})) {
         const campo = `imagenes.comfyui.seguro_de.${k}`;
         if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`seguro_de: "${k}" no es el id de un perfil`, campo);
         if (v === null) { tabla = sinClave(tabla, k); continue; }
         if (typeof v !== 'boolean') throw new ErrorAjuste('seguro_de: tiene que ser true o false', campo);
+        if (!perfiles.perfil(e, k)) throw new ErrorAjuste(`seguro_de: "${k}" no es un perfil que exista`, campo);
         tabla = conClave(tabla, k, v);
       }
       if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con el modo seguro elegido`, 'imagenes.comfyui.seguro_de');

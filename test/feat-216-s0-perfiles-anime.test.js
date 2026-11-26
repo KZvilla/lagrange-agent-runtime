@@ -203,6 +203,44 @@ async function main() {
     check(`la API v2 saca los ${todos.length} perfiles (9 del plugin y ${P.MAX_PROPIOS} propios)`, todos.length === 9 + P.MAX_PROPIOS && v.perfiles.length === todos.length);
   });
 
+  await group('Ronda 2: pesos por parte, la línea de estilo, la edición y seguro_de', async () => {
+    const d = A.defectos();
+    const wai = P.perfil(d, 'sdxl-illustrious');
+    const pony = P.perfil(d, 'sdxl-pony');
+    const any = P.perfil(d, 'sdxl-anything');
+    check('una etiqueta con peso suelto también se reconoce', P.claveEtiqueta('nsfw:1.2') === 'nsfw' && P.claveEtiqueta('re:zero') === 're:zero');
+    const g1 = P.componerPrompt(any, { prompt: '(nsfw:1.2, explicit:1.3), 1girl', seguro: true });
+    check('(nsfw:1.2, explicit:1.3) sale entero con el modo seguro', !/nsfw|explicit/.test(g1.prompt) && g1.prompt.endsWith('safe, 1girl'));
+    const g2 = P.componerPrompt(wai, { prompt: '(masterpiece:1.2, best quality:1.3), 1girl', seguro: true });
+    check('(masterpiece:1.2, best quality:1.3) no repite el prefijo', g2.prompt === 'masterpiece, best quality, amazing quality, general, 1girl');
+    const g3 = P.componerPrompt(pony, { prompt: '(rating_explicit:1.2, red scarf:1.3), 1girl', seguro: true });
+    check('(rating_explicit:1.2, red scarf:1.3) queda (red scarf:1.3)', g3.prompt.endsWith('rating_safe, (red scarf:1.3), 1girl'));
+    const g4 = P.componerPrompt(pony, { prompt: '(red scarf:1.2, rating_explicit:1.3), 1girl', seguro: true });
+    check('la que queda con su peso no suma el del grupo', g4.prompt.endsWith('rating_safe, (red scarf:1.2), 1girl'));
+    const g5 = P.componerPrompt(pony, { prompt: '(red scarf, blue hat, rating_explicit:1.3)', seguro: true });
+    check('sin peso propio, la que queda se lleva el del grupo', g5.prompt.endsWith('rating_safe, (red scarf, blue hat:1.3)'));
+
+    const im = { ...d, comfyui: { ...d.comfyui, modelo: 'WAI-Nsfw-Illustrious-17.safetensors' } };
+    const cw = R.consigna(C.disponiblesDe(im, auto));
+    check('con prefijo, la línea de estilo no pide calidad', /Do not write quality tags/.test(cw) && !/Put style and quality tags at the end/.test(cw.split('- nueva:')[1].split('- variacion:')[0]));
+    check('sin prefijo, la línea de siempre', /Put style and quality tags at the end/.test(R.consigna(C.disponiblesDe(d, auto))));
+    const solo = { ...copia(P.PERFILES.get('sdxl')), id: 'mio', nombre: 'Mío', prompt: { ...copia(P.PERFILES.get('sdxl').prompt), seguro: { positivo: '', negativo: 'nsfw', quitar: 'nsfw' } } };
+    const vale = P.validarPerfil('mio', copia(solo));
+    const dm = C.disponiblesDe({ ...d, perfiles_propios: { mio: vale.perfil }, comfyui: { ...d.comfyui, perfil_de: { [d.comfyui.modelo || 'sd_xl_base_1.0.safetensors']: 'mio' }, modelo: d.comfyui.modelo || 'sd_xl_base_1.0.safetensors' } }, auto);
+    const cm = R.consigna(dm);
+    check('modo seguro sin positivo: sin «""»', vale.ok && dm.nueva.perfil.id === 'mio' && /Safe for work only: the system adds "nsfw" to the negative\./.test(cm) && !/""/.test(cm));
+
+    const kontextLike = { ...copia(wai), casos: ['edicion'] };
+    const ed = datosDe({ caso: 'edicion', modelo: 'x.safetensors', perfil: kontextLike, prompt: '', negativo: '', ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['prompt'], seguro: true });
+    check('edición con solo {{prompt}}: la instrucción va compuesta', ed.prompt === 'masterpiece, best quality, amazing quality, general, make it blue' && ed.instruccion === 'make it blue');
+    const kon = P.perfil(d, 'flux-kontext');
+    const ek = datosDe({ caso: 'edicion', modelo: 'k.safetensors', perfil: kon, prompt: '', negativo: '', ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['prompt'] });
+    check('Flux Kontext: la instrucción tal cual', ek.prompt === 'make it blue');
+
+    check('seguro_de de un perfil que no existe: 400', /no es un perfil que exista/.test(tira(() => A.aplicarImagenes({}, { comfyui: { seguro_de: { 'sdxl-pny': false } } }))?.message || ''));
+    check('quitar una entrada vieja vale aunque el perfil ya no exista', !tira(() => A.aplicarImagenes({ imagenes: { comfyui: { seguro_de: { viejo: false } } } }, { comfyui: { seguro_de: { viejo: null } } })));
+  });
+
   report();
 }
 

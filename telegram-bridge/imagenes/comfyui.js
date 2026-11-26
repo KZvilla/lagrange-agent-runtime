@@ -86,7 +86,7 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
   if (caso === 'edicion') {
     datos.instruccion = instruccion;
     // Un flujo de edición que solo tiene {{prompt}} recibe la instrucción ahí.
-    if (!marcadores.includes('instruccion')) datos.prompt = instruccion;
+    if (!marcadores.includes('instruccion')) datos.prompt = perfilesLib.componerPrompt(perfil, { prompt: instruccion, negativo, seguro }).prompt;
   }
   return datos;
 }

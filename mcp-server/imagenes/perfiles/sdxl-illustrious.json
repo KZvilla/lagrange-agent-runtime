@@ -7,7 +7,7 @@
   },
   "prompt": {
     "estilo": "etiquetas",
-    "reglas": "Illustrious (WAI-illustrious-SDXL): an anime illustration model trained on Danbooru tags.\nWrite Danbooru tags, most important first: the count and subject (1girl, 2boys, solo), the character name with the series in parentheses as on Danbooru (hatsune miku (vocaloid)), then hair, eyes, clothes, pose, expression, setting, lighting and composition (upper body, from above, close-up).\nCharacters and Danbooru artist tags are known: use an artist tag only if the request names that artist or style.\nDo not add quality or aesthetic tags: the system already adds them, and more of them make the image blurry.\nKeep the negative short or empty: long negatives make the image worse.\nIf a character comes out too young for the request, start with (mature female:1.2) or (aged up:1.2).",
+    "reglas": "Illustrious (WAI-illustrious-SDXL): an anime illustration model trained on Danbooru tags.\nWrite Danbooru tags, most important first: the count and subject (1girl, 2boys, solo), the character name with the series in parentheses as on Danbooru (hatsune miku (vocaloid)), then hair, eyes, clothes, pose, expression, setting, lighting and composition (upper body, from above, close-up).\nCharacters and Danbooru artist tags are known: use an artist tag only if the request names that artist or style.\nDo not add quality or aesthetic tags: the system already adds them, and more of them make the image blurry.\nKeep the negative short or empty: long negatives make the image worse.\nFor an older look of a character, when the request asks for one, start with (mature female:1.2) or (aged up:1.2).",
     "tope": 450,
     "negativo": "opcional",
     "negativoPorDefecto": "",
