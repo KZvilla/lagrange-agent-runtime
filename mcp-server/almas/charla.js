@@ -906,7 +906,7 @@ async function charlar({
         ...((fotoCuenta || linea.nums) && desdeFoto ? { baseFija: true } : {}),
         ...(baseImagen.tipo === 'opcional' ? { fotoOpcional: true } : {}),
         ...(!imagen && desdeFoto ? { desdeAnterior: true } : {}),
-        ...(baseImagen.bases && baseImagen.bases.length > 1 ? { bases: baseImagen.bases } : {}),
+        ...(baseImagen.bases ? { bases: baseImagen.bases } : {}),
         ...(baseImagen.bases && baseImagen.bases.some((b) => b.num) ? { desde: baseImagen.bases.map((b) => b.num).filter(Boolean) } : {}),
         foto: baseImagen.foto
       };

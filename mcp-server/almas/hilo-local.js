@@ -159,4 +159,4 @@ function paraEnviar(mensajes, { delTurno = 0, ver = null } = {}) {
   });
 }
 
-module.exports = { RE_UUID, TOPE_HILO_TOKENS, A_LA_VISTA, rutaHilo, leerHilo, hiloVigente, agregarTurno, anotarTexto, conPartes, paraEnviar };
+module.exports = { RE_UUID, TOPE_HILO_TOKENS, A_LA_VISTA, rutaHilo, leerHilo, hiloVigente, agregarTurno, anotarTexto, conPartes, paraEnviar, enOrden };

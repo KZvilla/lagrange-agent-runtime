@@ -119,6 +119,9 @@ async function main() {
     check('una externa, una con orden o sin archivo van en texto, en su orden', ext.imagenes.length === 0 && ext.enTexto.map((x) => x.n).join() === '4,5,6');
     const rep = o().delTurno({ foto: { ruta: propia, tipo: 'propia' }, vistas: [v(7, { ruta: propia }), v(8)] });
     check('la repetida con la foto no va en ninguna', rep.imagenes.length === 2 && rep.enTexto.length === 0 && rep.conImagen.map((x) => x.n).join() === '8');
+    const shaPropia = require('node:crypto').createHash('sha256').update(fs.readFileSync(propia)).digest('hex');
+    const repApagada = o({ vistas: false }).delTurno({ foto: { ruta: propia, tipo: 'propia' }, vistas: [v(16, { sha256: shaPropia }), v(17)] });
+    check('…tampoco con las vistas apagadas', repApagada.enTexto.map((x) => x.n).join() === '17' && repApagada.conImagen.length === 0);
     const yaEsta = o().delTurno({ vistas: [v(9), v(10)], enElHilo: new Set([path.join(dirAlya(), 'v9.png')]) });
     check('una que ya está en el hilo no se repite', yaEsta.conImagen.map((x) => x.n).join() === '10' && yaEsta.enTexto.length === 0);
     const cinco = o().delTurno({ vistas: [v(11), v(12), v(13), v(14), v(15)] });

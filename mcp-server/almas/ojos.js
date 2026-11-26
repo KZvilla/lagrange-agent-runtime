@@ -65,11 +65,13 @@ function crearOjos({ clave, permisos, env = process.env, tope = TOPE_PEDIDO_BYTE
       return 'viaja';
     };
     const conFoto = foto ? agregar(foto.ruta, foto.tipo, null) === 'viaja' : false;
+    const shaFoto = conFoto ? [...vistos][0] : null;
     const conImagen = [];
     const enTexto = [];
     for (const v of [...vistas].reverse()) {
       // La que un turno anterior ya dejó en el hilo (y después falló) no se repite.
       if (v.ruta && enElHilo.has(v.ruta)) continue;
+      if (shaFoto && v.sha256 === shaFoto) continue;
       const r = v.externo || v.vistaOrden || !v.ruta ? null : agregar(v.ruta, 'vista', v.vista || null);
       if (r === 'viaja') conImagen.unshift(v);
       else if (r !== 'repetida') enTexto.unshift(v);

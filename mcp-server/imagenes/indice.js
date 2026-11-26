@@ -357,7 +357,7 @@ function vistasPendientes(clave, hilo, env = process.env, ahora = Date.now()) {
       const ruta = archivoDe(clave, e, env);
       return Boolean(ruta && fs.existsSync(ruta));
     })
-    .map((e) => ({ tareaId: e.tareaId, n: e.n, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden), ruta: archivoDe(clave, e, env),
+    .map((e) => ({ tareaId: e.tareaId, n: e.n, sha256: e.sha256 || null, vista: e.vista || null, prompt: e.prompt || '', externo: Boolean(e.externo), vistaOrden: Boolean(e.vistaOrden), ruta: archivoDe(clave, e, env),
       num: numValido(e.num) ? e.num : null, origen: origenDe(e), deNum: numValido(e.deNum) ? e.deNum : null, baseNum: numValido(e.baseNum) ? e.baseNum : null }));
 }
 

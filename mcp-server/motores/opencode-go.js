@@ -114,7 +114,7 @@ function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = ne
   const messages = [
     { role: 'system', content: sistema },
     ...hiloLocal.paraEnviar(previo ? previo.mensajes : [], { delTurno: imagenes.length, ver }),
-    { role: 'user', content: imagenes.length ? hiloLocal.conPartes(user, imagenes.map((i) => i.url)) : user }
+    { role: 'user', content: imagenes.length ? hiloLocal.conPartes(user, hiloLocal.enOrden(imagenes).map(({ ref }) => ref.url)) : user }
   ];
 
   // S2 — El modelo del pedido (ya validado contra la tabla); `thinking` y `reasoning_effort` viajan si el modelo los usa.

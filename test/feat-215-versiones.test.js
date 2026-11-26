@@ -155,7 +155,7 @@ async function main() {
     const larga = `imagen-desde ${'#1 '.repeat(4000)}x`;
     const t0 = Date.now();
     bloque.parsearImagen(larga);
-    for (const l of [`imagen-desde #7${' '.repeat(60)}x`, `imagen-desde #7${' '.repeat(5000)}x`, `imagen-desde ${'7 '.repeat(60)}x`, `imagen-desde ${'1'.repeat(90)}x`, `imagen-desde #7 ${'y '.repeat(50)}:x`]) bloque.parsearImagen(l);
+    for (const l of [`imagen-desde #7${' '.repeat(60)}x`, `imagen-desde #7${' '.repeat(5000)}x`, `imagen-desde ${'7 '.repeat(60)}x`, `imagen-desde ${'1'.repeat(90)}x`, `imagen-desde #7 ${'y '.repeat(50)}:x`, `imagen-desde ${'1'.repeat(119)}x: c`, `imagen-desde ${'1 '.repeat(59)}x: c`, `imagen-desde ${'12'.repeat(59)} x: c`, `imagen-desde ${'#1 y '.repeat(23)}x: c`]) bloque.parsearImagen(l);
     check('una línea armada no cuelga', Date.now() - t0 < 300, String(Date.now() - t0));
     check('con «, y» y espacios de más', n('imagen-desde  #7 ,  #8,  y #9 :  x') === '7+8+9');
     const c = (v) => bloque.instruccionDeCierre({ puedePedirImagen: true, puedePedirAnterior: true, versiones: v });
@@ -185,7 +185,7 @@ async function main() {
     const g2 = guion(im('imagen-desde #7: de noche'));
     const b = await turno(g2, op(), 'la primera');
     check('responder «la primera» lleva el recordatorio', g2.prompts[0].includes('esa línea no se hace ninguna'));
-    check('por su número', b.imagenPedida.foto.ruta === r1 && b.imagenPedida.baseFija && b.imagenPedida.desde.join() === '7' && !b.imagenPedida.bases && b.imagenPedida.desdeFoto);
+    check('por su número', b.imagenPedida.foto.ruta === r1 && b.imagenPedida.baseFija && b.imagenPedida.desde.join() === '7' && b.imagenPedida.bases.length === 1 && b.imagenPedida.desdeFoto);
     const g3 = guion('Ajá.');
     const n = await turno(g3, op(), 'la segunda');
     check('…pero no vale como pedido', n.imagenRechazo === null);
