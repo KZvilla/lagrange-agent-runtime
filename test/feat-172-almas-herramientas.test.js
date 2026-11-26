@@ -447,6 +447,36 @@ async function main() {
     check('y sin nada de afuera, el hilo no se contamina', !t4.bloqueado);
   });
 
+  // 2.22.0 — Los fragmentos de una búsqueda no alcanzan («FALTA n»): se lee la página de ese resultado.
+  await group('2.22.0: con los fragmentos cortados, lee la página', async () => {
+    check('el mediador saca la marca', mediador.SISTEMA_SINTESIS.includes('FALTA'));
+    pedidosWeb.length = 0;
+    const sintesis = [];
+    const mediadorCorto = { sintetizar: async (a) => {
+      sintesis.push(a);
+      return sintesis.length === 1
+        ? { ok: true, texto: 'El fragmento se corta antes del diseño.', falta: 1, orden: false, tokens: ['diseño'] }
+        : { ok: true, texto: 'Es una máquina grande con brazos de manguera.', falta: null, orden: false, tokens: ['maquina'] };
+    } };
+    const ejecutar = guionAgy(['<alma>\nbuscar-web: cuidados del potus\n</alma>', 'Listo.'], { conversationId: 'conv-web-222' });
+    const t = await charla.charlar({ clave: 'alya', texto: 'buscá los cuidados del potus', agyBin: 'agy', ejecutar, homeDir: home, env, mediador: mediadorCorto, contextoMotor: ctxWeb, opciones: { fresco: true, herramientas: ['web'] } });
+    check('buscó y leyó la página del fragmento señalado', pedidosWeb.length === 2 && /tools\/fetch$/.test(pedidosWeb[1].url) && pedidosWeb[1].cuerpo.url === 'https://plantas.example/potus', JSON.stringify(pedidosWeb.map(x => x.url)));
+    check('el mediador resumió la página entera', sintesis.length === 2 && /Un texto largo de la página/.test(sintesis[1].fuentes[0].texto));
+    check('la pasada 2 trae lo de la página', /brazos de manguera/.test(ejecutar.prompt(1)) && /leída entera/.test(ejecutar.prompt(1)));
+    check('el pie dice qué página leyó', t.herramienta.tipo === 'web' && t.herramienta.dominio === 'plantas.example', JSON.stringify(t.herramienta));
+
+    pedidosWeb.length = 0;
+    const alcanza = { sintetizar: async () => ({ ok: true, texto: 'Riego moderado.', falta: null, orden: false, tokens: ['riego'] }) };
+    const e2 = guionAgy(['<alma>\nbuscar-web: cuidados del potus\n</alma>', 'Listo.'], { conversationId: 'conv-web-222b' });
+    const t2 = await charla.charlar({ clave: 'alya', texto: 'buscá los cuidados del potus', agyBin: 'agy', ejecutar: e2, homeDir: home, env, mediador: alcanza, contextoMotor: ctxWeb, opciones: { fresco: true, herramientas: ['web'] } });
+    check('si alcanzan, no lee nada más', pedidosWeb.length === 1 && !t2.herramienta.dominio);
+
+    // En la pasada 2 el hilo ya trae la web: sin pedir la imagen, la consigna lo dice.
+    const e3 = guionAgy(['<alma>\nbuscar-web: cuidados del potus\n</alma>', 'Listo.'], { conversationId: 'conv-web-222c' });
+    await charla.charlar({ clave: 'alya', texto: 'buscá los cuidados del potus', agyBin: 'agy', ejecutar: e3, homeDir: home, env, mediador: alcanza, contextoMotor: ctxWeb, opciones: { fresco: true, herramientas: ['web'], puedePedirImagen: true } });
+    check('pasada 1 con la consigna de siempre; la 2, sin imagen', /imagen:/.test(e3.prompt(0)) && /En este hilo no podés hacer imágenes/.test(e3.prompt(1)));
+  });
+
   fs.rmSync(base, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);

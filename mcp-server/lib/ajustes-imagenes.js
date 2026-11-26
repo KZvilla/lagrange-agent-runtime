@@ -32,7 +32,10 @@ const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_versi
   // FEAT-213 — Partir de una imagen.
   'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica',
   // FEAT-215 — El alma ve con la visión de su modelo.
-  'vision_propia', 'variar', 'partir', 'varias_bases']);
+  'vision_propia', 'variar', 'partir', 'varias_bases',
+  // Imágenes en un hilo con contenido de afuera aunque el usuario no las pida en ese mensaje (apagada: una instrucción
+  // escondida en una página podría guiar la imagen).
+  'hilo_externo']);
 /** FEAT-215 — Con varias versiones sin elegir. */
 const VARIAS_VERSIONES = Object.freeze(['preguntar', 'ultima']);
 const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
@@ -78,6 +81,7 @@ function defectos() {
     variar: true,
     partir: true,
     varias_bases: true,
+    hilo_externo: false,
     varias_versiones: 'preguntar',
     tope_por_alma: RANGOS.tope_por_alma.defecto,
     perfiles_propios: {},

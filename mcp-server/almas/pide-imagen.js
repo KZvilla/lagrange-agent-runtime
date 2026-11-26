@@ -40,6 +40,15 @@ const SOLO = '\\bdibuj(?:a|ame|amela|amelo|ala|alo|ar|arme|as|e|es|en|emos)\\b';
 const RELLENO = `(?:\\s+me)?(?:\\s+${ARTICULO})?(?:\\s+${NUEVA})?`;
 const CON_OBJETO = new RegExp(`\\b(?:${VERBOS}|${PEDIDOS})${RELLENO}\\s+${OBJETO}\\b`, 'g');
 const RE_SOLO = new RegExp(SOLO, 'g');
+// Generar, crear o hacer a alguien («generame a Bulbmon», «intentá hacer a bulbomon»): la «a» personal pide un personaje.
+// Sin «a mí», «a mano», «a tiempo» ni lo que sigue a «a» sin ser alguien.
+const HACEN = '(?:gener(?:a|ame|amela|amelo|ar|arme|as|e|es|en|emos|o)|cre(?:a|ame|ar|arme|as|e|es|en|emos)|hac(?:e|eme|er|erme|es|emos|en)|hag(?:a|as|o|amos|an|ame)|haz(?:me)?|pint(?:a|ame|ar|arme)|ilustr(?:a|ame|ar|arme)|retrat(?:a|ame|ar|arme))';
+const NO_ES_ALGUIEN = '(?:mi|mí|ti|vos|usted|el|ella|ellos|ellas|nosotros|todos|todas|alguien|nadie|mano|tiempo|full|fondo|medias|ciegas|prueba|proposito|ver|veces|eso|esto|esa|ese|lo|la|las|los|partir|traves|tu|su|sus|tus|mis|nuestro|nuestra|cada|que|cual|ningun|ninguna|la\s+vez)';
+const A_ALGUIEN = new RegExp(`\\b${HACEN}\\s+(?:me\\s+)?a\\s+(?!${NO_ES_ALGUIEN}\\b)[a-z0-9]`, 'g');
+// Generar o crear «un X» que no es un texto ni un archivo («generame un gabumon», no «generame un resumen»).
+const GENERAN = '(?:gener(?:a|ame|amela|amelo|ar|arme|as|e|es|en|emos|o)|cre(?:a|ame|ar|arme|as|e|es|en|emos))';
+const DE_TEXTO = '(?:resumen|texto|informe|reporte|lista|listado|codigo|script|mail|email|correo|respuesta|plan|tabla|documento|archivo|carpeta|carta|poema|cuento|historia|idea|ideas|cancion|mensaje|nota|notas|tarjeta|tarea|propuesta|commit|pr|test|prueba|clave|contrasena|password|link|enlace|pregunta|chiste|frase|titulo|nombre|issue|ticket|branch|rama|backup|respaldo|usuario|cuenta|proyecto|programa|funcion|metodo|clase|json|csv|pdf|ejemplo|esquema|guion|prompt|discurso|post|tuit|tweet|hilo)';
+const UN_ALGO = new RegExp(`\\b${GENERAN}\\s+(?:me\\s+)?(?:un|una|unos|unas|otro|otra)\\s+(?!${DE_TEXTO}\\b)[a-z0-9]`, 'g');
 const RE_FOTO = /\b(?:foto|fotos)\b$/;
 const RE_FOTO_NUEVA = new RegExp(`\\b(?:${INDEFINIDO}|${NUEVA})\\s+(?:${NUEVA}\\s+)?(?:foto|fotos)$`);
 const NEGACION = /\b(?:no|nunca|ni|sin|dont|don't|never)\b|\bdo not\b|\bno need\b/;
@@ -77,6 +86,8 @@ function pideImagen(texto, { respondeImagen = false, usarUltima = false } = {}) 
       hallados.push(m.index);
     }
     for (const m of c.matchAll(RE_SOLO)) hallados.push(m.index);
+    for (const m of c.matchAll(A_ALGUIEN)) hallados.push(m.index);
+    for (const m of c.matchAll(UN_ALGO)) hallados.push(m.index);
     if (hallados.some((i) => !NEGACION.test(c.slice(0, i)))) return true;
   }
   return false;

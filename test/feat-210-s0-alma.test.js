@@ -299,6 +299,27 @@ async function main() {
     check('y sigue segura: el hilo no queda contaminado', tc.fotoSegura === 'marcada' && !contaminados.contaminado('alya', 'conv-colgada-210', env));
   });
 
+  // 2.22.0 — Lo que pasó con Bananero: «generame a Bulbmon» en un hilo con la web no contaba como pedido, y el alma prometía
+  // una imagen que no se iba a hacer.
+  await group('2.22.0: generar a alguien, y la consigna en un hilo de afuera', async () => {
+    const si = ['Ahora generame a Bulbmon de Digimon World 2003 de PSX', 'Ahora tienes la referencia, intenta hacer a bulbomon', 'Generame un gabumon, y que se paresca', 'creame a Agumon'];
+    const no = ['generame un resumen de esto', 'creá una carpeta nueva', 'hacelo a mano', 'hace a tiempo el commit', 'no me generes a Bulbmon', 'generame un informe', 'haceme a mí un favor', 'buscá a bulbmon en la wiki', 'creame un prompt para eso'];
+    for (const t of si) check(`sí: ${t}`, pideImagen(t));
+    for (const t of no) check(`no: ${t}`, !pideImagen(t));
+
+    const fotoHostil = { describirImagen: async () => ({ ok: true, texto: 'Un cartel', orden: false, tokens: ['cartel'] }) };
+    const sinPedir = guionAgy(['Mirá.\n<alma>\nimagen: un cartel\n</alma>'], { conversationId: 'conv-afuera-222' });
+    const t = await turno(sinPedir, { puedePedirImagen: true, imagen: { ruta: rutaFoto } }, 'contame qué ves', { mediador: fotoHostil });
+    check('sin pedirla, la consigna dice que no hay imagen', /En este hilo no podés hacer imágenes/.test(sinPedir.prompt(0)) && !/imagen-desde-foto:/.test(sinPedir.prompt(0)));
+    check('y si el alma la pide igual, hilo-externo', t.imagenPedida === null && t.imagenRechazo === 'hilo-externo');
+    const pidiendo = guionAgy(['Va.\n<alma>\nimagen: Bulbmon\n</alma>'], { conversationId: 'conv-afuera-222b' });
+    const t2 = await turno(pidiendo, { puedePedirImagen: true, imagen: { ruta: rutaFoto } }, 'generame a Bulbmon', { mediador: fotoHostil });
+    check('pidiéndola («generame a Bulbmon»), la consigna de siempre y la imagen', /imagen-desde-foto:/.test(pidiendo.prompt(0)) && t2.imagenPedida && t2.imagenPedida.texto === 'Bulbmon');
+    const conOpcion = guionAgy(['Va.\n<alma>\nimagen: un cartel\n</alma>'], { conversationId: 'conv-afuera-222c' });
+    const t3 = await turno(conOpcion, { puedePedirImagen: true, imagenHiloExterno: true, imagen: { ruta: rutaFoto } }, 'contame qué ves', { mediador: fotoHostil });
+    check('con hilo_externo, también sin pedirla', /imagen-desde-foto:/.test(conOpcion.prompt(0)) && t3.imagenPedida && t3.imagenRechazo === null);
+  });
+
   fs.rmSync(base, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   process.exit(report() ? 0 : 1);
