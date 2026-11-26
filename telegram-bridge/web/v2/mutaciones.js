@@ -85,12 +85,13 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
   const TEXTOS_IMAGEN = {
     'no-existe': [404, 'Esa imagen no existe.'], 'no-en-error': [409, 'Solo se reintenta una imagen que falló.'],
     'tope-turno': [409, 'Ese turno ya tiene 4 imágenes.'], apagada: [409, 'Otra versión está apagada.'],
+    'sin-hilo': [409, 'Esa imagen no es de ningún hilo.'],
     'foto-perdida': [409, 'La foto ya no está; mandala de nuevo.'], 'cola-llena': [409, 'Ya hay demasiadas imágenes esperando. Probá en un rato.']
   };
-  const deImagen = (r) => {
+  const deImagen = (r, textos = {}) => {
     if (r.ok) return { ok: true, n: r.n };
     const [codigo, texto] = TEXTOS_IMAGEN[r.codigo] || [409, 'No se pudo.'];
-    return { ...error(codigo, texto), motivo: r.codigo };
+    return { ...error(codigo, textos[r.codigo] || texto), motivo: r.codigo };
   };
   async function resolverSujeto(id) {
     if (!RE_ID.test(String(id))) return null;
@@ -212,6 +213,13 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       const t = tareaDeImagen(p[0], p[1]);
       return t.error || deImagen(imagenes.otra(t.tareaId, t.n));
     } },
+    // FEAT-215 — «Variar esta».
+    { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):variar$/, fn: ({ p }) => {
+      // Numera la nueva: solo el daemon (en un nodo, `capacidades.versiones` es false).
+      if (!galeria) return sinGaleria();
+      const t = tareaDeImagen(p[0], p[1]);
+      return t.error || deImagen(imagenes.variar(t.tareaId, t.n), { apagada: 'Variar está apagada.' });
+    } },
     { metodo: 'POST', patron: /^\/api\/v2\/turnos\/([^/:]+)\/imagenes\/([^/:]+):cancelar$/, fn: ({ p }) => {
       const t = tareaDeImagen(p[0], p[1]);
       if (t.error) return t.error;
@@ -228,6 +236,16 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       if (!galeria) return sinGaleria();
       const r = galeria.bytes(p[0], p[1], Number(p[2]));
       return r.ok ? { binario: r.bytes, tipo: r.tipo } : error(r.codigo === 400 ? 400 : 404, 'Esa imagen no está.');
+    } },
+    // FEAT-215 — «Partir de esta»: la base del próximo cambio en ese hilo.
+    { metodo: 'POST', patron: /^\/api\/v2\/imagenes\/([^/:]+)\/([^/:]+)\/([1-9]\d?):partir$/, fn: ({ p, cuerpo }) => {
+      if (!galeria) return sinGaleria();
+      if (!galeria.valida({ alma: p[0], tareaId: p[1], n: Number(p[2]), intento: 1 })) return error(400, 'Imagen inválida.');
+      if (typeof cuerpo.elegida !== 'boolean') return { ...error(400, 'elegida tiene que ser true o false.'), campo: 'elegida' };
+      const r = imagenes.partir(p[0], p[1], Number(p[2]), cuerpo.elegida);
+      if (r.ok) return { ok: true, elegida: cuerpo.elegida };
+      const [codigo, texto] = TEXTOS_IMAGEN[r.codigo] || [409, 'No se pudo.'];
+      return { ...error(codigo, r.codigo === 'apagada' ? 'Partir de esta está apagada.' : texto), motivo: r.codigo };
     } },
     { metodo: 'POST', patron: /^\/api\/v2\/imagenes:borrar$/, fn: ({ cuerpo }) => {
       if (!galeria) return sinGaleria();

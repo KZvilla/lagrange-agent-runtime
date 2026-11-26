@@ -103,7 +103,7 @@ function armar(pedido, { env = process.env, uuid = crypto.randomUUID, ahora = ne
   const previo = hilo && !aislado ? hiloLocal.leerHilo(clave, hilo, env) : null;
   const sistema = typeof pedido.sistema === 'string' && pedido.sistema.trim() ? pedido.sistema : agente.vozDelAlma();
   const user = `[Hoy es ${fechaDeHoy(ahora)}]\n\n${String(prompt || '')}`;
-  const messages = [{ role: 'system', content: sistema }, ...(previo ? previo.mensajes : []), { role: 'user', content: user }];
+  const messages = [{ role: 'system', content: sistema }, ...hiloLocal.paraEnviar(previo ? previo.mensajes : []), { role: 'user', content: user }];
 
   const cuerpo = {
     model: modelo,
@@ -168,8 +168,8 @@ function hiloVigente(clave, hilo, env = process.env) {
 }
 
 /** Guarda el turno en el hilo local. `user` es el que se mandó (con su fecha); `assistant`, la respuesta ya limpia. */
-function agregarTurno({ clave, hilo, user, assistant, promptTokens }, env = process.env) {
-  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens }, env);
+function agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env = process.env) {
+  hiloLocal.agregarTurno({ clave, hilo, user, assistant, promptTokens, imagenes }, env);
 }
 
 module.exports = {

@@ -124,6 +124,20 @@ export function crearColaImagenes({
     return mapaTelegram;
   }
 
+  /** FEAT-215 — El número de la imagen de esa alma que es esta foto (por su lugar o por sus bytes), o `null`. */
+  function numeroDeFoto(clave, ruta) {
+    try {
+      let e = indice.porRuta(clave, ruta, env);
+      if (!e) {
+        const x = reconocer(fs.readFileSync(ruta));
+        e = x && x.clave === clave ? indice.leer(clave, x.tareaId, x.n, env) : null;
+      }
+      return (e && e.num) || null;
+    } catch {
+      return null;
+    }
+  }
+
   /** FEAT-212 §7 — ¿Estos bytes son el JPEG con que Telegram devolvió una imagen que hizo un alma? */
   function reconocerTelegram(bytes) {
     try { return mapaDeTelegram().get(indice.sha256(bytes)) || null; } catch { return null; }
@@ -148,11 +162,17 @@ export function crearColaImagenes({
     const permitida = job.foto ? fotoPermitida(job.foto.ruta) : null;
     if (permitida) job.foto = { ...job.foto, ruta: permitida };
     const base = {
-      estado: 'generando', pedido: String(job.pedido || '').slice(0, 300), desdeFoto: Boolean(job.desdeFoto), intento: job.intento,
+      estado: 'generando', pedido: String(job.pedido || '').slice(0, 600), desdeFoto: Boolean(job.desdeFoto), intento: job.intento,
       ancho: 1024, alto: 1024, creada: ahora().toISOString(), terminada: null, codigo: null, mensaje: null,
       sinChequeoZona: undefined, loras: undefined, cambio: undefined, fuerza: undefined,
       ...(job.prompt ? { prompt: job.prompt, negativo: job.negativo || '' } : {})
     };
+    // FEAT-215 — De dónde sale: quién la pidió, de cuál es otra versión y, si parte de una imagen del alma, su número.
+    const previa = pedidoJob.n ? indice.leer(job.clave, job.tareaId, n, env) : null;
+    const origenImagen = job.origenImagen || (previa ? indice.origenDe(previa) : 'alma');
+    const deNum = job.deNum || (previa && previa.deNum) || null;
+    const baseNum = job.foto ? numeroDeFoto(job.clave, job.foto.ruta) : null;
+    Object.assign(base, { origen: origenImagen, deNum: deNum || undefined, baseNum: baseNum || undefined, elegida: undefined });
     transicionImagen(job.tareaId, n, base);
     // Lo privado entra al índice desde el principio: un reintento de una imagen que falló conserva su hilo, su foto y
     // si era de afuera (sin esto, la imagen reintentada no le llegaba al alma en el turno siguiente).
@@ -160,7 +180,7 @@ export function crearColaImagenes({
       indice.actualizar(job.clave, job.tareaId, n, (p) => ({
         ...(p || {}), hilo: job.hilo || (p && p.hilo) || null, externo: Boolean(job.externo),
         fotoRuta: job.foto ? job.foto.ruta : (p && p.fotoRuta) || null, fotoSegura: Boolean(job.foto && job.foto.segura),
-        baseFija: Boolean(job.baseFija), fotoOpcional: Boolean(job.fotoOpcional),
+        baseFija: Boolean(job.baseFija), fotoOpcional: Boolean(job.fotoOpcional), origen: origenImagen, deNum, baseNum, elegida: null,
         // FEAT-212 §7 — El id de este intento: una descarga vieja no le pega su sha a la imagen nueva.
         telegram: { sha256: null, envio: job.idEnvio },
         creada: (p && p.creada) || ahora().toISOString()
@@ -357,6 +377,15 @@ export function crearColaImagenes({
     // La imagen derivada de una foto segura no contamina; de una foto de afuera o de un hilo ya externo, sí.
     const externo = Boolean(job.externo) || Boolean(conFoto && !job.foto.segura);
     const previo = indice.leer(job.clave, job.tareaId, job.n, env);
+    // FEAT-215 — Su número: el mismo si se reintentó. Sin él, la imagen igual vale.
+    let num = (previo && previo.num) || null;
+    for (let i = 0; !num && i < 5; i++) {
+      // Sin dormir el proceso: si otro tiene el contador, se prueba de nuevo. Al arrancar se numera lo que haya quedado.
+      try { num = indice.tomarNumero(job.clave, env, { esperaMs: 0 }); } catch (err) {
+        if (i === 4) log(`[imagenes] no se pudo numerar ${job.tareaId}#${job.n}: ${err.message}`);
+        else await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
       ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
       hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
@@ -368,20 +397,22 @@ export function crearColaImagenes({
       lista: true, vista: null, vistaOrden: false, vistaEntregada: false,
       vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, vistaDesde: ahora().toISOString(),
       // La hora del archivo nuevo: un reintento de una imagen vieja no queda primero para la poda.
-      creada: ahora().toISOString(), intento: job.intento
+      creada: ahora().toISOString(), intento: job.intento, num
     }), env);
+    // FEAT-215 — Con una más nueva, la elegida de ese hilo deja de valer.
+    if (job.hilo) desmarcar(job.clave, job.hilo);
     // Los intentos anteriores de esa n se borran.
     if (previo && previo.archivo && previo.archivo !== final) { borrarArchivo(job.clave, previo); if (previo.sha256) mapa().delete(previo.sha256); }
     mapa().set(sha, { clave: job.clave, tareaId: job.tareaId, n: job.n, externo });
     transicionImagen(job.tareaId, job.n, {
-      estado: 'lista', tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
+      estado: 'lista', num: num || undefined, tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
       semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && !job.fotoOpcional && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
       loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString()
     });
     job.hecha = true;
     podar(job.clave, job);
     cambio(job.clave);
-    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, ruta: final, tipo, idEnvio: job.idEnvio, caso })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
+    if (job.envio) Promise.resolve().then(() => job.envio({ ok: true, n: job.n, num, ruta: final, tipo, idEnvio: job.idEnvio, caso })).catch((err) => log(`[imagenes] no se pudo mandar: ${err.message}`));
 
     // 4. Mirar (§2.1): lo que salió, para el turno siguiente del mismo hilo.
     if (config.alma_la_ve && !signal.aborted) await mirar(job, final, prompt);
@@ -635,8 +666,59 @@ export function crearColaImagenes({
     if (foto === false) return { ok: false, codigo: 'foto-perdida' };
     return encolar({
       tareaId, clave, hilo: priv.hilo || null, pedido: e.pedido, mensaje: '', desdeFoto: e.desdeFoto, foto, externo: Boolean(priv.externo),
-      ...repetir(e, priv), semilla: undefined, envio, crearEnvio, origen: 'usuario'
+      ...repetir(e, priv), semilla: undefined, envio, crearEnvio, origen: 'usuario', origenImagen: 'version', deNum: priv.num || null
     });
+  }
+
+  const PEDIDO_VARIAR = 'Otra parecida a esta: la misma escena y el mismo estilo, con pequeñas diferencias.';
+  /**
+   * FEAT-215 — «Variar esta»: parte de esa imagen. Sin el prompt con que se hizo (el de un retoque describe solo la zona): el refinador
+   * la mira y escribe el suyo. Mismos códigos que `otra`.
+   */
+  function variar(tareaId, n, { envio = null, crearEnvio = null } = {}) {
+    const config = leerConfig();
+    if (!config.variar) return { ok: false, codigo: 'apagada' };
+    const t = tareaDe(tareaId);
+    const e = entradas(tareaId).find((x) => x.n === n);
+    if (!t || !e || e.estado !== 'lista') return { ok: false, codigo: 'no-existe' };
+    if (entradas(tareaId).length >= TOPE_IMAGENES_TURNO) return { ok: false, codigo: 'tope-turno' };
+    const clave = claveDe(t);
+    const priv = indice.leer(clave, tareaId, n, env);
+    const ruta = priv && priv.lista ? indice.archivoDe(clave, priv, env) : null;
+    if (!ruta || !fs.existsSync(ruta)) return { ok: false, codigo: 'no-existe' };
+    const externo = indice.esExterna(priv);
+    return encolar({
+      tareaId, clave, hilo: priv.hilo || null, pedido: PEDIDO_VARIAR, mensaje: '', desdeFoto: true, baseFija: true, foto: { ruta, segura: !externo }, externo,
+      origenImagen: 'variante', deNum: priv.num || null, envio, crearEnvio, origen: 'usuario'
+    });
+  }
+
+  /** FEAT-215 — Lo que cambió en la marca «Partir de esta», también en el registro (que avisa). */
+  function reflejar(tocadas) {
+    for (const x of tocadas) {
+      const e = entradas(x.tareaId).find((y) => y.n === x.n);
+      if (e) transicionImagen(x.tareaId, x.n, { elegida: x.elegida || undefined });
+    }
+  }
+  function desmarcar(clave, hilo) {
+    try {
+      const x = indice.listar(clave, env).find((e) => e.hilo === hilo && e.elegida);
+      if (x) reflejar(indice.elegir(clave, x.tareaId, x.n, false, env));
+    } catch (err) {
+      log(`[imagenes] no se pudo desmarcar la elegida: ${err.message}`);
+    }
+  }
+
+  /** FEAT-215 — «Partir de esta» (o deja de). `{ ok }` o `{ ok: false, codigo: 'apagada' | 'no-existe' | 'sin-hilo' }`. */
+  function partir(clave, tareaId, n, si) {
+    if (!leerConfig().partir) return { ok: false, codigo: 'apagada' };
+    const e = indice.leer(clave, tareaId, n, env);
+    if (!e || !e.lista || !indice.archivoDe(clave, e, env)) return { ok: false, codigo: 'no-existe' };
+    if (!e.hilo) return { ok: false, codigo: 'sin-hilo' };
+    const tocadas = indice.elegir(clave, tareaId, n, si, env, ahora());
+    reflejar(tocadas);
+    if (tocadas.length) cambio(clave);
+    return { ok: true };
   }
 
   /** §5 — Reintentar una entrada en `error`: la misma `n`, un intento nuevo. */
@@ -668,7 +750,13 @@ export function crearColaImagenes({
 
   /** Al arrancar: vacía los `.tmp/` de todas las almas y arma el mapa `sha256`. */
   function alArrancar(claves = []) {
-    for (const c of claves) indice.vaciarTmp(c, env);
+    for (const c of claves) {
+      indice.vaciarTmp(c, env);
+      // FEAT-215 — Las de antes reciben su número, una sola vez.
+      try {
+        for (const x of indice.numerar(c, env)) if (entradas(x.tareaId).some((e) => e.n === x.n)) transicionImagen(x.tareaId, x.n, { num: x.num });
+      } catch (err) { log(`[imagenes] no se pudieron numerar las de ${c}: ${err.message}`); }
+    }
     // Un nodo (sin claves) no lee el directorio de las almas (FEAT-090 §3.6): mapa vacío.
     mapaSha = claves.length ? null : new Map();
     mapaTelegram = claves.length ? null : new Map();
@@ -677,7 +765,7 @@ export function crearColaImagenes({
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length + esperando.size, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
+  return { encolar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, variar, partir, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
 }
 
 /** La clave del alma de una tarea de charla. */

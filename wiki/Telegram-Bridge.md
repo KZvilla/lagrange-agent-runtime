@@ -48,7 +48,7 @@ TELEGRAM_BOT_ALYA_VINCULO=alma:alya
 TELEGRAM_BOT_ALYA_USUARIOS=123456789   # optional; subset of ALLOWED_USER_IDS
 ```
 
-A Soul's bot *is* that Soul: free text talks to it, and it only accepts `/charla`, `/alma`, `/cancel`, `/otra` and `/help`;
+A Soul's bot *is* that Soul: free text talks to it, and it only accepts `/charla`, `/alma`, `/cancel`, `/otra`, `/variar` and `/help`;
 anything else points to the general bot. What the Soul says on its own (`say`, `narrate`, console schedules with
 *notify Telegram*) goes out through its bot. A misconfigured bot is left out with the reason in the banner, log and
 `telegram_bridge_status`; the general bot and the rest keep working. A bot can be tied to a node; see
@@ -95,6 +95,7 @@ Code:
 | `/logs [N]` | Last N lines of the daemon log |
 | `/queue` / `/cancel` | Inspect or abort queued tasks; `/cancel` also cuts the Soul images in the queue, `/cancel imagen` only those |
 | `/otra` | Replying to a Soul's image: another version of it |
+| `/variar` | Replying to a Soul's image: a variation that starts from it |
 | `/reset` | Clear the conversation context |
 | `/web` | Link to the web console |
 | `/charla`, `/alma` | Talk to a Soul, inspect or prune its memory |

@@ -121,7 +121,7 @@ function sinRefinar(pedido, { disponibles, desdeFoto = false, base = null, motiv
  */
 async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFoto = Boolean(foto), base = null, fuerzaAutomatica = false, signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
   const sistema = consigna(disponibles, { base, fuerzaAutomatica });
-  const lineas = [`Assistant's request: ${String(pedido || '').slice(0, 300)}`, `User's message: ${String(mensaje || '').slice(0, 1000)}`];
+  const lineas = [`Assistant's request: ${String(pedido || '').slice(0, 600)}`, `User's message: ${String(mensaje || '').slice(0, 1000)}`];
   const intentos = [];
   let motivo = null;
   if (foto && foto.ruta) intentos.push({ partes: { texto: [...lineas, 'The photo is attached.'].join('\n'), imagen: { ruta: foto.ruta } }, conFoto: true });

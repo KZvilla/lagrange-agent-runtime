@@ -104,6 +104,8 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
       zona: texto(de('zona'), 120), instruccion: texto(de('instruccion'), 2000),
       loras: loras.filter((l) => l && typeof l.clave === 'string').slice(0, 4).map((l) => ({ clave: l.clave.slice(0, 30), fuerza: Number.isFinite(l.fuerza) ? l.fuerza : null })),
       cambio: CAMBIOS.has(e.cambio) ? e.cambio : null, fuerza: Number.isFinite(e.fuerza) ? e.fuerza : null,
+      // FEAT-215 — Su número, de dónde salió y si es de la que se parte.
+      num: entero(e.num), origen: indice.origenDe(e), deNum: entero(e.deNum), baseNum: entero(e.baseNum), elegida: Boolean(config.partir && e.elegida),
       externo, segura: !externo && Boolean(config.fotos_seguras && config.reconocer_propias), enRegistro: Boolean(del && del.estado === 'lista')
     };
   }
@@ -189,5 +191,5 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
     return { ok: true, ruta };
   }
 
-  return { listar, borrar, bytes, referencia };
+  return { listar, borrar, bytes, referencia, valida };
 }

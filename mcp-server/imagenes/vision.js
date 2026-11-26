@@ -152,4 +152,15 @@ async function llamar({ partes, modo, sistema = null, signal, timeoutMs = TIEMPO
 /** Para los tests: olvida la sonda en curso y la última inconclusa. */
 function reiniciarParaTests() { sondaEnCurso = null; ultimaInconclusa = 0; }
 
-module.exports = { TIEMPO_MS, CLAVES_DEL_CUERPO, SISTEMAS, TOPES, armarCuerpo, imagenComoDato, llamarCrudo, llamar, dispararSonda, reiniciarParaTests };
+/**
+ * FEAT-215 — ¿La sonda de visión de este modelo está vigente? Si no, la dispara en segundo plano (prueba `MODELO_OPENCODE_GO`, el único
+ * con `vision` en la tabla de Go).
+ */
+function puedeVer({ modelo = MODELO_OPENCODE_GO, homeDir = os.homedir(), log = () => {}, ejecutar, leer, fetchImpl } = {}) {
+  if (modelo !== MODELO_OPENCODE_GO) return false;
+  const ok = sondaVision.vigente({ homeDir, modelo }).ok;
+  if (!ok) dispararSonda({ homeDir, log, ejecutar, leer, fetchImpl });
+  return ok;
+}
+
+module.exports = { puedeVer, TIEMPO_MS, CLAVES_DEL_CUERPO, SISTEMAS, TOPES, armarCuerpo, imagenComoDato, llamarCrudo, llamar, dispararSonda, reiniciarParaTests };

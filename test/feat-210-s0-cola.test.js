@@ -395,10 +395,10 @@ async function main() {
     const avisos = [];
     const baja = tareas.suscribir((t, info) => avisos.push({ id: t.id, info }));
     const t = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: { tipo: 'alma', clave: 'alya' }, pedido: 'hola' });
-    tareas.actualizar(t.id, { imagenes: [{ n: 1, estado: 'generando', pedido: 'p'.repeat(500), archivo: '/secreto.png', ruta: '/x' }] });
+    tareas.actualizar(t.id, { imagenes: [{ n: 1, estado: 'generando', pedido: 'p'.repeat(900), archivo: '/secreto.png', ruta: '/x' }] });
     const g = tareas.obtener(t.id);
     check('normaliza: sin campos privados', g.imagenes[0].archivo === undefined && g.imagenes[0].ruta === undefined);
-    check('normaliza: el pedido al tope de 300', g.imagenes[0].pedido.length === 300);
+    check('normaliza: el pedido al tope de 600', g.imagenes[0].pedido.length === 600);
     check('avisa con cambioImagen', avisos.some((a) => a.id === t.id && a.info.cambioImagen === true));
     check('resumen proyecta { n, estado }', JSON.stringify(tareas.resumen(g).imagenes) === JSON.stringify([{ n: 1, estado: 'generando' }]));
     tareas.actualizar(t.id, { imagenes: [1, 2, 3, 4, 5].map((n) => ({ n, estado: 'lista' })) });

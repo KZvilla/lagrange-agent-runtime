@@ -128,6 +128,10 @@
             "comfyuiProceso": {
               "type": "boolean",
               "description": "FEAT-213 — true si este daemon puede levantar y apagar ComfyUI (GET /comfyui)."
+            },
+            "versiones": {
+              "type": "boolean",
+              "description": "FEAT-215 — true si este daemon numera las imágenes y tiene …:variar y …:partir. Un nodo, false."
             }
           }
         },
@@ -460,7 +464,17 @@
                 "detalle": {
                   "type": "string",
                   "maxLength": 40,
-                  "description": "FEAT-213 — El motivo cuando no está en el enum de rechazo (sin-foto, sin-anterior, no-pedida); rechazo va en null."
+                  "description": "FEAT-213 — El motivo cuando no está en el enum de rechazo (sin-foto, sin-anterior, no-pedida, sin-esa-imagen, cual-version); rechazo va en null."
+                },
+                "desde": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 1 },
+                  "description": "FEAT-215 — Los números de las imágenes de las que parte."
+                },
+                "candidatas": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 1 },
+                  "description": "FEAT-215 — Con detalle cual-version, los números entre los que hay que elegir."
                 }
               },
               "description": "FEAT-210 — Lo que pidió el alma (pedida) o el primer motivo por el que no se hizo (rechazo). El estado de la imagen vive en turno.imagenes."
@@ -471,6 +485,15 @@
                 "marcada",
                 "reconocida"
               ]
+            },
+            "vision": {
+              "type": "string",
+              "enum": [
+                "propia",
+                "hilo",
+                "descripcion"
+              ],
+              "description": "FEAT-215 — Cómo le llegaron al alma la foto segura o sus imágenes de este turno: con la visión de su modelo (propia), descriptas, o ninguna nueva pero con alguna del hilo a la vista (hilo). Ausente si no hubo ninguna."
             }
           }
         },
@@ -631,6 +654,34 @@
                 "minimum": 0,
                 "maximum": 1,
                 "description": "FEAT-213 — La fuerza que llevó esa variación."
+              },
+              "num": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "FEAT-215 — El número de la imagen, por alma: no se repite ni se reusa."
+              },
+              "origen": {
+                "type": "string",
+                "enum": [
+                  "alma",
+                  "version",
+                  "variante"
+                ],
+                "description": "FEAT-215 — Quién la pidió: el alma, o el usuario con «Otra versión» o «Variar esta»."
+              },
+              "deNum": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "FEAT-215 — En una version o variante, la imagen desde la que se pidió."
+              },
+              "baseNum": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "FEAT-215 — La imagen del alma de la que partió."
+              },
+              "elegida": {
+                "type": "boolean",
+                "description": "FEAT-215 — true si el usuario eligió partir de esta."
               }
             }
           },
