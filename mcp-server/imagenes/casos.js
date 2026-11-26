@@ -124,8 +124,9 @@ function disponiblesDe(imagenes, { desdeFoto = false, catalogo = null, manual = 
       proveedores, afuera, modelo: e.modelo, perfil: e.perfil, huecos: conComfy ? e.resuelto.huecos.length : 0,
       loras: conComfy && e.resuelto.huecos.length ? lorasDe(imagenes, e.perfil.plantillas) : [],
       tope: topeDelPrompt(proveedores, e.perfil), motivo, resuelto: conComfy ? e.resuelto : null,
-      // FEAT-216 — Con ComfyUI: lo que el sistema agrega al prompt (la consigna se lo dice al refinador).
-      seguro: perfiles.seguroActivo(imagenes, e.perfil)
+      // FEAT-216 — Con ComfyUI: lo que el sistema agrega al prompt (la consigna se lo dice al refinador). Sin ComfyUI
+      // nadie lo agrega.
+      seguro: conComfy && perfiles.seguroActivo(imagenes, e.perfil)
     };
   }
   return salida;
@@ -170,7 +171,9 @@ function ajustarAlCaso(r, caso, d) {
   let instruccion = pesos(limpio(r.instruccion, MAX_INSTRUCCION));
   let prompt = pesos(limpio(r.prompt, 2000)) || instruccion;
   if (caso === 'edicion') instruccion = (instruccion || prompt).slice(0, MAX_INSTRUCCION);
-  prompt = prompt.slice(0, d.tope);
+  // FEAT-216 — Lo que el sistema agrega no cuenta para el tope: un prompt ya compuesto (el del taller) lo pierde acá y
+  // `componerPrompt` lo vuelve a poner.
+  prompt = perfiles.sinFijas(d.perfil, prompt, d.seguro).slice(0, d.tope);
   if (!prompt) return null;
   const propio = limpio(r.negativo, MAX_NEGATIVO);
   const negativo = reglas.negativo === 'no' ? '' : propio || reglas.negativoPorDefecto;

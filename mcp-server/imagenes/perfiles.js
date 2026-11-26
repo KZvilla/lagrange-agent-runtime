@@ -181,44 +181,92 @@ function idPorNombre(modelo, carga) {
   // «noob» o la palabra «wai» (no waiting), y «anything».
   if (/(^|[^a-z])pony(?!tail)/.test(m)) return 'sdxl-pony';
   if (/illustrious|(^|[^a-z])noob|(^|[^a-z])wai([^a-z]|$)/.test(m)) return 'sdxl-illustrious';
-  if (m.includes('anything')) return 'sdxl-anything';
+  if (/(^|[^a-z])anything/.test(m)) return 'sdxl-anything';
   return 'sdxl';
 }
 
 // ---------------------------------------------------------------- FEAT-216: el prompt final
 
+/** Un peso al final: `:1.2`, `: -0.5`, `:.8`, con espacios antes del cierre. */
+const RE_PESO = /\s*:\s*-?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
+
 /** La forma con que se compara una etiqueta: sin peso ni paréntesis, en minúsculas, con «_» como espacio. */
 function claveEtiqueta(etiqueta) {
   let t = String(etiqueta || '').trim();
   for (let i = 0; i < 5; i++) {
-    const n = t.replace(/^\((.*):\s*-?\d+(?:\.\d+)?\)$/, '$1').replace(/^\((.*)\)$/, '$1').replace(/^\[(.*)\]$/, '$1').trim();
+    let n = t;
+    if (/^\(.*\)$/s.test(n)) n = n.slice(1, -1).replace(RE_PESO, '');
+    else if (/^\[.*\]$/s.test(n)) n = n.slice(1, -1);
+    n = n.trim();
     if (n === t) break;
     t = n;
   }
   return t.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ');
 }
 
-/** Las etiquetas de un texto separado por comas, sin vacías. */
-const etiquetasDe = (texto) => String(texto || '').split(',').map((x) => x.trim()).filter(Boolean);
+/** Las etiquetas de un texto separado por comas, sin vacías. Una coma dentro de paréntesis o corchetes no separa. */
+function etiquetasDe(texto) {
+  const salida = [];
+  let prof = 0;
+  let actual = '';
+  for (const ch of String(texto || '')) {
+    if (ch === '(' || ch === '[') prof++;
+    else if ((ch === ')' || ch === ']') && prof > 0) prof--;
+    if (ch === ',' && prof === 0) { salida.push(actual); actual = ''; } else actual += ch;
+  }
+  salida.push(actual);
+  return salida.map((x) => x.trim()).filter(Boolean);
+}
 
-/** Une textos de etiquetas en orden: una que ya está (por `claveEtiqueta`) no se repite. */
+/**
+ * Un grupo con peso, como `(masterpiece, best quality:1.2)`: sus etiquetas y cómo rearmarlo con las que queden. `null` si
+ * la etiqueta no es un grupo (un solo paréntesis que la envuelve entera, con más de una etiqueta adentro).
+ */
+function grupoDe(e) {
+  if (!/^\(.*\)$/s.test(e)) return null;
+  let prof = 0;
+  for (let i = 0; i < e.length - 1; i++) {
+    if (e[i] === '(') prof++;
+    else if (e[i] === ')') prof--;
+    if (prof === 0) return null; // el primer paréntesis cierra antes del final: `(a) (b)`.
+  }
+  const adentro = e.slice(1, -1);
+  const peso = (RE_PESO.exec(adentro) || [''])[0];
+  const partes = etiquetasDe(peso ? adentro.slice(0, -peso.length) : adentro);
+  if (partes.length < 2 && !(partes.length === 1 && grupoDe(partes[0]))) return null;
+  return { partes, armar: (quedan) => `(${quedan.join(', ')}${peso})` };
+}
+
+/** La etiqueta sin las partes que `fuera(clave)` descarta: un grupo se rearma con las que quedan. `''` si no queda nada. */
+function filtrarEtiqueta(e, fuera) {
+  const g = grupoDe(e);
+  if (!g) return fuera(claveEtiqueta(e)) ? '' : e;
+  const quedan = g.partes.map((x) => filtrarEtiqueta(x, fuera)).filter(Boolean);
+  if (!quedan.length) return '';
+  return quedan.length === g.partes.length && quedan.every((x, i) => x === g.partes[i]) ? e : g.armar(quedan);
+}
+
+/** Une textos de etiquetas en orden: una que ya está (por `claveEtiqueta`, también dentro de un grupo) no se repite. */
 function unirEtiquetas(...partes) {
   const vistas = new Set();
+  const fuera = (k) => {
+    if (!k || vistas.has(k)) return true;
+    vistas.add(k);
+    return false;
+  };
   const salida = [];
   for (const p of partes) for (const e of etiquetasDe(p)) {
-    const k = claveEtiqueta(e);
-    if (!k || vistas.has(k)) continue;
-    vistas.add(k);
-    salida.push(e);
+    const f = filtrarEtiqueta(e, fuera);
+    if (f) salida.push(f);
   }
   return salida.join(', ');
 }
 
-/** El texto sin las etiquetas de la lista `quitar`. */
+/** El texto sin las etiquetas de la lista `quitar` (también las de un grupo). */
 function quitarEtiquetas(texto, quitar) {
-  const fuera = new Set(etiquetasDe(quitar).map(claveEtiqueta));
-  if (!fuera.size) return String(texto || '');
-  return etiquetasDe(texto).filter((e) => !fuera.has(claveEtiqueta(e))).join(', ');
+  const lista = new Set(etiquetasDe(quitar).map(claveEtiqueta));
+  if (!lista.size) return String(texto || '');
+  return etiquetasDe(texto).map((e) => filtrarEtiqueta(e, (k) => lista.has(k))).filter(Boolean).join(', ');
 }
 
 /** ¿El modo seguro está prendido para este perfil? Si el perfil lo define, sí, salvo `comfyui.seguro_de[id] === false`. */
@@ -237,12 +285,23 @@ function componerPrompt(p, { prompt = '', negativo = '', seguro = false } = {}) 
   const q = p && p.prompt ? p.prompt : {};
   const s = seguro && q.seguro ? q.seguro : null;
   const positivo = s ? quitarEtiquetas(prompt, s.quitar) : prompt;
-  // En el negativo solo sale lo que el modo seguro pide (negar «general» sería pedir lo contrario).
-  const neg = s ? quitarEtiquetas(negativo, s.positivo) : negativo;
+  // Del negativo del refinador también salen las de rating (y la segura: negar «general» sería pedir lo contrario); el
+  // modo seguro pone las suyas.
+  const neg = s ? quitarEtiquetas(negativo, unirEtiquetas(s.quitar, s.positivo)) : negativo;
   return {
     prompt: q.prefijo || s ? unirEtiquetas(q.prefijo, s ? s.positivo : '', positivo) : String(prompt || ''),
     negativo: q.negativo === 'no' ? '' : q.negativoFijo || s ? unirEtiquetas(q.negativoFijo, s ? s.negativo : '', neg) : String(negativo || '')
   };
+}
+
+/**
+ * El prompt sin lo que el sistema agrega por su cuenta (el prefijo y, con el modo seguro, su etiqueta): un prompt que ya
+ * pasó por `componerPrompt` (el del taller, al hacer «otra versión») vuelve a ocupar solo lo suyo dentro del tope.
+ */
+function sinFijas(p, prompt, seguro = false) {
+  const q = p && p.prompt ? p.prompt : {};
+  const fijas = unirEtiquetas(q.prefijo, seguro && q.seguro ? q.seguro.positivo : '');
+  return fijas ? quitarEtiquetas(prompt, fijas) : String(prompt || '');
 }
 
 /**
@@ -290,5 +349,5 @@ function perfilDe(imagenes, modelo, catalogo = null, { cargaSugerida = null } = 
 module.exports = {
   FAMILIAS, CARGA_DE_FAMILIA, CASOS, PROPORCIONES, ESTILOS, NEGATIVOS, RESERVADAS, RE_ID, MAX_PROPIOS, PERFILES,
   formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe,
-  MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt
+  MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt, sinFijas
 };

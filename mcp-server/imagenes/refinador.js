@@ -68,7 +68,8 @@ function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
     lineas.push(`  Weights like (word:1.2) are ${p.pesos ? 'allowed' : 'not allowed'}.`);
     lineas.push(`  ${p.negativo === 'no' ? 'This model has no negative prompt: leave "negativo" empty.' : p.negativo === 'si' ? 'Write a "negativo".' : 'Write a "negativo" only if something specific must be avoided.'}`);
     lineas.push(`  Its ${caso === 'edicion' ? '"instruccion"' : '"prompt"'} has at most ${d.tope} characters.`);
-    for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
+    // FEAT-216 — Solo si ComfyUI puede hacerlo: es el único que agrega el prefijo y el modo seguro.
+    if (d.resuelto) for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
     if (d.huecos && d.loras.length) lineas.push(`  LoRAs you may add to "loras" (at most ${d.huecos}, only when the request asks for that look): ${d.loras.map((l) => `"${l.clave}"`).join(', ')}.`);
   }
   return lineas.join('\n');

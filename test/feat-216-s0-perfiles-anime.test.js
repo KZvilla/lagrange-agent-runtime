@@ -155,6 +155,54 @@ async function main() {
     check('seguro_de sale filtrado', JSON.stringify(v.comfyui.seguro_de) === JSON.stringify({ 'sdxl-pony': false }));
   });
 
+  await group('Ronda 1: grupos con peso, el negativo, antigravity, el tope y la API', async () => {
+    const d = A.defectos();
+    const wai = P.perfil(d, 'sdxl-illustrious');
+    const pony = P.perfil(d, 'sdxl-pony');
+    const any = P.perfil(d, 'sdxl-anything');
+    check('una coma dentro de un grupo no separa', JSON.stringify(P.etiquetasDe('(masterpiece, best quality:1.2), 1girl')) === JSON.stringify(['(masterpiece, best quality:1.2)', '1girl']));
+    const c1 = P.componerPrompt(wai, { prompt: '(masterpiece, best quality:1.2), 1girl', seguro: true });
+    check('un grupo que ya está en el prefijo no se repite', c1.prompt === 'masterpiece, best quality, amazing quality, general, 1girl');
+    const c2 = P.componerPrompt(pony, { prompt: '(rating_explicit, nsfw:1.2), 1girl', seguro: true });
+    check('el modo seguro saca el rating de un grupo', !/rating_explicit|nsfw/.test(c2.prompt) && c2.prompt.endsWith('rating_safe, 1girl'));
+    const c3 = P.componerPrompt(pony, { prompt: '(rating_explicit, red scarf:1.3), 1girl', seguro: true });
+    check('del grupo queda lo que no es rating, con su peso', c3.prompt.endsWith('rating_safe, (red scarf:1.3), 1girl'));
+    check('pesos con espacio y sin cero', P.claveEtiqueta('(nsfw:1.2 )') === 'nsfw' && P.claveEtiqueta('(NSFW:.5)') === 'nsfw');
+    check('dos paréntesis seguidos no son un grupo', P.quitarEtiquetas('(a) (b), c', 'c') === '(a) (b)');
+    const n1 = P.componerPrompt(any, { prompt: '1girl', negativo: 'nsfw, explicit, low quality, extra arms', seguro: true });
+    check('del negativo del refinador también salen las de quitar', !/(^|, )explicit(,|$)/.test(n1.negativo) && n1.negativo.split(', ').filter((x) => x === 'nsfw').length === 1 && n1.negativo.endsWith('nsfw, extra arms'));
+    const n2 = P.componerPrompt(pony, { prompt: '1girl', negativo: 'rating_safe, blurry', seguro: true });
+    check('y la segura (no se niega lo que se pide)', n2.negativo === 'rating_explicit, rating_questionable, blurry');
+    const n3 = P.componerPrompt(pony, { prompt: '1girl', negativo: 'rating_explicit, blurry', seguro: false });
+    check('apagado, el negativo queda como lo escribió', n3.negativo === 'rating_explicit, blurry');
+
+    const base = { ...d, comfyui: { ...d.comfyui, modelo: 'v6.safetensors', perfil_de: { 'v6.safetensors': 'sdxl-pony' } } };
+    const soloAgy = C.disponiblesDe({ ...base, orden: ['antigravity'] }, auto);
+    const ca = R.consigna(soloAgy);
+    check('solo antigravity: ni prefijo ni modo seguro prometidos', soloAgy.nueva.seguro === false && !/The system starts the prompt|Safe for work only|Rating: write/.test(ca));
+    const agyPrimero = R.consigna(C.disponiblesDe({ ...base, orden: ['antigravity', 'comfyui'] }, auto));
+    check('antigravity primero y ComfyUI después: sí (ComfyUI los agrega)', agyPrimero.includes('The system starts the prompt with "score_9'));
+
+    const dis = C.disponiblesDe({ ...d, comfyui: { ...d.comfyui, modelo: 'WAI-Nsfw-Illustrious-17.safetensors' } }, auto).nueva;
+    const largo = 'x'.repeat(dis.tope - 5);
+    const compuesto = P.componerPrompt(wai, { prompt: largo, seguro: true }).prompt;
+    const aj = C.ajustarAlCaso({ prompt: compuesto }, 'nueva', dis);
+    check('un prompt ya compuesto no pierde lo suyo por el tope', aj && aj.prompt === largo);
+    check('y al componerlo de nuevo queda igual', P.componerPrompt(wai, { prompt: aj.prompt, seguro: true }).prompt === compuesto);
+    const libre = C.ajustarAlCaso({ prompt: 'general, 1girl' }, 'nueva', { ...dis, seguro: false });
+    check('con el modo seguro apagado, el rating elegido se queda', libre.prompt === 'general, 1girl');
+
+    const id = (n) => P.idPorNombre(n, 'checkpoint');
+    check('anything al principio de una palabra', id('NotAnything.safetensors') === 'sdxl' && id('anything_xl_v1.safetensors') === 'sdxl-anything' && id('SDXL/AnythingXL-Beta5.safetensors') === 'sdxl-anything');
+    check('Anything: el rating va después de la serie', any.prompt.reglas.includes('then the series (copyright), then the rating tag if the system does not set it'));
+
+    const efectivos = P.perfilesEfectivos(d);
+    const propios = Array.from({ length: P.MAX_PROPIOS }, (_, i) => ({ ...copia(P.PERFILES.get('sdxl')), id: `propio-${i}`, nombre: `Propio ${i}`, origen: 'propio' }));
+    const todos = [...efectivos, ...propios];
+    const v = ajustesV2({ imagenes: { ...d, perfiles: todos } }, { completo: true }).imagenes;
+    check(`la API v2 saca los ${todos.length} perfiles (9 del plugin y ${P.MAX_PROPIOS} propios)`, todos.length === 9 + P.MAX_PROPIOS && v.perfiles.length === todos.length);
+  });
+
   report();
 }
 
