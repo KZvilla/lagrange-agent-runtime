@@ -18,6 +18,8 @@ const lista = (nums) => {
 /** «Imagen #8 · otra versión de la #7 (…) · partió de la #5», o «Tu imagen» si es de antes de que tuvieran número. */
 function rotulo(v) {
   const num = ENTERO(v.num);
+  // FEAT-214 — Una del taller no es suya: la hizo el usuario a mano.
+  if (v.origen === 'taller') return num ? `Imagen #${num} · la hizo el usuario en el taller` : 'Una imagen que el usuario hizo en el taller';
   const partes = [num ? `Imagen #${num}, tuya` : 'Tu imagen'];
   const de = ENTERO(v.deNum);
   if (v.origen === 'version') partes.push(`otra versión${de ? ` de la #${de}` : ''} (mismo pedido, otra semilla): la pidió el usuario por su cuenta`);

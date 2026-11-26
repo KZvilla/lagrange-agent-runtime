@@ -158,6 +158,27 @@ function validarFicha(ficha, flujo) {
 }
 
 /**
+ * FEAT-214 — La forma de un grafo ya leído (formato API): un objeto de nodos de ComfyUI, sin el envoltorio de
+ * `graphToPrompt()` y, con `conSalida`, con algún `SaveImage` o `PreviewImage` y hasta 2 MB. No pide marcadores.
+ * `{ ok }` o `{ ok: false, motivo }`.
+ */
+function formaDeGrafo(grafo, { conSalida = true } = {}) {
+  if (!esObjeto(grafo)) return { ok: false, motivo: 'el flujo no es un objeto de nodos de ComfyUI (formato API)' };
+  if (esObjeto(grafo.output) && (Object.hasOwn(grafo, 'workflow') || Object.keys(grafo).length === 1)) return { ok: false, motivo: 'mandá output (el formato API), no lo que devuelve graphToPrompt entero' };
+  if (!Object.values(grafo).some((n) => esObjeto(n) && typeof n.class_type === 'string')) return { ok: false, motivo: 'el flujo no es un objeto de nodos de ComfyUI (formato API)' };
+  for (const n of Object.values(grafo)) {
+    if (!esObjeto(n) || typeof n.class_type !== 'string' || !n.class_type || n.class_type.length > 200 || !esObjeto(n.inputs)) return { ok: false, motivo: 'un nodo del flujo no tiene class_type o sus inputs' };
+  }
+  if (!conSalida) return { ok: true };
+  if (Object.keys(grafo).length > 2000) return { ok: false, motivo: 'el flujo tiene más de 2000 nodos' };
+  if (!Object.values(grafo).some((n) => n.class_type === 'SaveImage' || n.class_type === 'PreviewImage')) return { ok: false, motivo: 'el flujo no tiene SaveImage ni PreviewImage' };
+  let largo = 0;
+  try { largo = Buffer.byteLength(JSON.stringify(grafo)); } catch { return { ok: false, motivo: 'el flujo no es JSON' }; }
+  if (largo > TOPE_FLUJO) return { ok: false, motivo: 'el flujo pesa más de 2 MB' };
+  return { ok: true };
+}
+
+/**
  * Lee un flujo para un caso, con su ficha si la trae al lado.
  * `{ ok, flujo, marcadores, salidas, ficha, conFicha }` o `{ ok: false, motivo, … }`.
  */
@@ -165,9 +186,8 @@ function leerFlujo(ruta, { caso = 'nueva', denyPaths = null } = {}) {
   const l = leerJson(ruta, 'del flujo');
   if (!l.ok) return { ok: false, motivo: l.motivo };
   const flujo = l.valor;
-  if (!esObjeto(flujo) || !Object.values(flujo).some((n) => esObjeto(n) && typeof n.class_type === 'string')) {
-    return { ok: false, motivo: 'el flujo no es un objeto de nodos de ComfyUI (formato API)' };
-  }
+  const forma = formaDeGrafo(flujo, { conSalida: false });
+  if (!forma.ok) return { ok: false, motivo: forma.motivo };
   const marcadores = [...marcadoresDe(flujo)].sort();
   const salidas = salidasDe(flujo);
   const parcial = { flujo, marcadores, salidas };
@@ -260,6 +280,26 @@ function resolverFlujo(imagenes, perfil, caso) {
   return { ok: true, ...vacio, ...base, ...visto, flujo: l.flujo, ficha: l.ficha, salida, salidaMascara: l.ficha.salidaMascara, motivo: null };
 }
 
+/** FEAT-214 — Las plantillas del plugin que solo existen en el taller. */
+const PLANTILLAS_TALLER = Object.freeze(['retoque-a-mano']);
+
+/**
+ * FEAT-214 — Una plantilla del taller, sin pasar por `plantillaDe` (que arma `retoque-<mascara>`): la misma forma que
+ * `resolverFlujo`. Hoy solo «Retoque a mano», de la familia SDXL; parte de una imagen, como una variación.
+ */
+function resolverPlantillaTaller(perfil, nombre) {
+  const vacio = { flujo: null, salida: null, salidaMascara: null, huecos: [], marcadores: [], salidas: [], propio: false, archivo: null, conFicha: false };
+  const mal = (motivo) => ({ ok: false, ...vacio, nombre: null, motivo });
+  if (!PLANTILLAS_TALLER.includes(nombre)) return mal('no es una plantilla del taller');
+  if (!perfil || typeof perfil.plantillas !== 'string') return mal('solo con un perfil SDXL');
+  const ruta = path.join(DIR_PLANTILLAS, perfil.plantillas, `${nombre}.json`);
+  if (!fs.existsSync(ruta)) return mal('solo con un perfil SDXL');
+  if (perfil.carga.tipo !== perfiles.CARGA_DE_FAMILIA[perfil.plantillas]) return mal('no hay plantilla para esta carga');
+  const l = leerFlujo(ruta, { caso: 'variacion' });
+  if (!l.ok) return mal(l.motivo);
+  return { ok: true, ...vacio, marcadores: l.marcadores, salidas: l.salidas, flujo: l.flujo, ficha: l.ficha, salida: l.ficha.salida || l.salidas[0], huecos: l.ficha.huecos, nombre: `${perfil.plantillas}/${nombre}`, motivo: null };
+}
+
 /** Saca los huecos de LoRA que no se usan (los que siguen a los primeros `usados`) y reconecta lo que colgaba de ellos. */
 function puentear(flujo, huecos, usados) {
   const fuera = new Set(huecos.slice(usados));
@@ -346,6 +386,6 @@ function faltantes(resuelto, valores, catalogo, loras = []) {
 
 module.exports = {
   DENY, DIR_PLANTILLAS, TOPE_FLUJO, CASOS_PROPIOS, COMUNES, DEL_CASO, ENTEROS, DECIMALES, MAX_HUECOS,
-  marcadoresDe, esPlantilla, formaDeFlujo, rutaDeFicha, salidasDe, cargasDe, cargaCoincide, inyectados, inyectaModelo, validarFicha, leerFlujo,
-  plantillaDe, flujoPropio, resolverFlujo, puentear, marcadorFaltante, aplicarMarcadores, ramaDeMascara, faltantes
+  marcadoresDe, esPlantilla, formaDeFlujo, formaDeGrafo, rutaDeFicha, salidasDe, cargasDe, cargaCoincide, inyectados, inyectaModelo, validarFicha, leerFlujo,
+  plantillaDe, flujoPropio, resolverFlujo, PLANTILLAS_TALLER, resolverPlantillaTaller, puentear, marcadorFaltante, aplicarMarcadores, ramaDeMascara, faltantes
 };

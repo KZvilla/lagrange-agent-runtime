@@ -31,7 +31,9 @@ const CODIGOS_ENTRADA = Object.freeze({
   // FEAT-213
   'sin-base': 'Ahora nadie puede partir de esa imagen.',
   'otro-programa': 'no está: en esa dirección responde otro programa',
-  'comfyui-apagado': 'ComfyUI se apagó.'
+  'comfyui-apagado': 'ComfyUI se apagó.',
+  // FEAT-214 — «Que lo prepare el alma»: no se generó, quedó para abrir en el taller.
+  'para-el-taller': 'Quedó para el taller.'
 });
 
 const MOTIVOS_RECHAZO = Object.freeze({

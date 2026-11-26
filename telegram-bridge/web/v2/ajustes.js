@@ -34,7 +34,7 @@ const RE_ALMA = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ALTERNATIVAS = 3;
 const SECCIONES_V2 = Object.freeze(['motores', 'general', 'identidades', 'voz', 'imagenes']);
 // FEAT-210 — Los campos de la sección `imagenes` (la forma; el núcleo valida el resto).
-const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica', 'vision_propia', 'variar', 'partir', 'varias_bases', 'hilo_externo', 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const CAMPOS_IMAGENES = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_version', 'fotos_seguras', 'reconocer_propias', 'reconocer_telegram', 'responder_usa_imagen', 'usar_ultima', 'foto_cuenta', 'fuerza_automatica', 'vision_propia', 'variar', 'partir', 'varias_bases', 'hilo_externo', 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen', 'taller']);
 const PROVEEDORES_IMAGEN = Object.freeze(['comfyui', 'antigravity', 'openai', 'gemini']);
 // FEAT-212 — Los casos, las familias de plantillas y las cargas de un perfil de modelo.
 const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
@@ -281,6 +281,13 @@ function soloLecturaImagenesV2(i) {
   };
 }
 
+/** FEAT-214 — `imagenes.taller`, campo por campo (lo que falta, prendido; al cerrar, preguntar). */
+function tallerV2(tl) {
+  const o = esObjeto(tl) ? tl : {};
+  const b = (v) => (typeof v === 'boolean' ? v : true);
+  return { activo: b(o.activo), abrir_en_taller: b(o.abrir_en_taller), prepara_alma: b(o.prepara_alma), mirar: b(o.mirar), al_cerrar: ['descartar', 'quedar'].includes(o.al_cerrar) ? o.al_cerrar : 'preguntar' };
+}
+
 /** FEAT-210 — La sección `imagenes`, campo por campo. Los flujos son rutas que eligió el usuario: salen como texto. */
 function imagenesV2(i) {
   const o = esObjeto(i) ? i : {};
@@ -305,6 +312,8 @@ function imagenesV2(i) {
       ...comfyuiV2(c)
     },
     openai_imagen: remoto(o.openai_imagen), gemini_imagen: remoto(o.gemini_imagen),
+    // FEAT-214 — El taller.
+    taller: tallerV2(o.taller),
     flujos: { txt2img: flujo(flujos.txt2img), img2img: flujo(flujos.img2img) }
   };
 }

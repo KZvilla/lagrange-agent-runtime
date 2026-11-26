@@ -150,6 +150,28 @@ With a folder in `comfyui.arranque.carpeta` (Windows), the daemon can start Comf
 - It runs with a whitelisted environment: no key or token of the daemon reaches a custom node.
 - `GET /api/v2/comfyui/registro` hides paths, credentials and the command line.
 
+## The workshop
+
+The workshop opens an image's workflow in ComfyUI so you can edit it by hand, and brings back what you make there. The
+window is the terminal's (Desktop v0.24 and later); the daemon side is `/api/v2/taller…`.
+
+- **What opens:** an image's own workflow (with its prompt, seed, mask and base; one made in the workshop reopens exactly as
+  it ran), a template (`nueva`, `variacion`, `retoque` and `edicion` of the active profile, «Retoque a mano» where you paint the
+  mask yourself, and the ones you saved), or what a Soul prepared with «Que lo prepare el alma»: the Soul writes and refines the
+  prompt, and instead of generating, the workshop opens with it.
+- **What comes back:** while a session is open the daemon watches ComfyUI's history. A run belongs to the session if its output
+  is in `output/lagrange-taller/<session>/`; if it is not (another `SaveImage`, a `PreviewImage`) but it ran from the workshop
+  window, it goes to that window's own strip. Nothing enters the gallery by itself: you keep it, send it to a Soul, or drop it.
+- **Trust:** what comes back carries the trust of its base. From a base that came from outside, from one of your own templates,
+  or with a `LoadImage` the session did not upload, it counts as from outside. What the mask editor saves on the base's node
+  does not.
+- **Kept images** have `origen: "taller"`, no thread and no view: they never reach a Soul as its last image. «Otra versión»,
+  «Variar esta» and Retry need a turn, so they are not offered; «Abrir en el taller» is.
+- **Settings:** `imagenes.taller` — `activo`, `abrir_en_taller`, `prepara_alma`, `mirar` (all on) and `al_cerrar`
+  (`preguntar`, `descartar` or `quedar`). With the workshop open, Stop and Restart of ComfyUI answer «busy», also with force.
+- **It shares your ComfyUI:** the same models, nodes and workflow folder. «Guardar como plantilla…» goes to Lagrange
+  (`~/.claude/lagrange-taller`); ComfyUI's own Save goes to your ComfyUI workflows, as always.
+
 ## Recognising an image that came back through Telegram
 
 Telegram recompresses photos, so the file you resend is not the one the bot made. After sending one, the bot downloads

@@ -66,11 +66,69 @@ function medidasDe(bytes) {
 const tipoDe = (nombre) => (/\.png$/i.test(nombre) ? 'image/png' : /\.webp$/i.test(nombre) ? 'image/webp' : /\.jpe?g$/i.test(nombre) ? 'image/jpeg' : 'image/png');
 const extDe = (tipo) => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' })[tipo] || 'png';
 
+// FEAT-214 — Lo que usa también el taller.
+export { TOPE_BYTES, leerHasta, medidasDe, tipoDe, extDe };
+
+/**
+ * FEAT-214 — Los datos de los marcadores de un pedido: lo del perfil (muestreo y carga) y lo del pedido. La semilla, la que
+ * viene o una al azar.
+ */
+export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [] }) {
+  const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
+  const m = perfil.muestreo;
+  const datos = {
+    prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
+    ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
+  };
+  if (caso === 'retoque') datos.zona = zona;
+  if (caso === 'edicion') {
+    datos.instruccion = instruccion;
+    // Un flujo de edición que solo tiene {{prompt}} recibe la instrucción ahí.
+    if (!marcadores.includes('instruccion')) datos.prompt = instruccion;
+  }
+  return datos;
+}
+
+/**
+ * FEAT-214 — Arma el flujo de un pedido sin mandarlo: resuelve cuál (o la `plantilla` del taller), pone los LoRAs que sigue
+ * teniendo ComfyUI y puentea los huecos libres. Los marcadores todavía no se aplican (falta la base).
+ * `{ ok, resuelto, datos, armado, usadas }` o `{ ok: false, codigo, detalle?, extra? }`.
+ */
+export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = {}, loras = [], catalogo = null, plantilla = null, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), log = () => {} }) {
+  const resuelto = plantilla ? flujosLib.resolverPlantillaTaller(perfil, plantilla) : resolverFlujo(seccion, perfil, caso);
+  if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
+  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores });
+  // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
+  const usadas = [];
+  for (const l of loras.slice(0, resuelto.huecos.length)) {
+    const archivo = catalogo ? perfilesLib.enLista(catalogo.loras, l.archivo) : l.archivo;
+    if (!archivo) { log(`[imagenes] El LoRA "${l.clave}" no está en ComfyUI; se saltea.`); continue; }
+    usadas.push({ ...l, archivo });
+  }
+  usadas.forEach((l, i) => { datos[`lora_${i + 1}`] = l.archivo; datos[`lora_${i + 1}_fuerza`] = l.fuerza; });
+  const armado = flujosLib.puentear(resuelto.flujo, resuelto.huecos, usadas.length);
+  const usaFoto = plantilla ? true : caso !== 'nueva';
+  const falta = flujosLib.marcadorFaltante(armado, usaFoto ? { ...datos, foto: 'x' } : datos);
+  if (falta) return { ok: false, codigo: 'flujo-marcador', extra: { marcador: falta } };
+  return { ok: true, resuelto, datos, armado, usadas };
+}
+
+/** FEAT-214 — Sube una foto al `input` de ComfyUI con un nombre al azar. El nombre como lo usa un `LoadImage`. */
+export async function subirBase({ json, foto, signal }) {
+  const bytes = fs.readFileSync(foto);
+  const form = new FormData();
+  form.append('image', new Blob([bytes]), `lagrange-${crypto.randomBytes(6).toString('hex')}.png`);
+  form.append('type', 'input');
+  form.append('overwrite', 'true');
+  const subida = await json('/upload/image', { method: 'POST', body: form, signal });
+  return subida.subfolder ? `${subida.subfolder}/${subida.name}` : subida.name;
+}
+
 /**
  * Crea el proveedor. `config` es la sección `imagenes` entera (normalizada); `resolverFlujo(config, perfil, caso)`, quien
  * dice qué flujo se usa. `fetchImpl`, `esperar` y `log` se inyectan en los tests.
  */
-export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), catalogoDe = (url) => catalogos.enCache(url), fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS }) {
+export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), catalogoDe = (url) => catalogos.enCache(url), fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS, idCliente = () => `lagrange-${crypto.randomBytes(4).toString('hex')}` }) {
   const config = seccion.comfyui;
   const base = String(config.url || ajustesImagenes.URL_COMFYUI).replace(/\/+$/, '');
   // El `signal` del trabajo (si viene) más el tope del pedido.
@@ -168,32 +226,11 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     if (signal && signal.aborted) return fin('cancelada');
     const usaFoto = caso !== 'nueva';
     if (usaFoto && !foto) return fin('error');
-    const resuelto = resolverFlujo(seccion, perfil, caso);
-    if (!resuelto.ok) return fin('fallo-del-flujo', { detalle: resuelto.motivo });
     const catalogo = catalogoDe(base);
-    const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
-    const m = perfil.muestreo;
-    const datos = {
-      prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
-      ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
-    };
-    if (caso === 'retoque') datos.zona = zona;
-    if (caso === 'edicion') {
-      datos.instruccion = instruccion;
-      // Un flujo de edición que solo tiene {{prompt}} recibe la instrucción ahí.
-      if (!resuelto.marcadores.includes('instruccion')) datos.prompt = instruccion;
-    }
-    // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
-    const usadas = [];
-    for (const l of loras.slice(0, resuelto.huecos.length)) {
-      const archivo = catalogo ? perfilesLib.enLista(catalogo.loras, l.archivo) : l.archivo;
-      if (!archivo) { log(`[imagenes] El LoRA "${l.clave}" no está en ComfyUI; se saltea.`); continue; }
-      usadas.push({ ...l, archivo });
-    }
-    usadas.forEach((l, i) => { datos[`lora_${i + 1}`] = l.archivo; datos[`lora_${i + 1}_fuerza`] = l.fuerza; });
-    const armado = flujosLib.puentear(resuelto.flujo, resuelto.huecos, usadas.length);
-    const falta = flujosLib.marcadorFaltante(armado, usaFoto ? { ...datos, foto: 'x' } : datos);
-    if (falta) return fin('flujo-marcador', { extra: { marcador: falta } });
+    const a = armarPedido({ seccion, caso, modelo, perfil, pedido: { prompt, negativo, ancho, alto, semilla, fuerza, zona, instruccion }, loras, catalogo, resolverFlujo, log });
+    if (!a.ok) return fin(a.codigo, { ...(a.detalle ? { detalle: a.detalle } : {}), ...(a.extra ? { extra: a.extra } : {}) });
+    const { resuelto, datos, armado, usadas } = a;
+    const seed = datos.semilla;
     const retoque = caso === 'retoque' && resuelto.salidaMascara && config.chequeo_zona !== false;
     const zonaFallida = (estado) => fin('zona-no-encontrada', { extra: { zona, cubre: estado === 'cubre' } });
     let id = null;
@@ -202,19 +239,11 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     let resultado;
     const tope = ahora() + config.tiempo_s * 1000;
     try {
-      if (usaFoto) {
-        const bytes = fs.readFileSync(foto);
-        const form = new FormData();
-        form.append('image', new Blob([bytes]), `lagrange-${crypto.randomBytes(6).toString('hex')}.png`);
-        form.append('type', 'input');
-        form.append('overwrite', 'true');
-        const subida = await json('/upload/image', { method: 'POST', body: form, signal });
-        datos.foto = subida.subfolder ? `${subida.subfolder}/${subida.name}` : subida.name;
-      }
+      if (usaFoto) datos.foto = await subirBase({ json, foto, signal });
       const flujo = flujosLib.aplicarMarcadores(armado, datos);
       const salida = resuelto.salida;
       enviado = true;
-      const r = await post('/prompt', { prompt: flujo, client_id: `lagrange-${crypto.randomBytes(4).toString('hex')}` }, signal);
+      const r = await post('/prompt', { prompt: flujo, client_id: idCliente() }, signal);
       if ((r.node_errors && Object.keys(r.node_errors).length) || r.error) {
         log(`[imagenes] ComfyUI rechazó el flujo: ${sinRutas(JSON.stringify(r.error || r.node_errors)).slice(0, 300)}`);
         return fin('fallo-del-flujo');
