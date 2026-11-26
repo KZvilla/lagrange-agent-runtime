@@ -122,6 +122,36 @@ function prefijar(grafo, sesion) {
   return grafo;
 }
 
+/**
+ * Los nombres con que ComfyUI muestra los nodos de una plantilla del plugin (`_meta.title`, que `loadApiJson` respeta): los
+ * que hay que tocar y la vista previa de la máscara, que es un control y no el resultado. Se ponen sobre el flujo armado,
+ * antes de los marcadores (el marcador dice qué es cada nodo). Un título que ya está no se cambia.
+ */
+export const TITULO_MASCARA = 'Máscara de la zona (control, no es el resultado)';
+const TITULOS = { prompt: 'Prompt', negativo: 'Negativo', zona: 'Zona a retocar: escribí qué parte', instruccion: 'Instrucción: qué cambiar', foto: 'Imagen de base' };
+function titular(armado, salidaMascara) {
+  const g = clon(armado);
+  for (const [id, n] of Object.entries(g)) {
+    if (!esObjeto(n) || !esObjeto(n.inputs)) continue;
+    let t = id === salidaMascara ? TITULO_MASCARA : null;
+    for (const v of Object.values(n.inputs)) {
+      const m = !t && typeof v === 'string' && /^\{\{(prompt|negativo|zona|instruccion|foto)\}\}$/.exec(v);
+      if (m) t = TITULOS[m[1]];
+    }
+    if (t && !(esObjeto(n._meta) && n._meta.title)) n._meta = { ...(esObjeto(n._meta) ? n._meta : {}), title: t };
+  }
+  return g;
+}
+
+/** ¿El flujo armado usa ese marcador? (`{{zona}}` sin zona: la máscara sale vacía o al azar). */
+const usaMarcador = (armado, k) => JSON.stringify(armado).includes(`{{${k}}}`);
+
+/** La vista previa de la máscara de una plantilla del plugin: no va a la tira (es un control del retoque, no una imagen). */
+const esVistaDeMascara = (grafo, nodo) => {
+  const n = esObjeto(grafo) && Object.hasOwn(grafo, nodo) ? grafo[nodo] : null;
+  return esObjeto(n) && n.class_type === 'PreviewImage' && esObjeto(n._meta) && n._meta.title === TITULO_MASCARA;
+};
+
 /** Reemplaza un nombre de `input` en todos los nodos que lo cargan. */
 function renombrar(grafo, viejo, nuevo) {
   for (const n of Object.values(grafo)) if (esObjeto(n) && esObjeto(n.inputs) && n.inputs.image === viejo) n.inputs.image = nuevo;
@@ -325,7 +355,7 @@ export function crearTaller({
       pedido: { prompt: e.prompt || '', negativo: e.negativo || '', ancho, alto, semilla: Number.isInteger(e.semilla) ? e.semilla : undefined, fuerza: e.fuerza ?? null, zona: e.zona || '', instruccion: e.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', `No se pudo armar su flujo${p.detalle ? ` (${p.detalle})` : ''}.`);
-    return { ok: true, armado: p.armado, datos: p.datos, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null };
   }
 
   function armarPlantilla(c, config, catalogo) {
@@ -346,7 +376,7 @@ export function crearTaller({
       const [ancho, alto] = caso === 'nueva' ? est.perfil.medidas['1:1'] : medidasParaBase(est.perfil, b.e);
       const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null };
     }
     if (id === 'plugin:retoque-a-mano') {
       if (!catalogo) return no(409, 'no-disponible', 'ComfyUI no respondió: probá de nuevo en un momento.');
@@ -358,7 +388,7 @@ export function crearTaller({
       const [ancho, alto] = medidasParaBase(est.perfil, b.e);
       const p = armarPedido({ seccion: config, plantilla: 'retoque-a-mano', modelo: est.modelo, perfil: est.perfil, catalogo, log, pedido: { prompt: '', negativo: '', ancho, alto, fuerza: est.perfil.muestreo.fuerzaRetoque } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null };
     }
     m = /^propia:([a-z0-9]{16})$/.exec(id);
     if (m) {
@@ -392,7 +422,7 @@ export function crearTaller({
       pedido: { prompt: pr.prompt || '', negativo: pr.negativo || '', ancho: pr.ancho, alto: pr.alto, semilla: Number.isInteger(pr.semilla) ? pr.semilla : undefined, fuerza: pr.fuerza ?? null, zona: pr.zona || '', instruccion: pr.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', 'No se pudo armar el flujo del preparado.');
-    return { ok: true, armado: p.armado, datos: p.datos, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null };
   }
 
   const vivas = () => [...sesiones.values()].filter((s) => RE_SESION.test(s.id) && s.abierta);
@@ -465,7 +495,7 @@ export function crearTaller({
     try {
       if (a.datos) {
         if (a.base) { a.datos.foto = await subirBase({ json, foto: a.base }); subidos.push(a.datos.foto); }
-        grafo = flujosLib.aplicarMarcadores(a.armado, a.datos);
+        grafo = flujosLib.aplicarMarcadores(titular(a.armado, a.mascara), a.datos);
       } else {
         grafo = clon(a.grafo);
         for (const f of a.archivos || []) { const nuevo = await subirBase({ json, foto: f.ruta }); subidos.push(nuevo); renombrar(grafo, f.orig, nuevo); }
@@ -483,7 +513,7 @@ export function crearTaller({
     prefijar(grafo, id);
     const nodosBase = cargadoresDe(grafo).filter(([, nombre]) => subidos.includes(nombre)).map(([nodo]) => nodo);
     const s = {
-      id, alma: c.alma, ventana: c.ventana, idCliente: c.idCliente || null, origen: a.origen, caso: a.caso, etiqueta: a.etiqueta, aviso: a.aviso,
+      id, alma: c.alma, ventana: c.ventana, idCliente: c.idCliente || null, origen: a.origen, caso: a.caso, etiqueta: a.etiqueta, aviso: a.aviso || (a.armado && usaMarcador(a.armado, 'zona') && !(a.datos && a.datos.zona) ? 'Escribí qué parte retocar en el nodo «Zona a retocar»: sin eso, la máscara sale vacía o al azar.' : null),
       clientId: null, vistos, abierta: true, ultimaSenal: ms(), creada: ahora().toISOString(),
       grafo, subidos, nodosBase, externoBase: Boolean(a.externoBase), baseRuta: a.base || a.baseEnPropia || null, imagenes: {}, entradas: {}, salidas: [], enCurso: []
     };
@@ -600,6 +630,7 @@ export function crearTaller({
       const imgs = esObjeto(out) && Array.isArray(out.images) ? out.images : [];
       for (const [i, img] of imgs.entries()) {
         if (!esObjeto(img) || !['output', 'temp'].includes(img.type)) continue;
+        if (img.type === 'temp' && esVistaDeMascara(grafo, nodo)) continue;
         const remoto = nombreRemoto(String(img.filename || ''), String(img.subfolder || ''));
         if (!remoto) continue;
         let b = null;
