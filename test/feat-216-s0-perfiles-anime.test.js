@@ -232,7 +232,7 @@ async function main() {
 
     const kontextLike = { ...copia(wai), casos: ['edicion'] };
     const ed = datosDe({ caso: 'edicion', modelo: 'x.safetensors', perfil: kontextLike, prompt: '', negativo: '', ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['prompt'], seguro: true });
-    check('edición con solo {{prompt}}: la instrucción va compuesta', ed.prompt === 'masterpiece, best quality, amazing quality, general, make it blue' && ed.instruccion === 'make it blue');
+    check('edición con solo {{prompt}}: la instrucción va compuesta', ed.prompt === 'masterpiece, best quality, amazing quality, general, make it blue');
     const kon = P.perfil(d, 'flux-kontext');
     const ek = datosDe({ caso: 'edicion', modelo: 'k.safetensors', perfil: kon, prompt: '', negativo: '', ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['prompt'] });
     check('Flux Kontext: la instrucción tal cual', ek.prompt === 'make it blue');
@@ -250,6 +250,23 @@ async function main() {
     const sucio = { imagenes: { comfyui: { seguro_de: { 'Sdxl-Pony': false } } } };
     const r = tira(() => A.aplicarImagenes(sucio, { comfyui: { seguro_de: { 'Sdxl-Pony': null } } }));
     check('null quita también una clave inválida', !r);
+  });
+
+  await group('Ronda 4: la instrucción, las opciones de rating y los sufijos numéricos', async () => {
+    const d = A.defectos();
+    const wai = P.perfil(d, 'sdxl-illustrious');
+    const ed = datosDe({ caso: 'edicion', modelo: 'x.safetensors', perfil: { ...copia(wai), casos: ['edicion'] }, ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['instruccion'], seguro: true });
+    check('edición con {{instruccion}}: compuesta', ed.instruccion === 'masterpiece, best quality, amazing quality, general, make it blue');
+    const kon = P.perfil(d, 'flux-kontext');
+    const ek = datosDe({ caso: 'edicion', modelo: 'k.safetensors', perfil: kon, ancho: 1024, alto: 1024, instruccion: 'make it blue', marcadores: ['instruccion'] });
+    check('Flux Kontext con {{instruccion}}: tal cual', ek.instruccion === 'make it blue');
+    const base = copia(P.PERFILES.get('sdxl'));
+    const mio = P.validarPerfil('mio', { ...base, prompt: { ...base.prompt, seguro: { positivo: 'general', negativo: 'nsfw', quitar: '(general, sensitive)' } } });
+    const modelo = d.comfyui.modelo || 'sd_xl_base_1.0.safetensors';
+    const c = R.consigna(C.disponiblesDe({ ...d, perfiles_propios: { mio: mio.perfil }, comfyui: { ...d.comfyui, modelo, perfil_de: { [modelo]: 'mio' }, seguro_de: { mio: false } } }, auto));
+    check('opciones de rating sin partir un grupo', mio.ok && /from: general, \(sensitive\)\./.test(c));
+    check('year:2024 y re:0 no son pesos', P.claveEtiqueta('year:2024') === 'year:2024' && P.claveEtiqueta('re:0') === 're:0' && P.claveEtiqueta('(tag:2)') === 'tag' && P.claveEtiqueta('nsfw:1.2') === 'nsfw');
+    check('y no se pierden al unir', P.unirEtiquetas('year', 'year:2024, 1girl') === 'year, year:2024, 1girl');
   });
 
   report();

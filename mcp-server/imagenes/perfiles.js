@@ -189,16 +189,18 @@ function idPorNombre(modelo, carga) {
 
 /** Un peso al final: `:1.2`, `: -0.5`, `:.8`, con espacios antes del cierre. */
 const RE_PESO = /\s*:\s*-?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
+/** Un peso suelto, sin paréntesis, lleva decimal: `nsfw:1.2` sí, `year:2024` o `re:0` no. */
+const RE_PESO_SUELTO = /\s*:\s*-?(?:\d+\.\d+|\.\d+)\s*$/;
 
 /** La forma con que se compara una etiqueta: sin peso ni paréntesis, en minúsculas, con «_» como espacio. */
 function claveEtiqueta(etiqueta) {
   let t = String(etiqueta || '').trim();
   for (let i = 0; i < 5; i++) {
     let n = t;
-    if (/^\(.*\)$/s.test(n)) n = n.slice(1, -1);
-    else if (/^\[.*\]$/s.test(n)) n = n.slice(1, -1);
+    let envuelta = false;
+    if (/^\(.*\)$/s.test(n)) { n = n.slice(1, -1); envuelta = true; } else if (/^\[.*\]$/s.test(n)) n = n.slice(1, -1);
     // El peso, envuelta o no: `nsfw:1.2` dentro de un grupo también es `nsfw`.
-    n = n.replace(RE_PESO, '').trim();
+    n = n.replace(envuelta ? RE_PESO : RE_PESO_SUELTO, '').trim();
     if (n === t) break;
     t = n;
   }

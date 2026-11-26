@@ -17,6 +17,7 @@
 
 const visionReal = require('./vision.js');
 const casos = require('./casos.js');
+const perfilesLib = require('./perfiles.js');
 
 const { PROPORCIONES, CASOS } = casos;
 
@@ -94,7 +95,7 @@ function lineasFijas(p, seguro) {
     const agrega = partes.length ? ` the system adds ${partes.join(' and ')}.` : '';
     salida.push(`Safe for work only:${agrega} Do not write rating tags${s.quitar ? ` (${s.quitar})` : ''}, and keep the image safe for work.`);
   } else if (s) {
-    const opciones = [...new Set([s.positivo, s.quitar].join(', ').split(',').map((x) => x.trim()).filter(Boolean))];
+    const opciones = perfilesLib.etiquetasDe(perfilesLib.unirEtiquetas(s.positivo, s.quitar));
     if (opciones.length) salida.push(`Rating: write the one rating tag that fits the request, from: ${opciones.join(', ')}.`);
   }
   return salida;
