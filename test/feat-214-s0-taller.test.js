@@ -85,7 +85,7 @@ function comfyFalso() {
 const procesoFalso = (estado = 'ok') => ({ e: estado, usos: 0, levantados: 0, comprobar: async function () { return this.e; }, levantar: function () { this.levantados++; return this.promesa === undefined ? null : this.promesa; }, estado: async () => ({ mensaje: 'Elegí la carpeta de ComfyUI.' }), anotarUso: function () { this.usos++; } });
 
 async function main() {
-  const { crearTaller, nombreRemoto } = await importar('telegram-bridge/imagenes/taller.js');
+  const { crearTaller, nombreRemoto, TITULO_MASCARA } = await importar('telegram-bridge/imagenes/taller.js');
   const { crearComfyui, armarPedido } = await importar('telegram-bridge/imagenes/comfyui.js');
   const { crearColaImagenes, camposDeImagen } = await importar('telegram-bridge/imagenes-cola.js');
   const { crearGaleria } = await importar('telegram-bridge/imagenes/galeria.js');
@@ -306,6 +306,31 @@ async function main() {
     comfy.caido = true;
     await t._vuelta();
     check('caído: sinComfy, sin romper', t.estado(s).sinComfy === true);
+    t.parar();
+  });
+
+  await group('2.23.1: los nodos de las plantillas con nombre, y la máscara de control no va a la tira', async () => {
+    const { t, comfy } = armar();
+    const n = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+    const titulo = (g, f) => Object.values(g).filter(f).map((x) => x._meta && x._meta.title);
+    check('nueva: Prompt y Negativo, sin aviso de zona', titulo(n.grafo, (x) => x.class_type === 'CLIPTextEncode').sort().join('|') === 'Negativo|Prompt' && !n.aviso);
+    const b = poner({ externo: false });
+    const r = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:retoque', base: b.ref });
+    check('retoque: abre', r.ok);
+    const mascara = Object.keys(r.grafo).find((k) => r.grafo[k].class_type === 'PreviewImage');
+    check('la vista previa de la máscara se llama así', r.grafo[mascara]._meta.title === TITULO_MASCARA);
+    check('el nodo de la zona, «Zona a retocar»', Object.values(r.grafo).some((x) => x._meta && /^Zona a retocar/.test(x._meta.title) && Object.values(x.inputs).includes('')));
+    check('la base, «Imagen de base»', titulo(r.grafo, (x) => x.class_type === 'LoadImage').join() === 'Imagen de base');
+    check('sin zona, la barra lo avisa', /Zona a retocar/.test(r.aviso || ''));
+    check('ningún marcador quedó en un título', !JSON.stringify(r.grafo).includes('{{'));
+    const s = r.sesion;
+    comfy.correr('p-retoque', r.grafo, { salidas: [{ filename: 'img_00001_.png', subfolder: `lagrange-taller/${s}` }, { filename: 'ComfyUI_temp_m.png', type: 'temp', nodo: mascara }] });
+    // Una vista previa del usuario (otro título) sí vuelve.
+    const propio = { ...JSON.parse(JSON.stringify(r.grafo)), 77: { class_type: 'PreviewImage', inputs: {}, _meta: { title: 'Mi vista' } } };
+    comfy.correr('p-retoque-2', propio, { salidas: [{ filename: 'ComfyUI_temp_u.png', type: 'temp', nodo: '77' }, { filename: 'ComfyUI_temp_m2.png', type: 'temp', nodo: mascara }] });
+    await t._vuelta();
+    const listas = t.estado(s).imagenes.filter((i) => i.estado === 'lista');
+    check('el resultado y la vista previa del usuario; la de la máscara, no', listas.length === 2 && comfy.pedidos.some((x) => /ComfyUI_temp_u.png/.test(x)) && !comfy.pedidos.some((x) => /ComfyUI_temp_m2?.png/.test(x)));
     t.parar();
   });
 
