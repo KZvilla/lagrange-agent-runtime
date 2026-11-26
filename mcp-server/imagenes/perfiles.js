@@ -22,6 +22,8 @@ const RESERVADAS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const RE_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_PROPIOS = 20;
 const FUERZA_RETOQUE = 0.9;
+const MAX_FIJO = 300;
+const MAX_SEGURO = 200;
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 // Las reglas llevan saltos de línea.
 const CONTROLES_TEXTO = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
@@ -63,13 +65,36 @@ function validarPerfil(id, p) {
 
   const q = p.prompt;
   if (!esObjeto(q)) return mal('prompt', 'tiene que ser un objeto');
-  for (const k of Object.keys(q)) if (!['estilo', 'reglas', 'tope', 'negativo', 'negativoPorDefecto', 'pesos'].includes(k)) return mal(`prompt.${k}`, 'no está permitido');
+  for (const k of Object.keys(q)) if (!['estilo', 'reglas', 'tope', 'negativo', 'negativoPorDefecto', 'pesos', 'prefijo', 'negativoFijo', 'seguro'].includes(k)) return mal(`prompt.${k}`, 'no está permitido');
   if (!ESTILOS.includes(q.estilo)) return mal('prompt.estilo', `tiene que ser ${ESTILOS.join(', ')}`);
   if (typeof q.reglas !== 'string' || q.reglas.length > 4000 || CONTROLES_TEXTO.test(q.reglas)) return mal('prompt.reglas', 'tiene que ser un texto de hasta 4000 caracteres');
   if (!Number.isInteger(q.tope) || q.tope < 100 || q.tope > 2000) return mal('prompt.tope', 'tiene que ser un entero de 100 a 2000');
   if (!NEGATIVOS.includes(q.negativo)) return mal('prompt.negativo', `tiene que ser ${NEGATIVOS.join(', ')}`);
   if (typeof q.negativoPorDefecto !== 'string' || q.negativoPorDefecto.length > 500 || CONTROLES_TEXTO.test(q.negativoPorDefecto)) return mal('prompt.negativoPorDefecto', 'tiene que ser un texto de hasta 500 caracteres');
   if (typeof q.pesos !== 'boolean') return mal('prompt.pesos', 'tiene que ser true o false');
+  // FEAT-216 — Lo que el sistema agrega siempre (no lo escribe el refinador ni cuenta para el tope).
+  const fijo = (k) => {
+    const v = q[k] === undefined || q[k] === null ? '' : q[k];
+    if (typeof v !== 'string' || v.length > MAX_FIJO || CONTROLES.test(v)) return { mal: mal(`prompt.${k}`, `tiene que ser un texto de una línea de hasta ${MAX_FIJO} caracteres`) };
+    return { v: v.trim() };
+  };
+  const prefijo = fijo('prefijo');
+  if (prefijo.mal) return prefijo.mal;
+  const negativoFijo = fijo('negativoFijo');
+  if (negativoFijo.mal) return negativoFijo.mal;
+  // FEAT-216 — «Solo contenido seguro»: qué agrega al prompt y al negativo, y qué etiquetas de rating saca de lo del refinador.
+  let seguro = null;
+  if (q.seguro !== undefined && q.seguro !== null) {
+    if (!esObjeto(q.seguro)) return mal('prompt.seguro', 'tiene que ser un objeto { positivo, negativo, quitar } o null');
+    for (const k of Object.keys(q.seguro)) if (!['positivo', 'negativo', 'quitar'].includes(k)) return mal(`prompt.seguro.${k}`, 'no está permitido');
+    seguro = {};
+    for (const k of ['positivo', 'negativo', 'quitar']) {
+      const v = q.seguro[k] === undefined || q.seguro[k] === null ? '' : q.seguro[k];
+      if (typeof v !== 'string' || v.length > MAX_SEGURO || CONTROLES.test(v)) return mal(`prompt.seguro.${k}`, `tiene que ser un texto de una línea de hasta ${MAX_SEGURO} caracteres`);
+      seguro[k] = v.trim();
+    }
+    if (!seguro.positivo && !seguro.negativo && !seguro.quitar) return mal('prompt.seguro', 'tiene que tener al menos una etiqueta');
+  }
 
   const s = p.muestreo;
   if (!esObjeto(s)) return mal('muestreo', 'tiene que ser un objeto');
@@ -104,7 +129,7 @@ function validarPerfil(id, p) {
     ok: true,
     perfil: {
       id, nombre: p.nombre.trim(), plantillas: p.plantillas, carga,
-      prompt: { estilo: q.estilo, reglas: q.reglas, tope: q.tope, negativo: q.negativo, negativoPorDefecto: q.negativoPorDefecto, pesos: q.pesos },
+      prompt: { estilo: q.estilo, reglas: q.reglas, tope: q.tope, negativo: q.negativo, negativoPorDefecto: q.negativoPorDefecto, pesos: q.pesos, prefijo: prefijo.v, negativoFijo: negativoFijo.v, seguro },
       muestreo: { pasos: s.pasos, cfg: s.cfg, guia, sampler: s.sampler.trim(), scheduler: s.scheduler.trim(), fuerza: s.fuerza, fuerzaRetoque },
       medidas: Object.fromEntries(medidas), casos: CASOS.filter((c) => p.casos.includes(c))
     }
@@ -114,7 +139,7 @@ function validarPerfil(id, p) {
 const congelar = (o) => { for (const v of Object.values(o)) if (v && typeof v === 'object') congelar(v); return Object.freeze(o); };
 
 /** Los perfiles que trae el plugin, en el orden en que los ofrece la pestaña. */
-const PERFILES = new Map(['sdxl', 'sdxl-rapido', 'flux', 'flux-fp8', 'flux-fill', 'flux-kontext'].map((id) => {
+const PERFILES = new Map(['sdxl', 'sdxl-rapido', 'sdxl-pony', 'sdxl-illustrious', 'sdxl-anything', 'flux', 'flux-fp8', 'flux-fill', 'flux-kontext'].map((id) => {
   const r = validarPerfil(id, JSON.parse(fs.readFileSync(path.join(__dirname, 'perfiles', `${id}.json`), 'utf8')));
   if (!r.ok) throw new Error(`El perfil ${id} del plugin no vale: ${r.campo} ${r.motivo}`);
   return [id, congelar(r.perfil)];
@@ -152,7 +177,72 @@ function idPorNombre(modelo, carga) {
   if (/(^|[^a-z])fill([^a-z]|$)/.test(m)) return 'flux-fill';
   if (m.includes('flux')) return carga === 'checkpoint' ? 'flux-fp8' : 'flux';
   if (/lightning|turbo|hyper/.test(m)) return 'sdxl-rapido';
+  // FEAT-216 — Las familias de anime: «pony» al principio de una palabra (ponyDiffusionV6XL, no ponytail), «illustrious»,
+  // «noob» o la palabra «wai» (no waiting), y «anything».
+  if (/(^|[^a-z])pony(?!tail)/.test(m)) return 'sdxl-pony';
+  if (/illustrious|(^|[^a-z])noob|(^|[^a-z])wai([^a-z]|$)/.test(m)) return 'sdxl-illustrious';
+  if (m.includes('anything')) return 'sdxl-anything';
   return 'sdxl';
+}
+
+// ---------------------------------------------------------------- FEAT-216: el prompt final
+
+/** La forma con que se compara una etiqueta: sin peso ni paréntesis, en minúsculas, con «_» como espacio. */
+function claveEtiqueta(etiqueta) {
+  let t = String(etiqueta || '').trim();
+  for (let i = 0; i < 5; i++) {
+    const n = t.replace(/^\((.*):\s*-?\d+(?:\.\d+)?\)$/, '$1').replace(/^\((.*)\)$/, '$1').replace(/^\[(.*)\]$/, '$1').trim();
+    if (n === t) break;
+    t = n;
+  }
+  return t.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ');
+}
+
+/** Las etiquetas de un texto separado por comas, sin vacías. */
+const etiquetasDe = (texto) => String(texto || '').split(',').map((x) => x.trim()).filter(Boolean);
+
+/** Une textos de etiquetas en orden: una que ya está (por `claveEtiqueta`) no se repite. */
+function unirEtiquetas(...partes) {
+  const vistas = new Set();
+  const salida = [];
+  for (const p of partes) for (const e of etiquetasDe(p)) {
+    const k = claveEtiqueta(e);
+    if (!k || vistas.has(k)) continue;
+    vistas.add(k);
+    salida.push(e);
+  }
+  return salida.join(', ');
+}
+
+/** El texto sin las etiquetas de la lista `quitar`. */
+function quitarEtiquetas(texto, quitar) {
+  const fuera = new Set(etiquetasDe(quitar).map(claveEtiqueta));
+  if (!fuera.size) return String(texto || '');
+  return etiquetasDe(texto).filter((e) => !fuera.has(claveEtiqueta(e))).join(', ');
+}
+
+/** ¿El modo seguro está prendido para este perfil? Si el perfil lo define, sí, salvo `comfyui.seguro_de[id] === false`. */
+function seguroActivo(imagenes, p) {
+  if (!p || !p.prompt || !p.prompt.seguro) return false;
+  const c = imagenes && esObjeto(imagenes.comfyui) ? imagenes.comfyui : {};
+  const tabla = esObjeto(c.seguro_de) ? c.seguro_de : {};
+  return !(tiene(tabla, p.id) && tabla[p.id] === false);
+}
+
+/**
+ * El prompt y el negativo que van a ComfyUI: el prefijo y el negativo fijo del perfil, y con el modo seguro sus etiquetas
+ * (y sin las de rating que escribió el refinador), todo sin repetidos. Sin modo seguro no se agrega ni se saca nada de él.
+ */
+function componerPrompt(p, { prompt = '', negativo = '', seguro = false } = {}) {
+  const q = p && p.prompt ? p.prompt : {};
+  const s = seguro && q.seguro ? q.seguro : null;
+  const positivo = s ? quitarEtiquetas(prompt, s.quitar) : prompt;
+  // En el negativo solo sale lo que el modo seguro pide (negar «general» sería pedir lo contrario).
+  const neg = s ? quitarEtiquetas(negativo, s.positivo) : negativo;
+  return {
+    prompt: q.prefijo || s ? unirEtiquetas(q.prefijo, s ? s.positivo : '', positivo) : String(prompt || ''),
+    negativo: q.negativo === 'no' ? '' : q.negativoFijo || s ? unirEtiquetas(q.negativoFijo, s ? s.negativo : '', neg) : String(negativo || '')
+  };
 }
 
 /**
@@ -199,5 +289,6 @@ function perfilDe(imagenes, modelo, catalogo = null, { cargaSugerida = null } = 
 
 module.exports = {
   FAMILIAS, CARGA_DE_FAMILIA, CASOS, PROPORCIONES, ESTILOS, NEGATIVOS, RESERVADAS, RE_ID, MAX_PROPIOS, PERFILES,
-  formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe
+  formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe,
+  MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt
 };

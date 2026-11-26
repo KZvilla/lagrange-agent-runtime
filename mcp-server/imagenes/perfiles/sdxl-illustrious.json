@@ -1,0 +1,40 @@
+{
+  "id": "sdxl-illustrious",
+  "nombre": "Illustrious (WAI)",
+  "plantillas": "sdxl",
+  "carga": {
+    "tipo": "checkpoint"
+  },
+  "prompt": {
+    "estilo": "etiquetas",
+    "reglas": "Illustrious (WAI-illustrious-SDXL): an anime illustration model trained on Danbooru tags.\nWrite Danbooru tags, most important first: the count and subject (1girl, 2boys, solo), the character name with the series in parentheses as on Danbooru (hatsune miku (vocaloid)), then hair, eyes, clothes, pose, expression, setting, lighting and composition (upper body, from above, close-up).\nCharacters and Danbooru artist tags are known: use an artist tag only if the request names that artist or style.\nDo not add quality or aesthetic tags: the system already adds them, and more of them make the image blurry.\nKeep the negative short or empty: long negatives make the image worse.\nIf a character comes out too young for the request, start with (mature female:1.2) or (aged up:1.2).",
+    "tope": 450,
+    "negativo": "opcional",
+    "negativoPorDefecto": "",
+    "pesos": true,
+    "prefijo": "masterpiece, best quality, amazing quality",
+    "negativoFijo": "bad quality, worst quality, worst detail, sketch, censor",
+    "seguro": {
+      "positivo": "general",
+      "negativo": "nsfw",
+      "quitar": "general, sensitive, nsfw, explicit"
+    }
+  },
+  "muestreo": {
+    "pasos": 28,
+    "cfg": 6,
+    "guia": null,
+    "sampler": "euler_ancestral",
+    "scheduler": "normal",
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
+  },
+  "medidas": {
+    "1:1": [1088, 1088],
+    "3:4": [1024, 1344],
+    "4:3": [1344, 1024],
+    "16:9": [1536, 896],
+    "9:16": [896, 1536]
+  },
+  "casos": ["nueva", "variacion", "retoque"]
+}

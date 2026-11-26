@@ -68,9 +68,29 @@ function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
     lineas.push(`  Weights like (word:1.2) are ${p.pesos ? 'allowed' : 'not allowed'}.`);
     lineas.push(`  ${p.negativo === 'no' ? 'This model has no negative prompt: leave "negativo" empty.' : p.negativo === 'si' ? 'Write a "negativo".' : 'Write a "negativo" only if something specific must be avoided.'}`);
     lineas.push(`  Its ${caso === 'edicion' ? '"instruccion"' : '"prompt"'} has at most ${d.tope} characters.`);
+    for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
     if (d.huecos && d.loras.length) lineas.push(`  LoRAs you may add to "loras" (at most ${d.huecos}, only when the request asks for that look): ${d.loras.map((l) => `"${l.clave}"`).join(', ')}.`);
   }
   return lineas.join('\n');
+}
+
+/**
+ * FEAT-216 — Lo que el sistema agrega por su cuenta (el prefijo, el negativo fijo, el modo seguro), para que el refinador no
+ * lo escriba. Con el modo seguro apagado, el rating lo elige el refinador entre las etiquetas del perfil.
+ */
+function lineasFijas(p, seguro) {
+  const salida = [];
+  if (p.prefijo) salida.push(`The system starts the prompt with "${p.prefijo}" by itself: do not write those tags.`);
+  if (p.negativoFijo && p.negativo !== 'no') salida.push(`The system adds "${p.negativoFijo}" to the negative by itself: do not repeat those tags.`);
+  const s = p.seguro;
+  if (s && seguro) {
+    const neg = s.negativo && p.negativo !== 'no' ? ` and "${s.negativo}" to the negative` : '';
+    salida.push(`Safe for work only: the system adds "${s.positivo}" to the prompt${neg}. Do not write rating tags${s.quitar ? ` (${s.quitar})` : ''}, and keep the image safe for work.`);
+  } else if (s) {
+    const opciones = [...new Set([s.positivo, s.quitar].join(', ').split(',').map((x) => x.trim()).filter(Boolean))];
+    if (opciones.length) salida.push(`Rating: write the one rating tag that fits the request, from: ${opciones.join(', ')}.`);
+  }
+  return salida;
 }
 
 /** Saca los cercos de código (```json … ```) y parsea. `null` si no es un objeto. */

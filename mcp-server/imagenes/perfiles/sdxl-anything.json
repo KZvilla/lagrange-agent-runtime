@@ -1,0 +1,40 @@
+{
+  "id": "sdxl-anything",
+  "nombre": "Anything XL",
+  "plantillas": "sdxl",
+  "carga": {
+    "tipo": "checkpoint"
+  },
+  "prompt": {
+    "estilo": "etiquetas",
+    "reglas": "Anything XL: an anime model (a merge of several anime SDXL models) that reads Danbooru tags.\nOrder: the character name, then the series (copyright), then Danbooru tags with as much detail as the request gives: count and subject (1girl, solo), hair, eyes, clothes, pose, expression, setting, lighting, composition. Never only \"1girl\": describe the picture.\nYear tags change the drawing style: the system adds newest; add recent, mid, early or old only to ask for an older style.\nSome tags may be weak in this model: if one detail matters most, weight it up to 1.5, like (red scarf:1.4).\nDo not add quality words: the system already adds them. Never use high weights in the negative.",
+    "tope": 450,
+    "negativo": "opcional",
+    "negativoPorDefecto": "",
+    "pesos": true,
+    "prefijo": "masterpiece, best quality, newest",
+    "negativoFijo": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name",
+    "seguro": {
+      "positivo": "safe",
+      "negativo": "nsfw",
+      "quitar": "safe, sensitive, nsfw, explicit"
+    }
+  },
+  "muestreo": {
+    "pasos": 20,
+    "cfg": 7,
+    "guia": null,
+    "sampler": "euler_ancestral",
+    "scheduler": "normal",
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
+  },
+  "medidas": {
+    "1:1": [1024, 1024],
+    "3:4": [960, 1280],
+    "4:3": [1280, 960],
+    "16:9": [1536, 896],
+    "9:16": [960, 1536]
+  },
+  "casos": ["nueva", "variacion", "retoque"]
+}

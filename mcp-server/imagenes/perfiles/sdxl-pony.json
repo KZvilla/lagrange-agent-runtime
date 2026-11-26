@@ -1,0 +1,40 @@
+{
+  "id": "sdxl-pony",
+  "nombre": "Pony V6",
+  "plantillas": "sdxl",
+  "carga": {
+    "tipo": "checkpoint"
+  },
+  "prompt": {
+    "estilo": "etiquetas",
+    "reglas": "Pony Diffusion V6 XL: an SDXL finetune for anime, cartoon, furry and pony art (humanoid, anthro and feral characters).\nStart with one source tag that matches the requested look: source_anime, source_cartoon, source_furry or source_pony.\nThen describe what is wanted in one short plain-English phrase, then add comma-separated tags for the details: character, series, clothes, pose, expression, setting, lighting, framing.\nPopular and obscure characters and series are known by name. Artist names are NOT known: never use them; describe the style instead.\nNever add quality words (masterpiece, best quality, high quality, hd, 4k, 8k): the system already adds the score tags.\nKeep it under about 60 words.\nThe model rarely needs a negative prompt: write one only for something specific that must not appear, such as signature or text.",
+    "tope": 450,
+    "negativo": "opcional",
+    "negativoPorDefecto": "",
+    "pesos": true,
+    "prefijo": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up",
+    "negativoFijo": "",
+    "seguro": {
+      "positivo": "rating_safe",
+      "negativo": "rating_explicit, rating_questionable",
+      "quitar": "rating_safe, rating_questionable, rating_explicit, nsfw, explicit"
+    }
+  },
+  "muestreo": {
+    "pasos": 25,
+    "cfg": 7,
+    "guia": null,
+    "sampler": "euler_ancestral",
+    "scheduler": "normal",
+    "fuerza": 0.6,
+    "fuerzaRetoque": 0.9
+  },
+  "medidas": {
+    "1:1": [1024, 1024],
+    "3:4": [896, 1152],
+    "4:3": [1152, 896],
+    "16:9": [1344, 768],
+    "9:16": [768, 1344]
+  },
+  "casos": ["nueva", "variacion", "retoque"]
+}

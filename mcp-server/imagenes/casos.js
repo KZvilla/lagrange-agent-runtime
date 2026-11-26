@@ -123,7 +123,9 @@ function disponiblesDe(imagenes, { desdeFoto = false, catalogo = null, manual = 
     salida[caso] = {
       proveedores, afuera, modelo: e.modelo, perfil: e.perfil, huecos: conComfy ? e.resuelto.huecos.length : 0,
       loras: conComfy && e.resuelto.huecos.length ? lorasDe(imagenes, e.perfil.plantillas) : [],
-      tope: topeDelPrompt(proveedores, e.perfil), motivo, resuelto: conComfy ? e.resuelto : null
+      tope: topeDelPrompt(proveedores, e.perfil), motivo, resuelto: conComfy ? e.resuelto : null,
+      // FEAT-216 — Con ComfyUI: lo que el sistema agrega al prompt (la consigna se lo dice al refinador).
+      seguro: perfiles.seguroActivo(imagenes, e.perfil)
     };
   }
   return salida;
