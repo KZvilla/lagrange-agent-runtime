@@ -61,7 +61,7 @@ async function main() {
   await group('Los perfiles: el esquema, campo por campo', () => {
     const base = () => { const { id, ...r } = copia(P.PERFILES.get('sdxl')); return r; };
     const con = (f) => { const p = base(); f(p); return P.validarPerfil('mio', p); };
-    check('los seis del plugin valen', P.PERFILES.size === 6 && [...P.PERFILES].every(([id, p]) => P.validarPerfil(id, copia(p)).ok));
+    check('los nueve del plugin valen (FEAT-216: tres de anime)', P.PERFILES.size === 9 && [...P.PERFILES].every(([id, p]) => P.validarPerfil(id, copia(p)).ok));
     const malos = [
       ['medidas.1:1', (p) => { p.medidas['1:1'] = [1000.5, 1024]; }], ['medidas.1:1', (p) => { p.medidas['1:1'] = [128, 1024]; }], ['medidas.1:1', (p) => { p.medidas['1:1'] = [1000, 1024]; }],
       ['medidas.1:1', (p) => { p.medidas['1:1'] = [2048, 2048]; }], ['medidas.3:4', (p) => { delete p.medidas['3:4']; }], ['medidas.2:1', (p) => { p.medidas['2:1'] = [1024, 512]; }],
@@ -545,13 +545,13 @@ async function main() {
     const l = A.leerImagenes(datos);
     const vista = { ok: true, versiones: { imagenes: 'v' }, imagenes: { ...l.imagenes, flujos: l.flujos, perfiles: l.perfiles, vistaFlujos: l.vistaFlujos, invalidos: l.invalidos } };
     const get = ajustesV2(vista, { completo: true }).imagenes;
-    check('el GET: lo nuevo', get.comfyui.flujos.sdxl.nueva.salida === '9' && get.comfyui.loras[0].clave === 'x' && get.perfiles.length === 6 && get.invalidos.length === 1 && get.reconocer_telegram === true);
+    check('el GET: lo nuevo', get.comfyui.flujos.sdxl.nueva.salida === '9' && get.comfyui.loras[0].clave === 'x' && get.perfiles.length === 9 && get.invalidos.length === 1 && get.reconocer_telegram === true);
     check('el GET: lo de antes', get.comfyui.pasos === 30 && get.flujos.txt2img.ok === true && get.comfyui.flujo_txt2img === barras(ok));
     check('vistaFlujos: el propio con su ruta, la plantilla sin', get.vistaFlujos.nueva.archivo === barras(ok) && get.vistaFlujos.variacion.archivo === null && get.vistaFlujos.variacion.nombre === 'sdxl/variacion' && !JSON.stringify(get).includes(barras(F.DIR_PLANTILLAS)) && !JSON.stringify(get).includes('telegram-bridge'));
     check('vistaFlujos: huecos, salidas y motivo', get.vistaFlujos.variacion.huecosLora === 4 && get.vistaFlujos.nueva.salidas.join() === '9' && get.vistaFlujos.edicion.motivo === 'falta el modelo' && !get.vistaFlujos.edicion.ok);
     check('la respuesta de guardar no trae lo de solo lectura', !('perfiles' in ajustesRespuestaV2(vista, { guardar: true }).imagenes) && !('vistaFlujos' in ajustesRespuestaV2(vista, { guardar: true }).imagenes));
     const c409 = ajustesRespuestaV2({ ok: false, codigo: 409, error: 'x', conflictos: ['imagenes'], estado: vista }, { guardar: true });
-    check('el estado de un 409 sí', c409.estado.imagenes.perfiles.length === 6 && Boolean(c409.estado.imagenes.vistaFlujos) && Array.isArray(c409.estado.imagenes.invalidos));
+    check('el estado de un 409 sí', c409.estado.imagenes.perfiles.length === 9 && Boolean(c409.estado.imagenes.vistaFlujos) && Array.isArray(c409.estado.imagenes.invalidos));
     check('validarPedidoV2 acepta lo nuevo y rechaza lo de solo lectura', validarPedidoV2({ imagenes: { perfiles_propios: {}, reconocer_telegram: true, comfyui: {} } }) === null && validarPedidoV2({ imagenes: { perfiles: [] } }).codigo === 400);
     check('cada motivo llega a la vista', (() => {
       fs.writeFileSync(path.join(dir, 'v2.json'), '{');

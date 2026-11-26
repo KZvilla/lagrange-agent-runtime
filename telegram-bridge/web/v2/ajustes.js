@@ -230,7 +230,12 @@ function perfilImagenV2(id, p) {
   return {
     id, nombre: texto(o.nombre, 40), plantillas: FAMILIAS_IMAGEN.includes(o.plantillas) ? o.plantillas : null,
     carga: { tipo: c.tipo === 'unet' ? 'unet' : 'checkpoint', ...Object.fromEntries(['clip1', 'clip2', 'vae'].filter((k) => texto(c[k], 200)).map((k) => [k, c[k]])) },
-    prompt: { estilo: texto(q.estilo, 20), reglas: texto(q.reglas, 4000), tope: numero(q.tope), negativo: texto(q.negativo, 20), negativoPorDefecto: texto(q.negativoPorDefecto, 500), pesos: q.pesos === true },
+    prompt: {
+      estilo: texto(q.estilo, 20), reglas: texto(q.reglas, 4000), tope: numero(q.tope), negativo: texto(q.negativo, 20), negativoPorDefecto: texto(q.negativoPorDefecto, 500), pesos: q.pesos === true,
+      // FEAT-216
+      prefijo: texto(q.prefijo, 300) || '', negativoFijo: texto(q.negativoFijo, 300) || '',
+      seguro: esObjeto(q.seguro) ? { positivo: texto(q.seguro.positivo, 200) || '', negativo: texto(q.seguro.negativo, 200) || '', quitar: texto(q.seguro.quitar, 200) || '' } : null
+    },
     muestreo: { pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza), fuerzaRetoque: numero(s.fuerzaRetoque) },
     medidas: Object.fromEntries(PROPORCIONES_IMAGEN.filter((k) => Array.isArray(m[k]) && m[k].length === 2).map((k) => [k, [numero(m[k][0]), numero(m[k][1])]])),
     casos: (Array.isArray(o.casos) ? o.casos : []).filter((x) => CASOS_IMAGEN.includes(x))
@@ -246,15 +251,19 @@ function arranqueV2(a) {
   };
 }
 
+/** FEAT-216 — Cuántos perfiles (y tablas de flujos) salen: los 9 del plugin y los 20 propios, con margen. */
+const TOPE_PERFILES = 40;
+
 /** FEAT-212 — Lo que suma `imagenes.comfyui`. Los flujos propios son rutas que eligió el usuario. */
 function comfyuiV2(c) {
   const perfilDe = Object.entries(esObjeto(c.perfil_de) ? c.perfil_de : {}).filter(([k, v]) => k.length <= 200 && typeof v === 'string' && RE_PERFIL.test(v)).slice(0, 50);
-  const flujos = Object.entries(esObjeto(c.flujos) ? c.flujos : {}).filter(([id, v]) => RE_PERFIL.test(id) && esObjeto(v)).slice(0, 26).map(([id, porCaso]) => [
+  const seguroDe = Object.entries(esObjeto(c.seguro_de) ? c.seguro_de : {}).filter(([k, v]) => RE_PERFIL.test(k) && typeof v === 'boolean').slice(0, TOPE_PERFILES);
+  const flujos = Object.entries(esObjeto(c.flujos) ? c.flujos : {}).filter(([id, v]) => RE_PERFIL.test(id) && esObjeto(v)).slice(0, TOPE_PERFILES).map(([id, porCaso]) => [
     id, Object.fromEntries(CASOS_IMAGEN.filter((k) => Object.hasOwn(porCaso, k) && esObjeto(porCaso[k]) && texto(porCaso[k].archivo, 500)).map((k) => [k, { archivo: porCaso[k].archivo, salida: texto(porCaso[k].salida, 40) }]))
   ]);
   return {
     modelo_edicion: texto(c.modelo_edicion, 200), modelo_retoque: texto(c.modelo_retoque, 200),
-    perfil_de: Object.fromEntries(perfilDe), flujos: Object.fromEntries(flujos),
+    perfil_de: Object.fromEntries(perfilDe), seguro_de: Object.fromEntries(seguroDe), flujos: Object.fromEntries(flujos),
     mascara: ['florence2', 'sam2', 'no'].includes(c.mascara) ? c.mascara : 'florence2', retoque: ['crop-stitch', 'fill', 'no'].includes(c.retoque) ? c.retoque : 'crop-stitch',
     chequeo_zona: c.chequeo_zona !== false, loras_activos: c.loras_activos !== false, arranque: arranqueV2(c.arranque),
     loras: (Array.isArray(c.loras) ? c.loras : []).filter((l) => esObjeto(l) && texto(l.archivo, 200) && texto(l.clave, 30)).slice(0, 20).map((l) => ({
@@ -268,7 +277,7 @@ function soloLecturaImagenesV2(i) {
   const o = esObjeto(i) ? i : {};
   const vista = esObjeto(o.vistaFlujos) ? o.vistaFlujos : {};
   return {
-    perfiles: (Array.isArray(o.perfiles) ? o.perfiles : []).slice(0, 26).map((p) => { const v = perfilImagenV2(p && p.id, p); return v && { ...v, origen: ['plugin', 'copia', 'propio'].includes(p.origen) ? p.origen : 'plugin' }; }).filter(Boolean),
+    perfiles: (Array.isArray(o.perfiles) ? o.perfiles : []).slice(0, TOPE_PERFILES).map((p) => { const v = perfilImagenV2(p && p.id, p); return v && { ...v, origen: ['plugin', 'copia', 'propio'].includes(p.origen) ? p.origen : 'plugin' }; }).filter(Boolean),
     vistaFlujos: Object.fromEntries(CASOS_IMAGEN.filter((k) => esObjeto(vista[k])).map((k) => {
       const f = vista[k];
       return [k, {

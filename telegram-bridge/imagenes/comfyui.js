@@ -73,18 +73,20 @@ export { TOPE_BYTES, leerHasta, medidasDe, tipoDe, extDe };
  * FEAT-214 — Los datos de los marcadores de un pedido: lo del perfil (muestreo y carga) y lo del pedido. La semilla, la que
  * viene o una al azar.
  */
-export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [] }) {
+export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [], seguro = false }) {
   const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
   const m = perfil.muestreo;
+  // FEAT-216 — El prefijo y el negativo fijo del perfil, y el modo seguro: sin etiquetas repetidas.
+  const final = perfilesLib.componerPrompt(perfil, { prompt, negativo, seguro });
   const datos = {
-    prompt, negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
+    prompt: final.prompt, negativo: final.negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
     ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
   };
   if (caso === 'retoque') datos.zona = zona;
   if (caso === 'edicion') {
-    datos.instruccion = instruccion;
+    datos.instruccion = perfilesLib.componerPrompt(perfil, { prompt: instruccion, negativo, seguro }).prompt;
     // Un flujo de edición que solo tiene {{prompt}} recibe la instrucción ahí.
-    if (!marcadores.includes('instruccion')) datos.prompt = instruccion;
+    if (!marcadores.includes('instruccion')) datos.prompt = perfilesLib.componerPrompt(perfil, { prompt: instruccion, negativo, seguro }).prompt;
   }
   return datos;
 }
@@ -97,7 +99,7 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
 export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = {}, loras = [], catalogo = null, plantilla = null, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), log = () => {} }) {
   const resuelto = plantilla ? flujosLib.resolverPlantillaTaller(perfil, plantilla) : resolverFlujo(seccion, perfil, caso);
   if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
-  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores });
+  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores, seguro: perfilesLib.seguroActivo(seccion, perfil) });
   // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
   const usadas = [];
   for (const l of loras.slice(0, resuelto.huecos.length)) {

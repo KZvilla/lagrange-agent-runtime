@@ -17,6 +17,7 @@
 
 const visionReal = require('./vision.js');
 const casos = require('./casos.js');
+const perfilesLib = require('./perfiles.js');
 
 const { PROPORCIONES, CASOS } = casos;
 
@@ -26,6 +27,9 @@ const ESTILOS = Object.freeze({
   natural: 'Write one or two plain English sentences describing subject, setting, lighting and style. No tag lists, no weights.',
   instruccion: 'Write one imperative instruction that says what to change and what to keep, for example "change the hat to red, keep everything else". Do not describe the whole image.'
 });
+
+/** FEAT-216 — La línea de etiquetas de un perfil con prefijo: sin etiquetas de calidad (las pone el sistema). */
+const ESTILO_CON_PREFIJO = 'Write comma-separated tags and short phrases, most important first. Do not write quality tags. Use (word:1.2) weights only if the profile allows them.';
 
 /** Qué es cada caso, para que el modelo elija. */
 const QUE_ES = Object.freeze({
@@ -63,14 +67,38 @@ function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
     lineas.push(`- ${caso}: ${QUE_ES[caso]}. ${hay ? 'Available.' : 'Not available now.'}`);
     if (!hay) continue;
     const p = d.perfil.prompt;
-    lineas.push(`  Model profile: ${d.perfil.nombre}. ${ESTILOS[p.estilo]}`);
+    // FEAT-216 — Con prefijo, la calidad la pone el sistema: la línea de estilo no la pide.
+    const estilo = p.prefijo && p.estilo === 'etiquetas' ? ESTILO_CON_PREFIJO : ESTILOS[p.estilo];
+    lineas.push(`  Model profile: ${d.perfil.nombre}. ${estilo}`);
     if (p.reglas) for (const l of p.reglas.split('\n')) lineas.push(`  ${l}`);
     lineas.push(`  Weights like (word:1.2) are ${p.pesos ? 'allowed' : 'not allowed'}.`);
     lineas.push(`  ${p.negativo === 'no' ? 'This model has no negative prompt: leave "negativo" empty.' : p.negativo === 'si' ? 'Write a "negativo".' : 'Write a "negativo" only if something specific must be avoided.'}`);
     lineas.push(`  Its ${caso === 'edicion' ? '"instruccion"' : '"prompt"'} has at most ${d.tope} characters.`);
+    // FEAT-216 — Solo si ComfyUI puede hacerlo: es el único que agrega el prefijo y el modo seguro.
+    if (d.resuelto) for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
     if (d.huecos && d.loras.length) lineas.push(`  LoRAs you may add to "loras" (at most ${d.huecos}, only when the request asks for that look): ${d.loras.map((l) => `"${l.clave}"`).join(', ')}.`);
   }
   return lineas.join('\n');
+}
+
+/**
+ * FEAT-216 — Lo que el sistema agrega por su cuenta (el prefijo, el negativo fijo, el modo seguro), para que el refinador no
+ * lo escriba. Con el modo seguro apagado, el rating lo elige el refinador entre las etiquetas del perfil.
+ */
+function lineasFijas(p, seguro) {
+  const salida = [];
+  if (p.prefijo) salida.push(`The system starts the prompt with "${p.prefijo}" by itself: do not write those tags.`);
+  if (p.negativoFijo && p.negativo !== 'no') salida.push(`The system adds "${p.negativoFijo}" to the negative by itself: do not repeat those tags.`);
+  const s = p.seguro;
+  if (s && seguro) {
+    const partes = [s.positivo ? `"${s.positivo}" to the prompt` : '', s.negativo && p.negativo !== 'no' ? `"${s.negativo}" to the negative` : ''].filter(Boolean);
+    const agrega = partes.length ? ` the system adds ${partes.join(' and ')}.` : '';
+    salida.push(`Safe for work only:${agrega} Do not write rating tags${s.quitar ? ` (${s.quitar})` : ''}, and keep the image safe for work.`);
+  } else if (s) {
+    const opciones = perfilesLib.etiquetasDe(perfilesLib.unirEtiquetas(s.positivo, s.quitar));
+    if (opciones.length) salida.push(`Rating: write the one rating tag that fits the request, from: ${opciones.join(', ')}.`);
+  }
+  return salida;
 }
 
 /** Saca los cercos de código (```json … ```) y parsea. `null` si no es un objeto. */

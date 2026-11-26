@@ -89,7 +89,7 @@ function defectos() {
     tope_por_alma: RANGOS.tope_por_alma.defecto,
     perfiles_propios: {},
     comfyui: {
-      url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, flujos: {},
+      url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, seguro_de: {}, flujos: {},
       mascara: 'florence2', retoque: 'crop-stitch', chequeo_zona: true, loras: [], loras_activos: true,
       tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true,
       arranque: { carpeta: null, automatico: true, apagar_min: RANGOS.apagar_min.defecto, espera_s: RANGOS.espera_s.defecto, flags: [] }
@@ -114,6 +114,9 @@ const RE_CLAVE_LORA = /^[\p{L}\p{N}][\p{L}\p{N} _.-]{0,29}$/u;
 const reservada = (k) => perfiles.RESERVADAS.includes(k);
 const conClave = (o, k, v) => Object.fromEntries([...Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k), [k, v]]);
 const sinClave = (o, k) => Object.fromEntries(Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k));
+
+/** FEAT-216 — Cuántos perfiles pueden tener el modo seguro elegido (los del plugin y los propios). */
+const MAX_SEGURO_DE = 40;
 
 /** El nombre de un modelo, como clave de `perfil_de`: `null` si vale, o el motivo. */
 function formaDeClaveDeModelo(k) {
@@ -271,6 +274,20 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
             else validos.push([k, v]);
           }
           d.comfyui.perfil_de = Object.fromEntries(validos);
+        }
+      }
+      // FEAT-216 — «Solo contenido seguro» por perfil: { <perfil>: false } lo apaga (sin entrada, prendido).
+      if (c.seguro_de !== undefined && c.seguro_de !== null) {
+        if (!esObjeto(c.seguro_de)) invalido('comfyui.seguro_de', 'tiene que ser un objeto { perfil: true|false }');
+        else {
+          const validos = [];
+          for (const [k, v] of Object.entries(c.seguro_de)) {
+            if (!perfiles.RE_ID.test(k) || reservada(k)) invalido(`comfyui.seguro_de.${k}`, 'tiene que ser el id de un perfil');
+            else if (typeof v !== 'boolean') invalido(`comfyui.seguro_de.${k}`, 'tiene que ser true o false');
+            else if (validos.length >= MAX_SEGURO_DE) invalido(`comfyui.seguro_de.${k}`, `pasa las ${MAX_SEGURO_DE} entradas`);
+            else validos.push([k, v]);
+          }
+          d.comfyui.seguro_de = Object.fromEntries(validos);
         }
       }
       if (c.flujos !== undefined && c.flujos !== null) {
@@ -521,7 +538,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
   if (pedido.comfyui !== undefined) {
     const c = pedido.comfyui;
     if (!esObjeto(c)) throw new ErrorAjuste('imagenes.comfyui tiene que ser un objeto', 'imagenes.comfyui');
-    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque', ...migracion.LEGADAS];
+    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'seguro_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque', ...migracion.LEGADAS];
     for (const k of Object.keys(c)) if (!permitidos.includes(k)) throw new ErrorAjuste(`imagenes.comfyui.${k} no está permitido`, `imagenes.comfyui.${k}`);
     let sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
     const quitar = (k) => { delete sal[k]; };
@@ -617,6 +634,22 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       }
       if (Object.keys(tabla).length > migracion.MAX_PERFIL_DE) throw new ErrorAjuste(`Hasta ${migracion.MAX_PERFIL_DE} modelos con perfil asignado`, 'imagenes.comfyui.perfil_de');
       if (Object.keys(tabla).length) sal.perfil_de = tabla; else quitar('perfil_de');
+    }
+    if (c.seguro_de !== undefined) {
+      if (c.seguro_de !== null && !esObjeto(c.seguro_de)) throw new ErrorAjuste('imagenes.comfyui.seguro_de tiene que ser un objeto { perfil: true|false }', 'imagenes.comfyui.seguro_de');
+      const e = efectiva();
+      let tabla = c.seguro_de === null ? {} : esObjeto(sal.seguro_de) ? sal.seguro_de : {};
+      for (const [k, v] of Object.entries(c.seguro_de || {})) {
+        const campo = `imagenes.comfyui.seguro_de.${k}`;
+        // Quitar vale siempre, también una clave que ya no vale (editada a mano).
+        if (v === null) { tabla = sinClave(tabla, k); continue; }
+        if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`seguro_de: "${k}" no es el id de un perfil`, campo);
+        if (typeof v !== 'boolean') throw new ErrorAjuste('seguro_de: tiene que ser true o false', campo);
+        if (!perfiles.perfil(e, k)) throw new ErrorAjuste(`seguro_de: "${k}" no es un perfil que exista`, campo);
+        tabla = conClave(tabla, k, v);
+      }
+      if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con el modo seguro elegido`, 'imagenes.comfyui.seguro_de');
+      if (Object.keys(tabla).length) sal.seguro_de = tabla; else quitar('seguro_de');
     }
     // Los campos de Desktop v0.21.1: se traducen con la misma función que la migración.
     const legado = Object.fromEntries(migracion.LEGADAS.filter((k) => c[k] !== undefined).map((k) => [k, c[k]]));
