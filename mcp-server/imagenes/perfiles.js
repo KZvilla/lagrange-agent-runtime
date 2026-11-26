@@ -264,9 +264,20 @@ function unirEtiquetas(...partes) {
   return salida.join(', ');
 }
 
-/** El texto sin las etiquetas de la lista `quitar` (también las de un grupo). */
+/** Las claves de un texto de etiquetas, con las de cada grupo por separado. */
+function clavesDe(texto) {
+  const salida = [];
+  for (const e of etiquetasDe(texto)) {
+    const g = grupoDe(e);
+    if (g) salida.push(...g.partes.flatMap((x) => clavesDe(x)));
+    else salida.push(claveEtiqueta(e));
+  }
+  return salida.filter(Boolean);
+}
+
+/** El texto sin las etiquetas de la lista `quitar` (también las de un grupo, de los dos lados). */
 function quitarEtiquetas(texto, quitar) {
-  const lista = new Set(etiquetasDe(quitar).map(claveEtiqueta));
+  const lista = new Set(clavesDe(quitar));
   if (!lista.size) return String(texto || '');
   return etiquetasDe(texto).map((e) => filtrarEtiqueta(e, (k) => lista.has(k))).filter(Boolean).join(', ');
 }

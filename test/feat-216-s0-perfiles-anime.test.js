@@ -241,6 +241,17 @@ async function main() {
     check('quitar una entrada vieja vale aunque el perfil ya no exista', !tira(() => A.aplicarImagenes({ imagenes: { comfyui: { seguro_de: { viejo: false } } } }, { comfyui: { seguro_de: { viejo: null } } })));
   });
 
+  await group('Ronda 3: grupos en quitar y en el prefijo, quitar una clave inválida', async () => {
+    const d = A.defectos();
+    check('un grupo en quitar saca sus partes', P.quitarEtiquetas('1girl, (nsfw:1.2, explicit:1.3), smile', '(nsfw, explicit)') === '1girl, smile');
+    const mio = { ...copia(P.PERFILES.get('sdxl')), id: 'mio', prompt: { ...copia(P.PERFILES.get('sdxl').prompt), prefijo: '(masterpiece, best quality:1.2)' } };
+    const compuesto = P.componerPrompt(mio, { prompt: '1girl, smile' }).prompt;
+    check('un prefijo en grupo sale con sinFijas', compuesto === '(masterpiece, best quality:1.2), 1girl, smile' && P.sinFijas(mio, compuesto) === '1girl, smile');
+    const sucio = { imagenes: { comfyui: { seguro_de: { 'Sdxl-Pony': false } } } };
+    const r = tira(() => A.aplicarImagenes(sucio, { comfyui: { seguro_de: { 'Sdxl-Pony': null } } }));
+    check('null quita también una clave inválida', !r);
+  });
+
   report();
 }
 

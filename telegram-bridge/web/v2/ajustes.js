@@ -257,7 +257,7 @@ const TOPE_PERFILES = 40;
 /** FEAT-212 — Lo que suma `imagenes.comfyui`. Los flujos propios son rutas que eligió el usuario. */
 function comfyuiV2(c) {
   const perfilDe = Object.entries(esObjeto(c.perfil_de) ? c.perfil_de : {}).filter(([k, v]) => k.length <= 200 && typeof v === 'string' && RE_PERFIL.test(v)).slice(0, 50);
-  const seguroDe = Object.entries(esObjeto(c.seguro_de) ? c.seguro_de : {}).filter(([k, v]) => RE_PERFIL.test(k) && typeof v === 'boolean').slice(0, 40);
+  const seguroDe = Object.entries(esObjeto(c.seguro_de) ? c.seguro_de : {}).filter(([k, v]) => RE_PERFIL.test(k) && typeof v === 'boolean').slice(0, TOPE_PERFILES);
   const flujos = Object.entries(esObjeto(c.flujos) ? c.flujos : {}).filter(([id, v]) => RE_PERFIL.test(id) && esObjeto(v)).slice(0, TOPE_PERFILES).map(([id, porCaso]) => [
     id, Object.fromEntries(CASOS_IMAGEN.filter((k) => Object.hasOwn(porCaso, k) && esObjeto(porCaso[k]) && texto(porCaso[k].archivo, 500)).map((k) => [k, { archivo: porCaso[k].archivo, salida: texto(porCaso[k].salida, 40) }]))
   ]);

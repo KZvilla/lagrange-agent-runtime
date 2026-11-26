@@ -115,10 +115,10 @@ const reservada = (k) => perfiles.RESERVADAS.includes(k);
 const conClave = (o, k, v) => Object.fromEntries([...Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k), [k, v]]);
 const sinClave = (o, k) => Object.fromEntries(Object.entries(esObjeto(o) ? o : {}).filter(([x]) => x !== k));
 
-/** El nombre de un modelo, como clave de `perfil_de`: `null` si vale, o el motivo. */
 /** FEAT-216 — Cuántos perfiles pueden tener el modo seguro elegido (los del plugin y los propios). */
 const MAX_SEGURO_DE = 40;
 
+/** El nombre de un modelo, como clave de `perfil_de`: `null` si vale, o el motivo. */
 function formaDeClaveDeModelo(k) {
   if (reservada(k)) return 'no es un nombre de modelo';
   return perfiles.formaDeArchivo(k, MAX_TEXTO);
@@ -641,8 +641,9 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       let tabla = c.seguro_de === null ? {} : esObjeto(sal.seguro_de) ? sal.seguro_de : {};
       for (const [k, v] of Object.entries(c.seguro_de || {})) {
         const campo = `imagenes.comfyui.seguro_de.${k}`;
-        if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`seguro_de: "${k}" no es el id de un perfil`, campo);
+        // Quitar vale siempre, también una clave que ya no vale (editada a mano).
         if (v === null) { tabla = sinClave(tabla, k); continue; }
+        if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`seguro_de: "${k}" no es el id de un perfil`, campo);
         if (typeof v !== 'boolean') throw new ErrorAjuste('seguro_de: tiene que ser true o false', campo);
         if (!perfiles.perfil(e, k)) throw new ErrorAjuste(`seguro_de: "${k}" no es un perfil que exista`, campo);
         tabla = conClave(tabla, k, v);
