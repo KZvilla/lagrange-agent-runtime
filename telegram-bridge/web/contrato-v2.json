@@ -132,6 +132,10 @@
             "versiones": {
               "type": "boolean",
               "description": "FEAT-215 — true si este daemon numera las imágenes y tiene …:variar y …:partir. Un nodo, false."
+            },
+            "taller": {
+              "type": "boolean",
+              "description": "FEAT-214 — true si este daemon tiene el taller (POST /taller:abrir y lo demás). Un nodo, false."
             }
           }
         },
@@ -468,12 +472,18 @@
                 },
                 "desde": {
                   "type": "array",
-                  "items": { "type": "integer", "minimum": 1 },
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "description": "FEAT-215 — Los números de las imágenes de las que parte."
                 },
                 "candidatas": {
                   "type": "array",
-                  "items": { "type": "integer", "minimum": 1 },
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "description": "FEAT-215 — Con detalle cual-version, los números entre los que hay que elegir."
                 }
               },
@@ -1159,6 +1169,8 @@
             "turno.imagen",
             "imagenes.cambio",
             "comfyui.estado",
+            "taller.preparado",
+            "taller.imagen",
             "memoria.cambio",
             "consolidacion.fin",
             "carriles",
@@ -2001,6 +2013,66 @@
         "alma": {
           "type": "string",
           "maxLength": 64
+        }
+      }
+    },
+    "taller.imagen": {
+      "type": "object",
+      "required": [
+        "sesion",
+        "id",
+        "estado"
+      ],
+      "additionalProperties": false,
+      "description": "FEAT-214 — Una imagen del taller cambió: llegó (lista o error), se la quedó el usuario o la descartó. Tema salud.",
+      "properties": {
+        "sesion": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "estado": {
+          "type": "string",
+          "enum": [
+            "lista",
+            "error",
+            "quedada",
+            "descartada"
+          ]
+        }
+      }
+    },
+    "taller.preparado": {
+      "type": "object",
+      "required": [
+        "alma",
+        "tareaId",
+        "ok"
+      ],
+      "additionalProperties": false,
+      "description": "FEAT-214 — «Que lo prepare el alma»: el preparado de ese turno (id) o por qué no (codigo). Tema sujeto:<alma>.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "alma": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "tareaId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "codigo": {
+          "type": "string",
+          "maxLength": 40
         }
       }
     }

@@ -58,7 +58,9 @@ const EXT = Object.freeze({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp
 export function crearColaImagenes({
   registro, proveedor, leerConfig = () => disponible.leerImagenes(), refinador = refinadorReal, vision = visionReal,
   catalogoDe = (url) => catalogos.catalogoDe(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined,
-  comfy = null, dirAdjuntos = () => null, fotosEnUso = () => [], alCambiar = () => {}
+  comfy = null, dirAdjuntos = () => null, fotosEnUso = () => [], alCambiar = () => {},
+  // FEAT-214 — `preparar(datos)` → `{ ok, id }` y `fallo({ tareaId, clave, codigo })`: «Que lo prepare el alma».
+  taller = null
 }) {
   const pendientes = [];
   const esperando = new Set();
@@ -102,6 +104,7 @@ export function crearColaImagenes({
     if (job.cerrado) return;
     job.cerrado = true;
     transicionImagen(job.tareaId, job.n, { estado: 'error', codigo, mensaje: codigos.mensajeDe(codigo, extra), terminada: ahora().toISOString() });
+    if (job.destino === 'taller' && taller) { try { taller.fallo({ tareaId: job.tareaId, clave: job.clave, codigo }); } catch {} }
     if (job.envio) Promise.resolve().then(() => job.envio({ ok: false, n: job.n, codigo, mensaje: codigos.mensajeDe(codigo, extra) })).catch(() => {});
   }
 
@@ -321,6 +324,8 @@ export function crearColaImagenes({
       } : null), env);
     } catch {}
     transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null, desdeFoto, cambio: cuanto || undefined, fuerza: fuerza ?? undefined });
+    // FEAT-214 — «Que lo prepare el alma»: no se genera. Queda un preparado para abrir en el taller, solo si lo puede ComfyUI.
+    if (job.destino === 'taller') return prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza });
     const tmp = indice.dirTmp(job.clave, env);
     fs.mkdirSync(tmp, { recursive: true });
     const intentos = [];
@@ -387,17 +392,14 @@ export function crearColaImagenes({
       }
     }
     indice.actualizar(job.clave, job.tareaId, job.n, (p) => ({
-      ...(p || {}), archivo: final, tipo, fotoRuta: job.foto ? job.foto.ruta : null, fotoSegura: Boolean(job.foto && job.foto.segura),
-      hilo: job.hilo || null, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla ?? null,
-      perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
-      // FEAT-213 — Lo que muestra la galería cuando la tarea ya no está en el registro.
-      proveedor: hecho.proveedor, modelo: hecho.modelo || null, ancho: hecho.ancho, alto: hecho.alto, bytes: bytes.length, cambio: cuanto, fuerza,
-      lorasUsadas: Array.isArray(hecho.loras) ? hecho.loras : [],
-      // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
-      lista: true, vista: null, vistaOrden: false, vistaEntregada: false,
-      vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, vistaDesde: ahora().toISOString(),
-      // La hora del archivo nuevo: un reintento de una imagen vieja no queda primero para la poda.
-      creada: ahora().toISOString(), intento: job.intento, num
+      ...(p || {}),
+      ...camposDeImagen({
+        archivo: final, tipo, foto: job.foto, hilo: job.hilo, externo, sha256: sha, prompt, negativo, proporcion, semilla: hecho.semilla,
+        perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null, proveedor: hecho.proveedor, modelo: hecho.modelo, ancho: hecho.ancho, alto: hecho.alto,
+        bytes: bytes.length, cambio: cuanto, fuerza, lorasUsadas: hecho.loras,
+        // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
+        vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, ahora: ahora(), intento: job.intento, num
+      })
     }), env);
     // FEAT-215 — Con una más nueva, la elegida de ese hilo deja de valer.
     if (job.hilo) desmarcar(job.clave, job.hilo);
@@ -416,6 +418,25 @@ export function crearColaImagenes({
 
     // 4. Mirar (§2.1): lo que salió, para el turno siguiente del mismo hilo.
     if (config.alma_la_ve && !signal.aborted) await mirar(job, final, prompt);
+  }
+
+  function prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza }) {
+    if (!taller || !conComfy) return error(job, 'sin-proveedor', { intentos: d.afuera });
+    const base = caso !== 'nueva' && conFoto ? { ruta: job.foto.ruta, segura: Boolean(job.foto.segura) } : null;
+    let p = null;
+    try {
+      p = taller.preparar({
+        tareaId: job.tareaId, n: job.n, clave: job.clave, caso, casoPedido, perfil: d.perfil.id, modelo: d.modelo, prompt, negativo, proporcion, ancho, alto,
+        zona: zona || '', instruccion: instruccion || '', loras, cambio: cuanto, fuerza, semilla: Number.isInteger(job.semilla) ? job.semilla : null, base,
+        // Como al guardar una imagen: de un hilo ya externo, o de una foto de afuera.
+        externo: Boolean(job.externo) || Boolean(base && !base.segura), hilo: job.hilo || null
+      });
+    } catch (err) {
+      log(`[imagenes] no se pudo dejar el preparado de ${job.tareaId}#${job.n}: ${err.message}`);
+    }
+    if (!p || !p.ok) return error(job, 'error');
+    job.cerrado = true;
+    transicionImagen(job.tareaId, job.n, { estado: 'error', codigo: 'para-el-taller', mensaje: codigos.mensajeDe('para-el-taller'), terminada: ahora().toISOString() });
   }
 
   async function mirar(job, ruta, prompt) {
@@ -480,6 +501,13 @@ export function crearColaImagenes({
     try { fs.rmSync(ruta, { force: true }); return true; } catch { return false; }
   }
 
+  /** FEAT-214 — El grafo guardado de una imagen del taller (su carpeta), solo si queda en la carpeta de imágenes del alma. */
+  function borrarFlujo(clave, e) {
+    if (!e || typeof e.flujo !== 'string') return;
+    const dir = indice.rutaDentroDe(indice.dirImagenes(clave, env), e.flujo);
+    if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+  }
+
   const misma = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 
   /** FEAT-213 — ¿Alguien la está usando? La base de una imagen que todavía no está, o la foto de un turno abierto. */
@@ -507,7 +535,7 @@ export function crearColaImagenes({
       // Una que apunta afuera de su carpeta se saltea entera: ni el archivo ni la entrada.
       if (!indice.archivoDe(clave, e, env)) { avisarAfuera(e); continue; }
       borrarArchivo(clave, e);
-      const borrada = indice.borrar(clave, e.tareaId, e.n, { sha256: e.sha256 || null, envio: (e.telegram && e.telegram.envio) || null, env });
+      const borrada = indice.borrar(clave, e.tareaId, e.n, { sha256: e.sha256 || null, envio: (e.telegram && e.telegram.envio) || null, env, alBorrar: (x) => { borrarFlujo(clave, x); return true; } });
       // Un Reintento pudo haber escrito otra en la misma `n`: esa no se toca.
       const sigue = borrada ? null : indice.leer(clave, e.tareaId, e.n, env);
       if (!borrada && sigue && sigue.archivo !== e.archivo) continue;
@@ -596,6 +624,7 @@ export function crearColaImagenes({
         if (!e || !e.lista) { motivo = 'cambio'; return false; }
         if (!indice.archivoDe(clave, e, env)) { motivo = 'no-existe'; avisarAfuera({ tareaId, n }); return false; }
         if (!borrarArchivo(clave, { ...e, tareaId, n })) { motivo = 'ocupada'; return false; }
+        borrarFlujo(clave, e);
         return true;
       }
     });
@@ -765,7 +794,27 @@ export function crearColaImagenes({
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length + esperando.size, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, variar, partir, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
+  return { encolar, podar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, variar, partir, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
+}
+
+/**
+ * FEAT-214 — Lo que el índice guarda de una imagen terminada. La usan la cola y el taller: no se separan.
+ * `foto`: `{ ruta, segura }` o `null`; `ahora`: la hora de la imagen.
+ */
+export function camposDeImagen({
+  archivo, tipo, foto = null, hilo = null, externo, sha256, prompt = '', negativo = '', proporcion = null, semilla = null, perfil = null, proveedor, modelo = null,
+  ancho = null, alto = null, bytes, cambio = null, fuerza = null, lorasUsadas = [], vistaEstado = null, ahora = new Date(), intento = 1, num = null
+}) {
+  return {
+    archivo, tipo, fotoRuta: foto ? foto.ruta : null, fotoSegura: Boolean(foto && foto.segura),
+    hilo: hilo || null, externo: Boolean(externo), sha256, prompt, negativo, proporcion, semilla: semilla ?? null, perfil,
+    // FEAT-213 — Lo que muestra la galería cuando la tarea ya no está en el registro.
+    proveedor, modelo: modelo || null, ancho, alto, bytes, cambio, fuerza,
+    lorasUsadas: Array.isArray(lorasUsadas) ? lorasUsadas : [],
+    lista: true, vista: null, vistaOrden: false, vistaEntregada: false, vistaEstado, vistaDesde: ahora.toISOString(),
+    // La hora del archivo nuevo: un reintento de una imagen vieja no queda primero para la poda.
+    creada: ahora.toISOString(), intento, num
+  };
 }
 
 /** La clave del alma de una tarea de charla. */

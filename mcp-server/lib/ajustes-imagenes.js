@@ -38,7 +38,10 @@ const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_versi
   'hilo_externo']);
 /** FEAT-215 — Con varias versiones sin elegir. */
 const VARIAS_VERSIONES = Object.freeze(['preguntar', 'ultima']);
-const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen']);
+const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen', 'taller']);
+/** FEAT-214 — El taller: cuatro interruptores (prendidos) y qué pasa con lo que quedó en la tira al cerrarlo. */
+const TALLER_BOOLEANOS = Object.freeze(['activo', 'abrir_en_taller', 'prepara_alma', 'mirar']);
+const AL_CERRAR = Object.freeze(['preguntar', 'descartar', 'quedar']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
 const MAX_LORAS = 20;
@@ -92,7 +95,8 @@ function defectos() {
       arranque: { carpeta: null, automatico: true, apagar_min: RANGOS.apagar_min.defecto, espera_s: RANGOS.espera_s.defecto, flags: [] }
     },
     openai_imagen: { url: null, modelo: null, key_env: null },
-    gemini_imagen: { url: null, modelo: null, key_env: null }
+    gemini_imagen: { url: null, modelo: null, key_env: null },
+    taller: { activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, al_cerrar: 'preguntar' }
   };
 }
 
@@ -317,6 +321,20 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
     if (r.modelo) { if (texto(r.modelo)) d[campo].modelo = texto(r.modelo); else avisos.push(`imagenes.${campo}.modelo no es un nombre válido; se ignora`); }
     if (r.key_env) { if (RE_KEY_ENV.test(String(r.key_env))) d[campo].key_env = String(r.key_env); else avisos.push(`imagenes.${campo}.key_env tiene que ser el nombre de una variable (MAYÚSCULAS_Y_GUIONES); se ignora`); }
   }
+  if (crudo.taller !== undefined && crudo.taller !== null) {
+    if (!esObjeto(crudo.taller)) avisos.push('imagenes.taller tiene que ser un objeto; se usan los valores por defecto');
+    else {
+      for (const k of TALLER_BOOLEANOS) {
+        if (crudo.taller[k] === undefined) continue;
+        if (typeof crudo.taller[k] === 'boolean') d.taller[k] = crudo.taller[k];
+        else avisos.push(`imagenes.taller.${k} tiene que ser true o false; se usa ${d.taller[k]}`);
+      }
+      if (crudo.taller.al_cerrar !== undefined) {
+        if (AL_CERRAR.includes(crudo.taller.al_cerrar)) d.taller.al_cerrar = crudo.taller.al_cerrar;
+        else avisos.push(`imagenes.taller.al_cerrar tiene que ser ${AL_CERRAR.join(', ')}; se usa ${d.taller.al_cerrar}`);
+      }
+    }
+  }
   return { imagenes: d, avisos, invalidos };
 }
 
@@ -443,6 +461,28 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     if (v === null || v === '') delete nuevo.tope_por_alma;
     else if (!Number.isInteger(v) || v < rg.min || v > rg.max) throw new ErrorAjuste(`El tope por alma tiene que ser un entero de ${rg.min} a ${rg.max} (0 = sin tope)`, 'imagenes.tope_por_alma');
     else nuevo.tope_por_alma = v;
+  }
+  if (pedido.taller !== undefined) {
+    // Campo por campo: lo que no viene queda como estaba.
+    const tl = pedido.taller;
+    if (tl === null) delete nuevo.taller;
+    else {
+      if (!esObjeto(tl)) throw new ErrorAjuste(`imagenes.taller tiene que ser un objeto { ${[...TALLER_BOOLEANOS, 'al_cerrar'].join(', ')} }`, 'imagenes.taller');
+      const t2 = esObjeto(previo.taller) ? { ...previo.taller } : {};
+      for (const k of Object.keys(tl)) if (![...TALLER_BOOLEANOS, 'al_cerrar'].includes(k)) throw new ErrorAjuste(`imagenes.taller.${k} no está permitido`, `imagenes.taller.${k}`);
+      for (const k of TALLER_BOOLEANOS) {
+        if (tl[k] === undefined) continue;
+        if (tl[k] === null) { delete t2[k]; continue; }
+        if (typeof tl[k] !== 'boolean') throw new ErrorAjuste(`imagenes.taller.${k} tiene que ser true o false`, `imagenes.taller.${k}`);
+        t2[k] = tl[k];
+      }
+      if (tl.al_cerrar !== undefined) {
+        if (tl.al_cerrar === null) delete t2.al_cerrar;
+        else if (!AL_CERRAR.includes(tl.al_cerrar)) throw new ErrorAjuste(`Al cerrar el taller: ${AL_CERRAR.join(', ')}`, 'imagenes.taller.al_cerrar');
+        else t2.al_cerrar = tl.al_cerrar;
+      }
+      if (Object.keys(t2).length) nuevo.taller = t2; else delete nuevo.taller;
+    }
   }
   if (pedido.orden !== undefined) {
     const o = pedido.orden;
@@ -661,7 +701,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
 }
 
 module.exports = {
-  PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, RANGOS, MASCARAS, RETOQUES, MAX_LORAS, URL_COMFYUI, MODELO_POR_DEFECTO,
+  PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, TALLER_BOOLEANOS, AL_CERRAR, RANGOS, MASCARAS, RETOQUES, MAX_LORAS, URL_COMFYUI, MODELO_POR_DEFECTO,
   defectos, esLoopback, esHttps, formaDeCarpeta, formaDeFlujo: flujosLib.formaDeFlujo, leerFlujo: flujosLib.leerFlujo, marcadoresDe: flujosLib.marcadoresDe, resolverFlujo: flujosLib.resolverFlujo,
   normalizar, denyDe, migrarDatos, leerSeccion, leerImagenes, crudoImagenes, aplicarImagenes
 };

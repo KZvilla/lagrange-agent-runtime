@@ -12,6 +12,7 @@ import { runAgyTask, runAgyArgs, AGY_BIN, AGENTE_PLAN, getAgyStatus, getAgyVersi
 import { crearColaImagenes } from './imagenes-cola.js';
 import { crearComfyui, probarComfyui } from './imagenes/comfyui.js';
 import { crearGaleria } from './imagenes/galeria.js';
+import { crearTaller } from './imagenes/taller.js';
 import { crearAntigravity } from './imagenes/antigravity.js';
 import { crearRemoto } from './imagenes/remotos.js';
 import { sinRutas } from './imagenes/sanear-texto.js';
@@ -228,8 +229,26 @@ export function avisarImagenes(clave) { try { if (publicarImagenes) publicarImag
 
 /** FEAT-213 — Las fotos de los turnos abiertos (en cola o en curso): borrarlas los rompería. */
 function fotosDeTurnosAbiertos() {
-  return [...fotosEnCola(), ...Object.values(carriles).map((c) => c.enCurso && c.enCurso.imagen && c.enCurso.imagen.ruta).filter(Boolean)];
+  // FEAT-214 — Y las bases del taller: las de las sesiones vivas y las de los preparados.
+  let delTaller = [];
+  try { if (rolDaemon !== 'nodo' && tallerInst) delTaller = tallerInst.fotosEnUso(); } catch {}
+  return [...fotosEnCola(), ...Object.values(carriles).map((c) => c.enCurso && c.enCurso.imagen && c.enCurso.imagen.ruta).filter(Boolean), ...delTaller];
 }
+
+// FEAT-214 — Quién publica los eventos del taller: lo pone la API v2 al servir; sin ella, nadie.
+let publicarTaller = null;
+let tallerInst = null;
+/** FEAT-214 — El taller (uno por daemon). */
+export function tallerImagenes() {
+  return (tallerInst ||= crearTaller({
+    leerConfig: leerConfigImagenes, proceso: procesoComfy(), dirAdjuntos: () => dirAdjuntos(),
+    cola: { podar: (clave, actual) => colaImagenes().podar(clave, actual), invalidarMapas: () => colaImagenes().invalidarMapas() },
+    alCambiar: avisarImagenes, publicar: (tema, tipo, datos) => { try { if (publicarTaller) publicarTaller(tema, tipo, datos); } catch {} },
+    log: (linea) => console.error(redactSecrets(linea))
+  }));
+}
+/** Solo para tests: un taller inyectado (o ninguno). */
+export function usarTallerParaTests(t = null) { if (tallerInst && tallerInst !== t) { try { tallerInst.parar(); } catch {} } tallerInst = t; }
 
 /** FEAT-210 — La sección `imagenes` vigente. Si no se puede leer, los valores por defecto (no rompe un turno). */
 function leerConfigImagenes() {
@@ -273,7 +292,9 @@ export function colaImagenes() {
     comfy: {
       comprobar: (config) => procesoComfy().comprobar(config), levantar: (config) => procesoComfy().levantar(config), anotarUso: (config) => procesoComfy().anotarUso(config)
     },
-    dirAdjuntos: () => dirAdjuntos(), fotosEnUso: fotosDeTurnosAbiertos, alCambiar: avisarImagenes
+    dirAdjuntos: () => dirAdjuntos(), fotosEnUso: fotosDeTurnosAbiertos, alCambiar: avisarImagenes,
+    // FEAT-214 — «Que lo prepare el alma».
+    taller: { preparar: (datos) => tallerImagenes().preparar(datos), fallo: (x) => tallerImagenes().fallo(x) }
   }));
 }
 /** Solo para tests: una cola con lo que se le inyecte (o ninguna, para que la próxima se cree de nuevo). */
@@ -1029,6 +1050,8 @@ function cierreDeCharla(turno) {
       ...(turno.imagenPedida || turno.imagenRechazo
         ? { imagen: {
             pedida: turno.imagenPedida ? String(turno.imagenPedida.texto || '').slice(0, 300) : null, ...rechazoDeImagen(turno.imagenRechazo),
+            // FEAT-214 — Quedó para el taller: no se generó.
+            ...(turno.taller && turno.imagenPedida ? { detalle: 'taller' } : {}),
             // FEAT-215 — De cuál parte, o entre cuáles hay que elegir.
             ...(turno.imagenPedida?.desde?.length ? { desde: turno.imagenPedida.desde } : {}), ...(turno.imagenCandidatas?.length ? { candidatas: turno.imagenCandidatas } : {})
           } }
@@ -1057,7 +1080,9 @@ function encolarImagenDelTurno(task, turno, ref) {
     tareaId: task.tareaId, clave: task.clave, hilo: turno.hilo || null, pedido: p.texto, mensaje: task.prompt || '',
     desdeFoto: Boolean(p.desdeFoto), baseFija: Boolean(p.baseFija), fotoOpcional: Boolean(p.fotoOpcional), foto: foto || null, externo: Boolean(turno.bloqueado?.length),
     envio: esChatWeb(task.chatId) ? null : crearEnvioImagen(ref, task.chatId, { tareaId: task.tareaId, clave: task.clave }),
-    origen: task.programado ? 'programado' : 'usuario'
+    origen: task.programado ? 'programado' : 'usuario',
+    // FEAT-214 — «Que lo prepare el alma»: se refina y queda para el taller, sin generar.
+    ...(turno.taller ? { destino: 'taller', envio: null } : {})
   });
   try {
     // FEAT-215 — Una edición por cada base, en orden.
@@ -1402,6 +1427,8 @@ async function processTaskQueue(carril) {
       });
       // FEAT-213 — Respondió a una imagen que no se sabe cuál es: el turno va sin foto y el pie lo dice.
       if (task.imagenPerdida) turno.imagenPerdida = true;
+      // FEAT-214 — «Que lo prepare el alma», con el taller y su opción prendidos.
+      if (task.taller && configImagenes.taller && configImagenes.taller.activo && configImagenes.taller.prepara_alma) turno.taller = true;
       // FEAT-058 — Antes de cerrar la tarea, para que el cierre lleve los conteos.
       // Sin resumen (apagado o reacción) el bloque se ignora.
       if (turno.ok && vistaTablero) {
@@ -3219,12 +3246,14 @@ export function aplicarTableroDeAlma({ clave, superficie = 'telegram', idsVistos
  * Encola un turno de charla en su carril. No toca la sesión de trabajo del chat:
  * el hilo del alma lo resuelve `charlar()` desde su propio estado.
  */
-export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, imagen = null, imagenPerdida = false, alEncolar = null }) {
+export async function dispatchCharla(ctx, { clave, voz, texto, fresco = false, diario = null, tarjetaId = null, modelo = null, esfuerzo = null, programado = null, silencioso = false, imagen = null, imagenPerdida = false, alEncolar = null, taller = false }) {
   const chatId = ctx.chat.id;
   const ref = refDe(ctx);
   const task = {
     // FEAT-172 — `imagen` viaja como ruta: la mira el mediador al correr el turno.
     ctx, chatId, ref, kind: 'alma', clave, voz, fresco, diario, tarjetaId, imagen, imagenPerdida,
+    // FEAT-214 — «Que lo prepare el alma».
+    taller: taller === true,
     prompt: texto, mode: 'alma', conversationId: null, statusMessageId: null,
     // FEAT-060 — Vacíos salvo que lo dispare el reloj.
     modelo, esfuerzo, programado, silencioso
@@ -3298,7 +3327,9 @@ export function pieDeMemoria(turno) {
   // FEAT-210 §4 — La imagen que va a hacer, o por qué no (un solo motivo; el diario guarda la lista).
   const desde = turno.imagenPedida?.desde || [];
   const cuantas = turno.imagenPedida?.bases?.length || 1;
-  if (turno.imagenPedida) lineas.push(`🖼️ va a hacer ${cuantas > 1 ? `${cuantas} imágenes` : 'una imagen'}${desde.length ? ` · desde ${desde.length > 1 ? 'las' : 'la'} ${listaDeNumeros(desde)}` : ''}`);
+  if (turno.imagenPedida && turno.taller) lineas.push('🛠 para el taller');
+  else if (turno.imagenPedida) lineas.push(`🖼️ va a hacer ${cuantas > 1 ? `${cuantas} imágenes` : 'una imagen'}${desde.length ? ` · desde ${desde.length > 1 ? 'las' : 'la'} ${listaDeNumeros(desde)}` : ''}`);
+  else if (turno.taller && !turno.imagenRechazo) lineas.push('🛠 no preparó ninguna imagen');
   else if (turno.imagenRechazo) lineas.push(`🖼️ no hizo la imagen: ${turno.imagenRechazo === 'cual-version' && turno.imagenCandidatas?.length ? `hay varias versiones (${listaDeNumeros(turno.imagenCandidatas)}): decile sobre cuál` : imgCodigos().motivoDe(turno.imagenRechazo)}`);
   if (turno.bloqueado?.length) lineas.push('🔒 este hilo trajo contenido de afuera: no guarda memoria ni toca el tablero hasta /charla nuevo');
   if (partes.length) lineas.push(`🧠 ${partes.join(' · ')}`);
@@ -6281,6 +6312,9 @@ export function imagenesV2() {
   };
 }
 
+const TALLER_ABIERTO = Object.freeze({ ok: false, codigo: 'ocupado', motivo: 'El taller está abierto: cerralo primero.' });
+function tallerAbierto() { try { return rolDaemon !== 'nodo' && Boolean(tallerInst) && tallerInst.abiertas() > 0; } catch { return false; } }
+
 /** FEAT-213 §1 — Lo que la API v2 usa del proceso de ComfyUI. `alCambiar`: publica `comfyui.estado` en el acto. */
 export function comfyuiV2({ alCambiar = () => {} } = {}) {
   const abiertas = () => colaImagenes().lasDeComfy().length;
@@ -6303,8 +6337,9 @@ export function comfyuiV2({ alCambiar = () => {} } = {}) {
       alCambiar();
       return { ok: true };
     },
-    apagar: (forzar) => avisando(procesoComfy().apagar(leerConfigImagenes(), guardas(forzar))),
-    reiniciar: (forzar) => avisando(procesoComfy().reiniciar(leerConfigImagenes(), guardas(forzar))),
+    // FEAT-214 — Con el taller abierto, no (tampoco con forzar): primero se cierra el taller.
+    apagar: (forzar) => (tallerAbierto() ? Promise.resolve(TALLER_ABIERTO) : avisando(procesoComfy().apagar(leerConfigImagenes(), guardas(forzar)))),
+    reiniciar: (forzar) => (tallerAbierto() ? Promise.resolve(TALLER_ABIERTO) : avisando(procesoComfy().reiniciar(leerConfigImagenes(), guardas(forzar)))),
     flags: () => procesoComfy().flags(leerConfigImagenes()),
     registro: () => procesoComfy().registro(),
     validarArranque: (pedido) => procesoComfy().validarArranque(leerConfigImagenes(), pedido)
@@ -6321,7 +6356,9 @@ export function capacidadesV2({ eventLoop = false, secretos = false, leerConfig 
     // FEAT-201 F3 — daemonLog y telegramChats: GET /api/v2/daemon/log y /telegram/chats.
     capacidades: { voz: true, fotos: true, claudeRemoto: true, secretos, salud: { eventLoop }, motores: [], daemonLog: true, telegramChats: true, vozFragmentos: true, imagenes: imagenesDisponibles(leerConfig),
       // FEAT-213 — La galería y el proceso de ComfyUI son de este daemon; un nodo no tiene almas propias.
-      galeria: rolDaemon !== 'nodo', versiones: rolDaemon !== 'nodo', comfyuiProceso: rolDaemon !== 'nodo' && process.platform === 'win32' },
+      galeria: rolDaemon !== 'nodo', versiones: rolDaemon !== 'nodo', comfyuiProceso: rolDaemon !== 'nodo' && process.platform === 'win32',
+      // FEAT-214 — El taller.
+      taller: rolDaemon !== 'nodo' },
     limites: { borrador: 8192, texto: registroTareas.TOPE_TEXTO, fotoBytes: TOPE_ARCHIVO_BYTES }
   };
 }
@@ -6373,6 +6410,8 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
   redactarImagenes = redactarV2;
   const publicarCambio = (clave) => almacenV2.publicar(`sujeto:${clave}`, 'imagenes.cambio', { alma: clave });
   publicarImagenes = publicarCambio;
+  // FEAT-214 — Los eventos del taller (`taller.imagen` en `salud`, `taller.preparado` en el del alma).
+  publicarTaller = (tema, tipo, datos) => almacenV2.publicar(tema, tipo, datos);
   let avisarComfy = () => {};
   const comfyV2 = rolDaemon === 'nodo' ? null : comfyuiV2({ alCambiar: () => avisarComfy() });
   // FEAT-201 F0 S5 — La tabla de idempotencia, junto a api-v2.json. Sus extras (tid, idCliente, reintentoDe) viajan
@@ -6420,7 +6459,7 @@ export function servirWeb({ armado, host, puerto, respaldo = 0, tokenFile = null
       // FEAT-201 F2 — El log de Claude remoto (y el del 502) pasa también por los valores resueltos.
       redactar: redactarV2,
       // FEAT-210 §5 — Las imágenes de un turno, por la cola del proceso. FEAT-213 — La galería y el proceso de ComfyUI.
-      imagenes: imagenesV2(), comfy: comfyV2, conGaleria: rolDaemon !== 'nodo'
+      imagenes: imagenesV2(), comfy: comfyV2, conGaleria: rolDaemon !== 'nodo', taller: rolDaemon === 'nodo' ? null : () => tallerImagenes()
     })
   ];
   const capacidadesConSalud = () => {
@@ -7124,6 +7163,8 @@ async function main() {
     if (n > 0) console.log(`[imagenes] ${n} imagen(es) de la corrida anterior quedaron interrumpidas.`);
     // §3.6 de FEAT-090: un nodo no lee el directorio de las almas.
     colaImagenes().alArrancar(rolDaemon === 'nodo' ? [] : almasRutas.listarClaves());
+    // FEAT-214 — El taller retoma sus sesiones (y protege sus bases) desde el arranque.
+    if (rolDaemon !== 'nodo') { try { tallerImagenes(); } catch (err) { console.error(`[taller] no arrancó: ${redactSecrets(err.message)}`); } }
     // FEAT-213 — Un ComfyUI nuestro que quedó sin guardián (se cortó, o se actualizó el plugin) vuelve a tener uno.
     if (rolDaemon !== 'nodo') procesoComfy().adoptar().catch(() => {});
     if (rolDaemon !== 'nodo') calentarVision();

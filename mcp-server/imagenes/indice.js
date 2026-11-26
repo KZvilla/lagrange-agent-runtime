@@ -244,7 +244,9 @@ function porRuta(clave, ruta, env = process.env) {
   return listar(clave, env).find((e) => e.archivo && path.basename(String(e.archivo)) === nombre && archivoDe(clave, e, env) === real) || null;
 }
 
-const ORIGENES = Object.freeze(['alma', 'version', 'variante']);
+// FEAT-214 — `taller`: la hizo el usuario en el taller. No es de ningún hilo: nunca llega al alma como la última ni como vista.
+const ORIGENES = Object.freeze(['alma', 'version', 'variante', 'taller']);
+const delTaller = (e) => e.origen === 'taller';
 const origenDe = (e) => (ORIGENES.includes(e.origen) ? e.origen : 'alma');
 /**
  * FEAT-215 — Entre cuáles se elige: en el primero de esos hilos que tenga imágenes, las del último turno en que el alma pidió (desde la
@@ -254,7 +256,7 @@ function candidatas(clave, hilos, env = process.env) {
   const todas = listar(clave, env);
   for (const hilo of hilos || []) {
     if (!hilo) continue;
-    const suyas = todas.filter((e) => e.hilo === hilo && e.lista).map((e) => ({ ...e, ruta: archivoDe(clave, e, env) })).filter((e) => e.ruta && fs.existsSync(e.ruta));
+    const suyas = todas.filter((e) => e.hilo === hilo && e.lista && !delTaller(e)).map((e) => ({ ...e, ruta: archivoDe(clave, e, env) })).filter((e) => e.ruta && fs.existsSync(e.ruta));
     if (!suyas.length) continue;
     const ultima = [...suyas].reverse().find((e) => origenDe(e) === 'alma');
     const desde = ultima ? suyas.findIndex((e) => e.tareaId === ultima.tareaId && origenDe(e) === 'alma') : 0;
@@ -337,7 +339,7 @@ function ultimaImagen(clave, hilos, env = process.env) {
     if (!hilo) continue;
     for (let i = todas.length - 1; i >= 0; i--) {
       const e = todas[i];
-      if (e.hilo !== hilo || !e.lista) continue;
+      if (e.hilo !== hilo || !e.lista || delTaller(e)) continue;
       const ruta = archivoDe(clave, e, env);
       if (ruta && fs.existsSync(ruta)) return { tareaId: e.tareaId, n: e.n, ruta, externo: esExterna(e) };
     }
@@ -353,7 +355,7 @@ function vistasPendientes(clave, hilo, env = process.env, ahora = Date.now()) {
   if (!hilo) return [];
   return listar(clave, env)
     .filter((e) => {
-      if (e.hilo !== hilo || !e.lista || e.vistaEntregada || mirandoTodavia(e, ahora)) return false;
+      if (e.hilo !== hilo || !e.lista || delTaller(e) || e.vistaEntregada || mirandoTodavia(e, ahora)) return false;
       const ruta = archivoDe(clave, e, env);
       return Boolean(ruta && fs.existsSync(ruta));
     })
@@ -376,5 +378,5 @@ function vaciarTmp(clave, env = process.env) {
 module.exports = {
   TOPE_POR_ALMA, RE_TAREA, dirImagenes, dirIndice, dirTmp, rutaIndice, rutaArchivo, leer, actualizar, borrar, listar, sha256,
   construirMapa, construirMapaTelegram, vistasPendientes, marcarEntregadas, vaciarTmp,
-  claves, rutaDentroDe, archivoDe, fotoPermitida, rutaDeVista, tomarNumero, numerar, porNumero, porRuta, origenDe, candidatas, elegir, esExterna, porMensaje, anotarTelegram, ultimaImagen
+  ORIGENES, claves, rutaDentroDe, archivoDe, fotoPermitida, rutaDeVista, tomarNumero, numerar, porNumero, porRuta, origenDe, candidatas, elegir, esExterna, porMensaje, anotarTelegram, ultimaImagen
 };

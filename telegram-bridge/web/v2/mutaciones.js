@@ -21,6 +21,8 @@ import { guardarAjustesV2, caracterVozV2, efectosVozV2, probarVozV2 } from './aj
 const RE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RE_ID_TURNO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const TOPE_FOTO_CUERPO = 14 * 1024 * 1024;
+// FEAT-214 — Un grafo de hasta 2 MB, con su sobre.
+const TOPE_GRAFO_CUERPO = Math.round(2.5 * 1024 * 1024);
 const error = (codigo, texto) => ({ codigo, ok: false, error: texto });
 const sale = (r) => !(r?.ok === false || (Number.isInteger(r?.codigo) && r.codigo >= 400));
 
@@ -61,7 +63,7 @@ export function purgaV2(r) {
 /** `nucleo.*Claude` → la forma de v2, o el error por lista blanca. */
 const deClaudeV2 = (r, forma, opciones) => (r && r.ok !== false && !(Number.isInteger(r.codigo) && r.codigo >= 400) ? forma(r) : errorClaudeV2(r, opciones));
 
-export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t, imagenes = null, comfy = null, conGaleria = false }) {
+export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, idem, almacen = null, recorte, topeTexto = 16384, redactar = (t) => t, imagenes = null, comfy = null, conGaleria = false, taller = null }) {
   // FEAT-213 — La galería y el proceso de ComfyUI son de este daemon: en un nodo no están.
   const galeria = conGaleria && imagenes ? imagenes.galeria : null;
   const sinGaleria = () => error(503, 'La galería no está en este proceso.');
@@ -71,6 +73,16 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     const r = await p;
     return r.ok ? { ok: true } : { ...error(CODIGOS_COMFY[r.codigo] || 500, r.motivo || 'No se pudo.'), motivo: r.codigo || 'error' };
   };
+  // FEAT-214 — El taller (perezoso: se crea en el primer pedido). Su respuesta `{ ok: false, status, motivo, mensaje }` → un error.
+  const elTaller = () => (typeof taller === 'function' ? taller() : taller);
+  const sinTaller = () => error(503, 'El taller no está en este proceso.');
+  const deTaller = async (fn) => {
+    const tl = elTaller();
+    if (!tl) return sinTaller();
+    const res = await fn(tl);
+    if (res && res.ok === false) return { ...error(res.status || 409, res.mensaje || 'No se pudo.'), motivo: res.motivo || 'error' };
+    return res;
+  };
   const forzarDe = (cuerpo) => (cuerpo.forzar === undefined || typeof cuerpo.forzar === 'boolean' ? { ok: true, forzar: cuerpo.forzar === true } : { ok: false });
   // FEAT-210 §5 — El turno de una imagen: por tareaId o por tid (la entrada de idempotencia).
   const tareaDeImagen = (id, n) => {
@@ -79,6 +91,8 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     if (!imagenes) return { error: error(503, 'Sin imágenes en este proceso.') };
     const e = idem.porId(id);
     const tareaId = e ? e.tareaId : id;
+    // FEAT-214 — Una imagen del taller no tiene turno: se abre en el taller.
+    if (/^t_taller/.test(String(tareaId))) return { error: { ...error(409, 'Esa imagen se hizo en el taller: abrila ahí.'), motivo: 'del-taller' } };
     if (!tareaId || !registro.obtener(tareaId)) return { error: error(410, 'Ese turno ya no está en el registro.') };
     return { tareaId, n: Number(n) };
   };
@@ -153,12 +167,14 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       } else {
         const t = typeof cuerpo.texto === 'string' ? cuerpo.texto.trim() : '';
         if (!t || t.length > topeTexto) return error(400, `El mensaje tiene que tener entre 1 y ${topeTexto} caracteres.`);
-        cast = { texto: t };
+        // FEAT-214 — «Que lo prepare el alma».
+        if (cuerpo.taller !== undefined && typeof cuerpo.taller !== 'boolean') return error(400, 'taller tiene que ser true o false.', 'taller');
+        cast = { texto: t, taller: cuerpo.taller === true };
       }
       // Desde acá hasta el despacho, sin await.
       return idempotente(s.clave, String(cuerpo.idCliente), {
         despachar: (alEncolar) => (s.tipo === 'alma'
-          ? cola.dispatchCharla(ctx, { clave: s.id, voz: s.voz, texto: cast.texto, alEncolar })
+          ? cola.dispatchCharla(ctx, { clave: s.id, voz: s.voz, texto: cast.texto, alEncolar, ...(cast.taller ? { taller: true } : {}) })
           : cola.dispatchCast(ctx, { ...cast, alEncolar }))
       });
     } },
@@ -252,6 +268,18 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
       const r = galeria.borrar(cuerpo.imagenes);
       return r.ok ? r : { ...error(r.codigo, r.motivo), campo: r.campo };
     } },
+    // ---------------------------------------------------------------- FEAT-214 — El taller.
+    { metodo: 'POST', patron: /^\/api\/v2\/taller:abrir$/, fn: ({ cuerpo }) => deTaller((tl) => tl.abrir(cuerpo)) },
+    { metodo: 'GET', patron: /^\/api\/v2\/taller\/plantillas\/?$/, fn: () => deTaller((tl) => tl.plantillas()) },
+    { metodo: 'POST', topeCuerpo: TOPE_GRAFO_CUERPO, patron: /^\/api\/v2\/taller\/plantillas\/?$/, fn: ({ cuerpo }) => deTaller((tl) => tl.guardarPlantilla(cuerpo)) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/plantillas:borrar$/, fn: ({ cuerpo }) => deTaller((tl) => tl.borrarPlantilla(cuerpo)) },
+    { metodo: 'GET', patron: /^\/api\/v2\/taller\/preparados\/?$/, fn: ({ url }) => deTaller((tl) => tl.preparadoDe(url.searchParams.get('tareaId'))) },
+    { metodo: 'GET', patron: /^\/api\/v2\/taller\/([^/:]+)\/?$/, fn: ({ p }) => deTaller((tl) => tl.estado(p[0])) },
+    { metodo: 'GET', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+)$/, fn: ({ p }) => deTaller((tl) => { const res = tl.bytes(p[0], p[1]); return res.ok ? { binario: res.bytes, tipo: res.tipo } : res; }) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+):sigue$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.sigue(p[0], cuerpo)) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+):cerrar$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.cerrar(p[0], cuerpo)) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+):quedar$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.quedar(p[0], p[1], cuerpo)) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+):descartar$/, fn: ({ p }) => deTaller((tl) => tl.descartar(p[0], p[1])) },
     // ---------------------------------------------------------------- FEAT-213 §1 — El proceso de ComfyUI.
     { metodo: 'GET', patron: /^\/api\/v2\/comfyui\/?$/, fn: async () => (comfy ? { ok: true, ...(await comfy.estado()) } : sinComfy()) },
     { metodo: 'GET', patron: /^\/api\/v2\/comfyui\/flags\/?$/, fn: async () => {

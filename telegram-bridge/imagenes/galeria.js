@@ -19,6 +19,8 @@ export const LIMITE_MAX = 100;
 export const TOPE_BORRAR = 100;
 const TOPE_REFERENCIA = 20 * 1024 * 1024;
 const CASOS = new Set(['nueva', 'variacion', 'retoque', 'edicion']);
+// FEAT-214 — El filtro «Del taller» no es un caso: mira de dónde salió.
+const FILTROS = new Set([...CASOS, 'taller']);
 const CAMBIOS = new Set(['leve', 'medio', 'fuerte']);
 const texto = (v, tope) => (typeof v === 'string' && v ? v.slice(0, tope) : null);
 const entero = (v) => (Number.isInteger(v) && v > 0 ? v : null);
@@ -124,7 +126,7 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
   function listar({ alma = null, caso = null, busca = null, antes = null, limite = null } = {}) {
     const mal = (campo, motivo) => ({ ok: false, codigo: 400, campo, motivo });
     if (alma && !almasRutas.CLAVE_VALIDA.test(alma)) return mal('alma', 'No es un alma.');
-    if (caso && !CASOS.has(caso)) return mal('caso', 'No es un caso.');
+    if (caso && !FILTROS.has(caso)) return mal('caso', 'No es un caso.');
     const desde = antes ? leerCursor(antes) : null;
     if (antes && !desde) return mal('antes', 'No es un cursor.');
     const tope = limite === null || limite === '' ? LIMITE_POR_DEFECTO : Number(limite);
@@ -134,7 +136,7 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
     const todas = [];
     for (const clave of alma ? [alma] : claves()) {
       for (const e of terminadas(clave)) {
-        if (caso && e.caso !== caso) continue;
+        if (caso === 'taller' ? e.origen !== 'taller' : caso && (e.caso !== caso || e.origen === 'taller')) continue;
         if (q && !`${e.prompt || ''} ${e.instruccion || ''} ${e.zona || ''}`.toLowerCase().includes(q)) continue;
         if (desde && masNueva(desde, e) >= 0) continue;
         todas.push({ clave, e });
