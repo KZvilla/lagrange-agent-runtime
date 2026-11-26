@@ -563,9 +563,14 @@ async function main() {
     check('el preparado se recupera por el turno, y su evento', p.ok && /^p-[a-z0-9]{16}$/.test(p.preparado.id) && eventos.some((x) => x.tipo === 'taller.preparado' && x.tema === 'sujeto:alya' && esquema.validar(contrato, 'evento:taller.preparado', x.datos).length === 0));
     const ab = await t.abrir({ alma: 'alya', ventana, preparado: p.preparado.id });
     check('abrir el preparado con su prompt refinado', ab.ok && JSON.stringify(ab.grafo).includes('a lighthouse in the snow'));
-    const ab2 = await t.abrir({ alma: 'alya', ventana, preparado: p.preparado.id });
+    const otra = await t.abrir({ alma: 'alya', ventana, preparado: p.preparado.id, idCliente: 'taller-otro-pedido-1' });
+    check('2.23.3: otro «Abrir» en la misma ventana trae la misma sesión, no una vacía', otra.ok && otra.sesion === ab.sesion);
+    const ab2 = await t.abrir({ alma: 'alya', ventana: otraVentana, preparado: p.preparado.id });
     const semillaDe = (g) => Object.values(g).find((n) => n.class_type === 'KSampler').inputs.seed;
-    check('abrirlo dos veces da la misma semilla', ab2.ok && ab2.sesion !== ab.sesion && Number.isInteger(semillaDe(ab.grafo)) && semillaDe(ab.grafo) === semillaDe(ab2.grafo));
+    check('en otra ventana, otra sesión con la misma semilla', ab2.ok && ab2.sesion !== ab.sesion && Number.isInteger(semillaDe(ab.grafo)) && semillaDe(ab.grafo) === semillaDe(ab2.grafo));
+    await t.cerrar(ab.sesion, { resto: 'descartar' });
+    const ab3 = await t.abrir({ alma: 'alya', ventana, preparado: p.preparado.id });
+    check('cerrada la primera, se abre de nuevo', ab3.ok && ab3.sesion !== ab.sesion);
     check('un preparado que no es: 400/404', (await t.abrir({ alma: 'alya', ventana, preparado: 'p-../x' })).status === 400 && (await t.abrir({ alma: 'alya', ventana, preparado: 'p-zzzzzzzzzzzzzzzz' })).status === 404);
     // Solo agy: no hay taller.
     const id2 = nuevaTarea();

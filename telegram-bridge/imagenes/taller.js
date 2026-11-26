@@ -480,6 +480,13 @@ export function crearTaller({
       const ya = [...sesiones.values()].find((s) => s.idCliente === c.idCliente && RE_SESION.test(s.id));
       if (ya) return abierta(ya, config);
     }
+    // Lo que preparó el alma se abre una vez por ventana: otro «Abrir» (el automático y el botón del turno) trae la misma
+    // sesión, con lo que se haya hecho en ella, en vez de otra vacía.
+    const pr = c.preparado !== undefined ? leerJsonSeguro(path.join(dirPreparados, `${c.preparado}.json`)) : null;
+    if (pr && pr.id === c.preparado && vigente(pr)) {
+      const ya = [...sesiones.values()].find((s) => s.preparado === c.preparado && s.ventana === c.ventana && s.abierta && RE_SESION.test(s.id));
+      if (ya) { ya.ultimaSenal = ms(); return abierta(ya, config); }
+    }
     if (!esLoopbackDe(config)) return no(409, 'no-loopback', 'ComfyUI tiene que estar en esta máquina.');
     const listo = await asegurarComfy(config);
     if (!listo.ok) return listo;
@@ -515,6 +522,7 @@ export function crearTaller({
     const s = {
       id, alma: c.alma, ventana: c.ventana, idCliente: c.idCliente || null, origen: a.origen, caso: a.caso, etiqueta: a.etiqueta, aviso: a.aviso || (a.armado && usaMarcador(a.armado, 'zona') && !(a.datos && a.datos.zona) ? 'Escribí qué parte retocar en el nodo «Zona a retocar»: sin eso, la máscara sale vacía o al azar.' : null),
       clientId: null, vistos, abierta: true, ultimaSenal: ms(), creada: ahora().toISOString(),
+      preparado: c.preparado !== undefined ? String(c.preparado) : null,
       grafo, subidos, nodosBase, externoBase: Boolean(a.externoBase), baseRuta: a.base || a.baseEnPropia || null, imagenes: {}, entradas: {}, salidas: [], enCurso: []
     };
     sesiones.set(id, s);
