@@ -67,7 +67,7 @@ function parsearImagen(linea) {
  * voz (FEAT-044), que pide el bloque solo y no una respuesta con bloque; la
  * plantilla y los topes son los mismos para las dos superficies.
  */
-function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false, pideImagen = false, versiones = null } = {}) {
+function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, pedidos = [], puedePedirImagen = false, puedePedirAnterior = false, pideImagen = false, versiones = null, hiloExterno = false } = {}) {
   // FEAT-171 — El tema es solo de la charla: la consolidación de voz no lo pide.
   const archivar = conTema ? 'archivar m5 #tema' : 'archivar m5';
   const sobreTema = conTema
@@ -90,7 +90,15 @@ function instruccionDeCierre({ encabezado = ENCABEZADO_CHARLA, conTema = false, 
       ]
     : [];
   // FEAT-210 — Solo si las imágenes están habilitadas para esta alma y algún proveedor puede andar.
-  const sobreImagen = puedePedirImagen
+  // Un hilo con contenido de afuera, sin que el usuario la pida en este mensaje: no hay imagen, y el alma lo sabe.
+  const sobreImagen = puedePedirImagen && hiloExterno
+    ? [
+        '',
+        'En este hilo no podés hacer imágenes: trajo contenido de afuera (internet, un link o una foto que no es segura), y',
+        'ahí solo se hace una si el usuario la pide en el mismo mensaje. No anuncies ni prometas una imagen: si te la',
+        'pide, decile que te la pida de nuevo con «haceme una imagen de…» o que abra un hilo nuevo.'
+      ]
+    : puedePedirImagen
     ? [
         '',
         'También podés hacer UNA imagen por respuesta, cuando el usuario te la pide o cuando una imagen',

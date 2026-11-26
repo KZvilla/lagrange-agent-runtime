@@ -1380,6 +1380,8 @@ async function processTaskQueue(carril) {
           ...(task.imagen ? { imagen: fotoDelTurno(task.imagen, configImagenes, { clave: task.clave }) } : {}),
           // FEAT-210 — La consigna de la imagen y, si el alma la ve, lo que vio de las suyas en este hilo.
           puedePedirImagen: puedePedirImagen(task, configImagenes),
+          // Con `hilo_externo`, también en un hilo con contenido de afuera sin pedirla en el mensaje.
+          imagenHiloExterno: Boolean(configImagenes.hilo_externo),
           // FEAT-213 — La foto del turno cuenta aunque el alma escriba `imagen:`, y la última del hilo puede ser la base.
           fotoCuenta: Boolean(configImagenes.foto_cuenta),
           ...(configImagenes.usar_ultima ? {
@@ -3285,7 +3287,7 @@ export function pieDeMemoria(turno) {
   const h = turno.herramienta;
   if (h?.tipo === 'archivo') lineas.push(`🔎 buscó en su archivo: «${h.consulta}» (${h.n})`);
   // La consulta web siempre a la vista, también la rechazada: es lo que salió (o no) a internet.
-  if (h?.tipo === 'web') lineas.push(h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n} ${h.n === 1 ? 'fuente' : 'fuentes'}${h.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : ''})`);
+  if (h?.tipo === 'web') lineas.push(h.rechazo ? `🔎 no buscó «${h.consulta}»: ${h.rechazo}` : `🔎 buscó en internet: «${h.consulta}» (${h.n} ${h.n === 1 ? 'fuente' : 'fuentes'}${h.fuentes?.length ? `: ${[...new Set(h.fuentes)].join(', ')}` : ''})${h.dominio ? ` · leyó ${h.dominio}` : ''}`);
   if (h?.tipo === 'link') lineas.push(h.rechazo ? `🔗 no leyó ${h.dominio || 'el link'}: ${h.rechazo}` : `🔗 leyó: ${h.dominio}`);
   if (turno.externo?.includes('foto')) lineas.push('🖼️ vio la foto (descrita por DeepSeek)');
   // FEAT-210 §2.2 — La foto segura no es de afuera: la vio la visión, entera.

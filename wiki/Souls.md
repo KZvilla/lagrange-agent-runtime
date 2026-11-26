@@ -35,7 +35,8 @@ owned by a Voicebox profile: the voice is the sound, the Soul is the identity an
 - **Mediated tools.** A Soul has no tools. In a Telegram or web-console chat turn it may ask the code to
   `buscar` its archive, `buscar-web` or `leer-link`; the code runs it and a second pass answers on the same
   thread. A photo or web page goes through an isolated mediator that knows nothing about the Soul and returns a
-  description framed as data.
+  description framed as data. A search brings only snippets; when they stop short of what was asked (since 2.22.0),
+  the mediator says which result looks like it has the rest and the code reads that page whole (one more call).
 - **Outside content taints the thread.** Once a thread has seen a photo, search result or page, it writes no memory
   and touches no board until it is renewed. The mark is in `<soul>/contaminados.json` and fails closed.
 
@@ -94,7 +95,9 @@ when it is ready: Telegram sends it as a photo (`🖼️ <n> · <case>`), the te
   model, with its number and where it came from.
 - **When it does not:** with images off (globally or for that Soul), in a reaction or a scheduled job, in an isolated
   turn, more than once per reply, or in a thread that already carries outside content unless you asked for an image
-  in that message.
+  in that message («generame a Bulbmon» and «intentá hacer a X» count since 2.22.0). In such a thread the Soul is told
+  it cannot make one, so it does not promise it. The switch `hilo_externo` (off by default) allows images there
+  without asking in the message: a hidden instruction in a page could then steer the image.
 - **From an image:** replying with text to an image of hers, or asking for «otra parecida», starts from it; ComfyUI can be
   started on its own when it is needed: [[Image Models]].
 - **Safe photos:** a photo marked safe (`#segura` in the Telegram caption, the «Es segura» box in the terminal) or
