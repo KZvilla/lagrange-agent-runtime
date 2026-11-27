@@ -86,7 +86,7 @@
   "10": {
     "class_type": "LatentUpscaleBy",
     "inputs": {
-      "upscale_method": "nearest-exact",
+      "upscale_method": "{{hires_metodo}}",
       "scale_by": "{{hires_escala}}",
       "samples": [
         "3",

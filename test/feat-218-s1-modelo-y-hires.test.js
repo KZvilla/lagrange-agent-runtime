@@ -71,7 +71,7 @@ async function main() {
     check('null es «sin hires» y no queda la clave', con(null).ok && !('hires' in con(null).perfil.muestreo));
     const flux = copia(P.PERFILES.get('flux'));
     check('en Flux, no', P.validarPerfil('mio', { ...flux, muestreo: { ...flux.muestreo, hires: { escala: 1.5, fuerza: 0.5, pasos: 10 } } }).campo === 'muestreo.hires');
-    check('hiresDe: los del perfil, o 1,5 / 0,5 / la mitad de los pasos', JSON.stringify(P.hiresDe(P.PERFILES.get('sdxl-pony'))) === '{"escala":1.5,"fuerza":0.5,"pasos":15}' && JSON.stringify(P.hiresDe({ muestreo: { pasos: 27 } })) === '{"escala":1.5,"fuerza":0.5,"pasos":14}');
+    check('hiresDe: los del perfil, o 1,5 / 0,5 / la mitad de los pasos', JSON.stringify(P.hiresDe(P.PERFILES.get('sdxl-pony'))) === '{"escala":1.5,"fuerza":0.5,"pasos":15,"metodo":"nearest-exact"}' && JSON.stringify(P.hiresDe({ muestreo: { pasos: 27 } })) === '{"escala":1.5,"fuerza":0.5,"pasos":14,"metodo":"nearest-exact"}');
     const img = (tabla) => ({ comfyui: { hires_de: tabla } });
     check('hiresActivo: solo con true y en sdxl', P.hiresActivo(img({ sdxl: true }), P.PERFILES.get('sdxl')) && !P.hiresActivo(img({}), P.PERFILES.get('sdxl')) && !P.hiresActivo(img({ flux: true }), P.PERFILES.get('flux')));
     check('mismoArchivo: «\\» y «/», y los bordes', P.mismoArchivo('SDXL\\a.safetensors', 'SDXL/a.safetensors') && P.mismoArchivo(' a.st ', 'a.st') && !P.mismoArchivo('a.st', 'b.st') && !P.mismoArchivo('', '') && !P.mismoArchivo(null, 'a'));

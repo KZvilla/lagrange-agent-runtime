@@ -94,7 +94,7 @@ function defectos() {
     comfyui: {
       url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, seguro_de: {}, flujos: {},
       // FEAT-218 — Elegir el modelo según el pedido (solo actúa con 2 o más candidatos) y la segunda pasada por perfil.
-      modelo_automatico: true, candidatos: [], hires_de: {},
+      modelo_automatico: true, candidatos: [], hires_de: {}, hires_modelo_de: {},
       mascara: 'florence2', retoque: 'crop-stitch', chequeo_zona: true, loras: [], loras_activos: true,
       tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true,
       arranque: { carpeta: null, automatico: true, apagar_min: RANGOS.apagar_min.defecto, espera_s: RANGOS.espera_s.defecto, flags: [] }
@@ -344,6 +344,20 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
             else validos.push([k, v]);
           }
           d.comfyui.hires_de = Object.fromEntries(validos);
+        }
+      }
+      // FEAT-218 S1.1 — El modelo de reescalado de la segunda pasada por perfil (sin entrada, en el latente).
+      if (c.hires_modelo_de !== undefined && c.hires_modelo_de !== null) {
+        if (!esObjeto(c.hires_modelo_de)) invalido('comfyui.hires_modelo_de', 'tiene que ser un objeto { perfil: archivo }');
+        else {
+          const validos = [];
+          for (const [k, v] of Object.entries(c.hires_modelo_de)) {
+            if (!perfiles.RE_ID.test(k) || reservada(k)) invalido(`comfyui.hires_modelo_de.${k}`, 'tiene que ser el id de un perfil');
+            else if (perfiles.formaDeArchivo(v, MAX_TEXTO) !== null) invalido(`comfyui.hires_modelo_de.${k}`, perfiles.formaDeArchivo(v, MAX_TEXTO));
+            else if (validos.length >= MAX_SEGURO_DE) invalido(`comfyui.hires_modelo_de.${k}`, `pasa las ${MAX_SEGURO_DE} entradas`);
+            else validos.push([k, v.trim()]);
+          }
+          d.comfyui.hires_modelo_de = Object.fromEntries(validos);
         }
       }
       // FEAT-218 — Los modelos entre los que elige el refinador.
@@ -596,6 +610,13 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
         const antes = esObjeto(tabla[id]) && esObjeto(tabla[id].muestreo) ? tabla[id].muestreo.hires : undefined;
         if (m.hires === null) delete m.hires;
         else if (m.hires === undefined && esObjeto(antes) && v0.plantillas === 'sdxl') m.hires = antes;
+        else if (esObjeto(m.hires)) {
+          // S1.1 — `metodo`: la misma regla dentro del objeto (un Desktop que manda los tres números sin él no lo borra).
+          const h = { ...m.hires };
+          if (h.metodo === null) delete h.metodo;
+          else if (h.metodo === undefined && esObjeto(antes) && antes.metodo !== undefined) h.metodo = antes.metodo;
+          m.hires = h;
+        }
         v = { ...v0, muestreo: m };
       }
       const r = perfiles.validarPerfil(id, esObjeto(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'id' && k !== 'origen')) : v);
@@ -610,7 +631,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     const c = pedido.comfyui;
     if (!esObjeto(c)) throw new ErrorAjuste('imagenes.comfyui tiene que ser un objeto', 'imagenes.comfyui');
     const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'seguro_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque',
-      'modelo_automatico', 'candidatos', 'hires_de', ...migracion.LEGADAS];
+      'modelo_automatico', 'candidatos', 'hires_de', 'hires_modelo_de', ...migracion.LEGADAS];
     for (const k of Object.keys(c)) if (!permitidos.includes(k)) throw new ErrorAjuste(`imagenes.comfyui.${k} no está permitido`, `imagenes.comfyui.${k}`);
     let sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
     const quitar = (k) => { delete sal[k]; };
@@ -757,6 +778,25 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       }
       if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con la segunda pasada elegida`, 'imagenes.comfyui.hires_de');
       if (Object.keys(tabla).length) sal.hires_de = tabla; else quitar('hires_de');
+    }
+    // FEAT-218 S1.1 — El modelo de reescalado por perfil, solo en la familia sdxl; `null` saca la entrada (vuelve al latente).
+    if (c.hires_modelo_de !== undefined) {
+      if (c.hires_modelo_de !== null && !esObjeto(c.hires_modelo_de)) throw new ErrorAjuste('imagenes.comfyui.hires_modelo_de tiene que ser un objeto { perfil: archivo }', 'imagenes.comfyui.hires_modelo_de');
+      const e = efectiva();
+      let tabla = c.hires_modelo_de === null ? {} : esObjeto(sal.hires_modelo_de) ? sal.hires_modelo_de : {};
+      for (const [k, v] of Object.entries(c.hires_modelo_de || {})) {
+        const campo = `imagenes.comfyui.hires_modelo_de.${k}`;
+        if (v === null) { tabla = sinClave(tabla, k); continue; }
+        if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`hires_modelo_de: "${k}" no es el id de un perfil`, campo);
+        const forma = perfiles.formaDeArchivo(v, MAX_TEXTO);
+        if (forma !== null) throw new ErrorAjuste(`hires_modelo_de: ${forma}`, campo);
+        const p = perfiles.perfil(e, k);
+        if (!p) throw new ErrorAjuste(`hires_modelo_de: "${k}" no es un perfil que exista`, campo);
+        if (p.plantillas !== 'sdxl') throw new ErrorAjuste(`hires_modelo_de: la segunda pasada es solo para los perfiles de la familia sdxl, y "${k}" es de ${p.plantillas}`, campo);
+        tabla = conClave(tabla, k, v.trim());
+      }
+      if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con modelo de reescalado`, 'imagenes.comfyui.hires_modelo_de');
+      if (Object.keys(tabla).length) sal.hires_modelo_de = tabla; else quitar('hires_modelo_de');
     }
     // Los campos de Desktop v0.21.1: se traducen con la misma función que la migración.
     const legado = Object.fromEntries(migracion.LEGADAS.filter((k) => c[k] !== undefined).map((k) => [k, c[k]]));

@@ -73,7 +73,7 @@ export { TOPE_BYTES, leerHasta, medidasDe, tipoDe, extDe };
  * FEAT-214 — Los datos de los marcadores de un pedido: lo del perfil (muestreo y carga) y lo del pedido. La semilla, la que
  * viene o una al azar.
  */
-export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [], seguro = false, hiresEscala = null }) {
+export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [], seguro = false, hiresEscala = null, hiresModelo = '' }) {
   const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
   const m = perfil.muestreo;
   // FEAT-216 — El prefijo y el negativo fijo del perfil, y el modo seguro: sin etiquetas repetidas.
@@ -88,6 +88,13 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
   datos.hires_escala = Number.isFinite(hiresEscala) ? hiresEscala : h.escala;
   datos.hires_pasos = h.pasos;
   datos.hires_fuerza = h.fuerza;
+  // S1.1 — El método del latente, el modelo de reescalado (con el valor exacto del catálogo, como el modelo fijo) y el
+  // tamaño final, para la plantilla con modelo (su ImageScale lo lleva ahí, sea el modelo ×2 o ×4).
+  datos.hires_metodo = h.metodo;
+  const upscalers = catalogo && Array.isArray(catalogo.upscalers) ? catalogo.upscalers : null;
+  datos.hires_modelo = hiresModelo ? (upscalers && perfilesLib.enLista(upscalers, hiresModelo)) || hiresModelo : '';
+  datos.hires_ancho = Math.round(((Number(ancho) || 0) * datos.hires_escala) / 8) * 8;
+  datos.hires_alto = Math.round(((Number(alto) || 0) * datos.hires_escala) / 8) * 8;
   if (caso === 'retoque') datos.zona = zona;
   if (caso === 'edicion') {
     datos.instruccion = perfilesLib.componerPrompt(perfil, { prompt: instruccion, negativo, seguro }).prompt;
@@ -100,6 +107,17 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
 /** FEAT-218 — El área final máxima de una imagen con la segunda pasada, y la escala mínima que vale la pena. */
 export const TOPE_AREA_HIRES = 4_000_000;
 export const ESCALA_HIRES_MINIMA = 1.25;
+
+/**
+ * FEAT-218 S1.1 — ¿El flujo resuelto es una plantilla de hires del plugin? `'modelo'` (reescala con un modelo), `'latente'`
+ * o `false`. Un solo predicado para entrar al tope de 4 MP y para el guardia de la vuelta sin hires.
+ */
+export function esHiresDelPlugin(resuelto, perfil) {
+  if (!resuelto || resuelto.propio || !perfil) return false;
+  if (resuelto.nombre === `${perfil.plantillas}/nueva-hires-modelo`) return 'modelo';
+  if (resuelto.nombre === `${perfil.plantillas}/nueva-hires`) return 'latente';
+  return false;
+}
 
 /** FEAT-218 — La escala de la segunda pasada con el tope de 4 MP: la del perfil, o menos. */
 export function escalaConTope(escala, ancho, alto) {
@@ -119,7 +137,18 @@ export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = 
   // FEAT-218 — La segunda pasada, solo con la plantilla hires del plugin (un flujo propio no se toca): la escala con el
   // tope de 4 MP y, si queda por debajo de 1,25 (un `desde` del taller de una imagen grande), sin hires.
   let hiresEscala = null;
-  let hires = !plantilla && !resuelto.propio && resuelto.nombre === `${perfil.plantillas}/nueva-hires`;
+  let hires = plantilla ? false : esHiresDelPlugin(resuelto, perfil);
+  // S1.1 — Con un modelo de reescalado que el catálogo no tiene, el hires por latente: la imagen sale igual. Sin catálogo
+  // (o uno sin la lista) no se sabe, y va la de modelo.
+  const hiresModelo = perfilesLib.hiresModeloDe(seccion, perfil);
+  if (hires === 'modelo' && catalogo && Array.isArray(catalogo.upscalers) && !perfilesLib.enLista(catalogo.upscalers, hiresModelo)) {
+    log(`[imagenes] El modelo de reescalado "${hiresModelo}" no está: hires por latente.`);
+    resuelto = resolverFlujo(seccion, perfil, caso, { conModelo: false });
+    if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
+    hires = esHiresDelPlugin(resuelto, perfil);
+    // Un resolver que no entiende { conModelo: false } devuelve otra vez la de modelo: fallaría en ComfyUI, así que no va.
+    if (hires === 'modelo') return { ok: false, codigo: 'fallo-del-flujo', detalle: 'el modelo de reescalado no está instalado' };
+  }
   if (hires) {
     const escala = perfilesLib.hiresDe(perfil).escala;
     hiresEscala = escalaConTope(escala, pedido.ancho, pedido.alto);
@@ -128,12 +157,12 @@ export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = 
       resuelto = resolverFlujo(seccion, perfil, caso, { hires: false });
       if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
       // Un resolver que no entiende { hires: false } devuelve otra vez la de hires: pasaría de 4 MP, así que no va.
-      if (!resuelto.propio && resuelto.nombre === `${perfil.plantillas}/nueva-hires`) return { ok: false, codigo: 'fallo-del-flujo', detalle: 'la imagen pasaría de 4 MP con la segunda pasada' };
+      if (esHiresDelPlugin(resuelto, perfil)) return { ok: false, codigo: 'fallo-del-flujo', detalle: 'la imagen pasaría de 4 MP con la segunda pasada' };
       hires = false;
       hiresEscala = null;
     } else if (hiresEscala < escala) log(`[imagenes] Hires a ${hiresEscala}× (no ${escala}×): la imagen no pasa de 4 MP.`);
   }
-  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores, seguro: perfilesLib.seguroActivo(seccion, perfil), hiresEscala });
+  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores, seguro: perfilesLib.seguroActivo(seccion, perfil), hiresEscala, hiresModelo });
   // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
   const usadas = [];
   for (const l of loras.slice(0, resuelto.huecos.length)) {
@@ -273,8 +302,9 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c, o) => 
     // Desde que el flujo sale para /prompt, ComfyUI pudo haberlo aceptado aunque no conteste.
     let enviado = false;
     let resultado;
-    // FEAT-218 — Con la segunda pasada, el triple: S0 midió entre 2,3 y 2,5 veces lo de una sin hires.
-    const tope = ahora() + config.tiempo_s * 1000 * (a.hires ? 3 : 1);
+    // FEAT-218 — Con la segunda pasada, el triple: S0 midió entre 2,3 y 2,5 veces lo de una sin hires. S1.1 — Con modelo,
+    // el cuádruple: S0.1 midió entre 2,8 y 3,0.
+    const tope = ahora() + config.tiempo_s * 1000 * (a.hires === 'modelo' ? 4 : a.hires ? 3 : 1);
     try {
       if (usaFoto) datos.foto = await subirBase({ json, foto, signal });
       const flujo = flujosLib.aplicarMarcadores(armado, datos);

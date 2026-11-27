@@ -26,6 +26,9 @@ const MAX_FIJO = 300;
 const MAX_SEGURO = 200;
 // FEAT-218 — La segunda pasada (hires): los topes de sus números.
 const HIRES_ESCALA = Object.freeze({ min: 1.25, max: 2 });
+// FEAT-218 S1.1 — Los métodos de LatentUpscaleBy (ComfyUI, nodes.py), y el de siempre.
+const METODOS_LATENTE = Object.freeze(['nearest-exact', 'bilinear', 'area', 'bicubic', 'bislerp']);
+const METODO_LATENTE = 'nearest-exact';
 const HIRES_FUERZA = Object.freeze({ min: 0.2, max: 0.8 });
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 // Las reglas llevan saltos de línea.
@@ -118,13 +121,15 @@ function validarPerfil(id, p) {
   let hires = null;
   if (s.hires !== undefined && s.hires !== null) {
     const h = s.hires;
-    if (!esObjeto(h)) return mal('muestreo.hires', 'tiene que ser un objeto { escala, fuerza, pasos } o null');
-    for (const k of Object.keys(h)) if (!['escala', 'fuerza', 'pasos'].includes(k)) return mal(`muestreo.hires.${k}`, 'no está permitido');
+    if (!esObjeto(h)) return mal('muestreo.hires', 'tiene que ser un objeto { escala, fuerza, pasos, metodo? } o null');
+    for (const k of Object.keys(h)) if (!['escala', 'fuerza', 'pasos', 'metodo'].includes(k)) return mal(`muestreo.hires.${k}`, 'no está permitido');
     if (p.plantillas !== 'sdxl') return mal('muestreo.hires', 'solo los perfiles de la familia sdxl tienen la segunda pasada');
     if (!Number.isFinite(h.escala) || h.escala < HIRES_ESCALA.min || h.escala > HIRES_ESCALA.max) return mal('muestreo.hires.escala', `tiene que ser un número de ${HIRES_ESCALA.min} a ${HIRES_ESCALA.max}`);
     if (!Number.isFinite(h.fuerza) || h.fuerza < HIRES_FUERZA.min || h.fuerza > HIRES_FUERZA.max) return mal('muestreo.hires.fuerza', `tiene que ser un número de ${HIRES_FUERZA.min} a ${HIRES_FUERZA.max}`);
     if (!Number.isInteger(h.pasos) || h.pasos < 1 || h.pasos > 150) return mal('muestreo.hires.pasos', 'tiene que ser un entero de 1 a 150');
-    hires = { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos };
+    // FEAT-218 S1.1 — El método del latente: opcional (sin él, nearest-exact), y se devuelve para que no se pierda al guardar.
+    if (h.metodo !== undefined && !METODOS_LATENTE.includes(h.metodo)) return mal('muestreo.hires.metodo', `tiene que ser uno de ${METODOS_LATENTE.join(', ')}`);
+    hires = { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos, ...(h.metodo !== undefined ? { metodo: h.metodo } : {}) };
   }
 
   if (!esObjeto(p.medidas)) return mal('medidas', 'tiene que ser un objeto');
@@ -310,12 +315,27 @@ function hiresActivo(imagenes, p) {
   return tiene(tabla, p.id) && tabla[p.id] === true;
 }
 
-/** FEAT-218 — Los números de la segunda pasada de un perfil: los suyos, o `{ 1,5, 0,5, la mitad de sus pasos }`. */
+/**
+ * FEAT-218 — Los números de la segunda pasada de un perfil: los suyos, o `{ 1,5, 0,5, la mitad de sus pasos }`.
+ * S1.1 — Y el método del latente, `nearest-exact` si no lo tiene.
+ */
 function hiresDe(p) {
   const h = p && p.muestreo && esObjeto(p.muestreo.hires) ? p.muestreo.hires : null;
-  if (h) return { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos };
+  const metodo = h && METODOS_LATENTE.includes(h.metodo) ? h.metodo : METODO_LATENTE;
+  if (h) return { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos, metodo };
   const pasos = p && p.muestreo && Number.isInteger(p.muestreo.pasos) ? p.muestreo.pasos : 30;
-  return { escala: 1.5, fuerza: 0.5, pasos: Math.max(1, Math.round(pasos / 2)) };
+  return { escala: 1.5, fuerza: 0.5, pasos: Math.max(1, Math.round(pasos / 2)), metodo };
+}
+
+/**
+ * FEAT-218 S1.1 — El modelo de reescalado de la segunda pasada de un perfil (`comfyui.hires_modelo_de[id]`), o `''` si
+ * reescala en el latente. Solo en la familia sdxl.
+ */
+function hiresModeloDe(imagenes, p) {
+  if (!p || p.plantillas !== 'sdxl') return '';
+  const c = imagenes && esObjeto(imagenes.comfyui) ? imagenes.comfyui : {};
+  const tabla = esObjeto(c.hires_modelo_de) ? c.hires_modelo_de : {};
+  return tiene(tabla, p.id) && typeof tabla[p.id] === 'string' ? tabla[p.id] : '';
 }
 
 /** ¿El modo seguro está prendido para este perfil? Si el perfil lo define, sí, salvo `comfyui.seguro_de[id] === false`. */
@@ -409,5 +429,5 @@ module.exports = {
   FAMILIAS, CARGA_DE_FAMILIA, CASOS, PROPORCIONES, ESTILOS, NEGATIVOS, RESERVADAS, RE_ID, MAX_PROPIOS, PERFILES,
   formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe,
   MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt, sinFijas,
-  HIRES_ESCALA, HIRES_FUERZA, hiresActivo, hiresDe, mismoArchivo
+  HIRES_ESCALA, HIRES_FUERZA, hiresActivo, hiresDe, mismoArchivo, METODOS_LATENTE, METODO_LATENTE, hiresModeloDe
 };
