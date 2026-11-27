@@ -167,8 +167,15 @@ window is the terminal's (Desktop v0.24 and later); the daemon side is `/api/v2/
   does not.
 - **Kept images** have `origen: "taller"`, no thread and no view: they never reach a Soul as its last image. «Otra versión»,
   «Variar esta» and Retry need a turn, so they are not offered; «Abrir en el taller» is.
-- **Settings:** `imagenes.taller` — `activo`, `abrir_en_taller`, `prepara_alma`, `mirar` (all on) and `al_cerrar`
-  (`preguntar`, `descartar` or `quedar`). With the workshop open, Stop and Restart of ComfyUI answer «busy», also with force.
+- **Node layout (2.25.0):** ComfyUI loads an API-format workflow with its own automatic arrangement, which can stack nodes.
+  The plugin's templates ship a layout (`plantillas/<family>/<file>.disposicion.json`) that keeps room for the nodes that
+  grow when they show an image. You can save your own layout of a template (`POST /api/v2/taller/<session>:disposicion`):
+  it is applied the next time it opens, for the plugin's templates, a profile's own workflow and your own templates.
+  «Acomodo automático» (`:disposicion-borrar`) drops yours and goes back to the plugin's. Only the visual part is kept
+  (positions, sizes, collapsed, colours, groups and the view), never values or links.
+- **Settings:** `imagenes.taller` — `activo`, `abrir_en_taller`, `prepara_alma`, `mirar`, `disposicion_plugin` (all on)
+  and `al_cerrar` (`preguntar`, `descartar` or `quedar`). With `disposicion_plugin` off, the plugin's templates open with
+  ComfyUI's arrangement (or your own layout, if you saved one). With the workshop open, Stop and Restart of ComfyUI answer «busy», also with force.
 - **It shares your ComfyUI:** the same models, nodes and workflow folder. «Guardar como plantilla…» goes to Lagrange
   (`~/.claude/lagrange-taller`); ComfyUI's own Save goes to your ComfyUI workflows, as always.
 

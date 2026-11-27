@@ -411,4 +411,6 @@ async function main() {
   report();
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Las instalaciones de mentira llevan una copia de node (unos 80 MB cada una): la carpeta se borra al terminar, también si falla.
+const limpiar = () => { try { fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch (err) { console.error('no se pudo borrar ' + raiz + ': ' + err.message); } };
+main().then(limpiar, (err) => { console.error(err); limpiar(); process.exit(1); });

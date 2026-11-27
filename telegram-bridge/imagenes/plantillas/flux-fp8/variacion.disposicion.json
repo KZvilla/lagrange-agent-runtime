@@ -1,0 +1,158 @@
+{
+  "nodos": {
+    "3": {
+      "tipo": "KSampler",
+      "pos": [
+        1927,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "4": {
+      "tipo": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        30
+      ],
+      "tam": [
+        296,
+        98
+      ]
+    },
+    "6": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        400,
+        30
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "7": {
+      "tipo": "ConditioningZeroOut",
+      "pos": [
+        860,
+        30
+      ],
+      "tam": [
+        285,
+        26
+      ]
+    },
+    "8": {
+      "tipo": "VAEDecode",
+      "pos": [
+        2295,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "9": {
+      "tipo": "SaveImage",
+      "pos": [
+        2615,
+        30
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "10": {
+      "tipo": "LoadImage",
+      "pos": [
+        0,
+        208
+      ],
+      "tam": [
+        340,
+        440
+      ]
+    },
+    "11": {
+      "tipo": "VAEEncode",
+      "pos": [
+        860,
+        136
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "12": {
+      "tipo": "ImageScale",
+      "pos": [
+        400,
+        310
+      ],
+      "tam": [
+        284,
+        130
+      ]
+    },
+    "15": {
+      "tipo": "FluxGuidance",
+      "pos": [
+        860,
+        262
+      ],
+      "tam": [
+        345,
+        58
+      ]
+    },
+    "101": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        400,
+        520
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "102": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        860,
+        400
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "103": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        1265,
+        30
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "104": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        1596,
+        30
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    }
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "nodos": {
+    "3": {
+      "tipo": "KSampler",
+      "pos": [
+        1882,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "4": {
+      "tipo": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        30
+      ],
+      "tam": [
+        296,
+        98
+      ]
+    },
+    "5": {
+      "tipo": "EmptySD3LatentImage",
+      "pos": [
+        0,
+        208
+      ],
+      "tam": [
+        270,
+        106
+      ]
+    },
+    "6": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        356,
+        30
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "7": {
+      "tipo": "ConditioningZeroOut",
+      "pos": [
+        816,
+        30
+      ],
+      "tam": [
+        285,
+        26
+      ]
+    },
+    "8": {
+      "tipo": "VAEDecode",
+      "pos": [
+        2251,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "9": {
+      "tipo": "SaveImage",
+      "pos": [
+        2571,
+        30
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "15": {
+      "tipo": "FluxGuidance",
+      "pos": [
+        816,
+        136
+      ],
+      "tam": [
+        345,
+        58
+      ]
+    },
+    "101": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        356,
+        310
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "102": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        816,
+        274
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "103": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        1220,
+        30
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    },
+    "104": {
+      "tipo": "LoraLoaderModelOnly",
+      "pos": [
+        1551,
+        30
+      ],
+      "tam": [
+        271,
+        82
+      ]
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "nodos": {
+    "3": {
+      "tipo": "KSampler",
+      "pos": [
+        1269,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "4": {
+      "tipo": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        30
+      ],
+      "tam": [
+        296,
+        98
+      ]
+    },
+    "6": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        400,
+        30
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "7": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        400,
+        310
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "8": {
+      "tipo": "VAEDecode",
+      "pos": [
+        1637,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "9": {
+      "tipo": "SaveImage",
+      "pos": [
+        2277,
+        30
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "10": {
+      "tipo": "LoadImage",
+      "pos": [
+        0,
+        208
+      ],
+      "tam": [
+        340,
+        440
+      ]
+    },
+    "40": {
+      "tipo": "InpaintCropImproved",
+      "pos": [
+        400,
+        590
+      ],
+      "tam": [
+        357,
+        650
+      ]
+    },
+    "41": {
+      "tipo": "DifferentialDiffusion",
+      "pos": [
+        400,
+        1320
+      ],
+      "tam": [
+        270,
+        58
+      ]
+    },
+    "42": {
+      "tipo": "InpaintModelConditioning",
+      "pos": [
+        860,
+        30
+      ],
+      "tam": [
+        349,
+        138
+      ]
+    },
+    "43": {
+      "tipo": "InpaintStitchImproved",
+      "pos": [
+        1957,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    }
+  }
+}
