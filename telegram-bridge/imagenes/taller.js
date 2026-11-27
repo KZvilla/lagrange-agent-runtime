@@ -174,6 +174,9 @@ function errorDe(entrada) {
   };
 }
 
+/** 2.25.1 — Lo que el taller espera el catálogo de ComfyUI cuando no está en la caché. */
+const TOPE_CATALOGO_MS = 8000;
+
 function leerJsonSeguro(ruta) {
   try { const v = JSON.parse(fs.readFileSync(ruta, 'utf8')); return esObjeto(v) ? v : null; } catch { return null; }
 }
@@ -182,12 +185,16 @@ function leerJsonSeguro(ruta) {
  * Crea el taller. Se inyecta: `leerConfig()` (la sección `imagenes`), `proceso` (el de ComfyUI: `comprobar`, `levantar`, `estado`,
  * `anotarUso`), `dirAdjuntos()`, `cola` (`podar`, `invalidarMapas`), `alCambiar(clave)` (imágenes de un alma), `publicar(tema,
  * tipo, datos)` (los eventos de la v2), `fetchImpl`, `log`, `env`, `ahora`, `dir` y los tiempos en los tests.
+ *
+ * El catálogo de ComfyUI: `catalogoDe(url)` lo mira en la caché (sin pedir nada) y `pedirCatalogo(url)` lo pide si no está
+ * (el daemon le pasa `catalogo.catalogoDe`; sin él, solo la caché). El pedido tiene su tope (`tiempos.catalogo`, 8 s): la
+ * terminal espera 10 s la lista de plantillas.
  */
 export function crearTaller({
   leerConfig, proceso = null, dirAdjuntos = () => null, cola = null, alCambiar = () => {}, publicar = () => {}, fetchImpl = (...a) => globalThis.fetch(...a),
-  log = () => {}, env = process.env, ahora = () => new Date(), dir = dirTaller(env), catalogoDe = (url) => catalogos.enCache(url), tiempos = {}
+  log = () => {}, env = process.env, ahora = () => new Date(), dir = dirTaller(env), catalogoDe = (url) => catalogos.enCache(url), pedirCatalogo = null, tiempos = {}
 }) {
-  const T = { vuelta: 2000, senal: SENAL_MS, uso: USO_MS, levantar: ESPERA_LEVANTAR_MS, disco: DISCO_MS, ...tiempos };
+  const T = { vuelta: 2000, senal: SENAL_MS, uso: USO_MS, levantar: ESPERA_LEVANTAR_MS, disco: DISCO_MS, catalogo: TOPE_CATALOGO_MS, ...tiempos };
   const dirSesiones = path.join(dir, 'sesiones');
   const dirPlantillas = path.join(dir, 'plantillas');
   const dirPreparados = path.join(dir, 'preparados');
@@ -318,8 +325,19 @@ export function crearTaller({
   /**
    * `{ ok, grafo | (armado, datos), base, archivos, baseEnPropia, externoBase, origen, caso, etiqueta, aviso }` o un error.
    */
-  function armar(c, config) {
-    const catalogo = catalogoDe(config.comfyui.url);
+  /** 2.25.1 — El catálogo de la caché o, si no está, pedido (hasta `T.catalogo`). Nunca lanza: sin respuesta, `null`. */
+  async function catalogoVigente(url) {
+    const enCache = catalogoDe(url);
+    if (enCache || typeof pedirCatalogo !== 'function') return enCache || null;
+    let reloj = null;
+    const tope = new Promise((ok) => { reloj = setTimeout(() => ok(null), T.catalogo); });
+    try {
+      const pedido = Promise.resolve().then(() => pedirCatalogo(url)).catch(() => null);
+      return (await Promise.race([pedido, tope])) || null;
+    } finally { clearTimeout(reloj); }
+  }
+
+  function armar(c, config, catalogo = catalogoDe(config.comfyui.url)) {
     if (c.desde !== undefined) return armarDesde(c.desde, config, catalogo);
     if (c.plantilla !== undefined) return armarPlantilla(c, config, catalogo);
     return armarPreparado(c.preparado, config, catalogo);
@@ -497,7 +515,8 @@ export function crearTaller({
     if (!esLoopbackDe(config)) return no(409, 'no-loopback', 'ComfyUI tiene que estar en esta máquina.');
     const listo = await asegurarComfy(config);
     if (!listo.ok) return listo;
-    const a = armar(c, config);
+    // Recién levantado, ComfyUI olvidó el catálogo: se pide otra vez.
+    const a = armar(c, config, await catalogoVigente(config.comfyui.url));
     if (!a.ok) return a;
     // 6 — Con `mirar` apagado no se pregunta el historial. Si no se pudo leer, no se sabe qué había: no se abre.
     const vistos = config.taller.mirar === false ? [] : await idsDelHistorial(config, 200);
@@ -1031,10 +1050,16 @@ export function crearTaller({
     return Object.values(grafo).some((n) => esObjeto(n) && esObjeto(n.inputs) && (de[n.class_type] || []).some(([k, lista]) => typeof n.inputs[k] === 'string' && !perfilesLib.enLista(catalogo[lista], n.inputs[k])));
   }
 
-  function plantillas() {
+  /** 2.25.1 — La lista de la galería («Taller…»): con el catálogo de la caché o, si no está, pedido. */
+  async function listarPlantillas() {
+    const ap = activo(); if (ap) return ap;
+    return plantillas(await catalogoVigente(leerConfig().comfyui.url));
+  }
+
+  function plantillas(conCatalogo) {
     const ap = activo(); if (ap) return ap;
     const config = leerConfig();
-    const catalogo = catalogoDe(config.comfyui.url);
+    const catalogo = conCatalogo !== undefined ? conCatalogo : catalogoDe(config.comfyui.url);
     const lista = CASOS.map((caso) => {
       const est = casosLib.estadoComfyui(config, caso, catalogo);
       return {
@@ -1169,7 +1194,7 @@ export function crearTaller({
   function parar() { clearInterval(reloj); reloj = null; clearInterval(relojBarrido); relojBarrido = null; }
 
   return {
-    abrir, sigue, estado, bytes, quedar, descartar, cerrar, plantillas, guardarPlantilla, borrarPlantilla, guardarDisposicion, borrarDisposicion, preparar, fallo, preparadoDe, fotosEnUso, abiertas, barrer, parar,
+    abrir, sigue, estado, bytes, quedar, descartar, cerrar, plantillas, listarPlantillas, guardarPlantilla, borrarPlantilla, guardarDisposicion, borrarDisposicion, preparar, fallo, preparadoDe, fotosEnUso, abiertas, barrer, parar,
     _vuelta: vuelta, _sesiones: sesiones
   };
 }
