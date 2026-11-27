@@ -49,7 +49,7 @@ const catalogo = (checkpoints) => ({
 });
 
 async function main() {
-  const { datosDe, armarPedido, escalaConTope } = await importar('telegram-bridge/imagenes/comfyui.js');
+  const { datosDe, armarPedido, escalaConTope, crearComfyui } = await importar('telegram-bridge/imagenes/comfyui.js');
   const tareas = await importar('telegram-bridge/tareas.js');
   const { crearColaImagenes, camposDeImagen } = await importar('telegram-bridge/imagenes-cola.js');
   const { crearGaleria } = await importar('telegram-bridge/imagenes/galeria.js');
@@ -149,6 +149,29 @@ async function main() {
     check('un flujo propio no recibe el tope', p.ok && !p.hires && p.resuelto.propio);
     const d = datosDe({ caso: 'nueva', modelo: WAI, perfil: P.PERFILES.get('sdxl-pony'), prompt: 'x', ancho: 1024, alto: 1024 });
     check('datosDe pone siempre los tres', d.hires_escala === 1.5 && d.hires_pasos === 15 && d.hires_fuerza === 0.5);
+  });
+
+  await group('generar: con hires, el triple de tiempo', async () => {
+    // Un ComfyUI que nunca termina, con un reloj falso: cuánto esperó hasta dar «tiempo».
+    const cuanto = async (hires) => {
+      let t = 1_000_000;
+      const inicio = t;
+      const resp = (cuerpo) => ({ ok: true, status: 200, json: async () => cuerpo });
+      const fetchImpl = async (url) => {
+        const u = new URL(url);
+        if (u.pathname === '/prompt') return resp({ prompt_id: 'p1', node_errors: {} });
+        if (u.pathname === '/queue') return resp({ queue_running: [[0, 'p1']], queue_pending: [] });
+        return resp({});
+      };
+      const sec = config({}, { tiempo_s: 10, hires_de: hires ? { 'sdxl-illustrious': true } : {} });
+      const p = crearComfyui({ config: sec, catalogoDe: () => null, fetchImpl, ahora: () => t, esperar: async (ms) => { t += ms; await new Promise((r) => setImmediate(r)); } });
+      const r = await p.generar({ caso: 'nueva', modelo: WAI, perfil: P.PERFILES.get('sdxl-illustrious'), prompt: 'x', ancho: 1024, alto: 1024, destino: path.join(raiz, `tiempo-${hires}`) });
+      return { codigo: r.codigo, ms: t - inicio };
+    };
+    const sin = await cuanto(false);
+    const con = await cuanto(true);
+    // Lo que sigue al tope (la espera de la cancelación) es igual en los dos: la diferencia es 2 × tiempo_s.
+    check('con hires espera 20 s más que sin (10 s × 3 contra 10 s)', sin.codigo === 'tiempo' && con.codigo === 'tiempo' && con.ms - sin.ms === 20000, JSON.stringify({ sin, con }));
   });
 
   // ------------------------------------------------------------- casos
