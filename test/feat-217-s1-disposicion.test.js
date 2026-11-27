@@ -179,6 +179,18 @@ async function main() {
     const ret = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:retoque', base: b });
     check('retoque: plugin:sdxl/retoque-<mascara>', ret.ok && ret.disposicion.clave === `plugin:sdxl/retoque-${cfg.comfyui.mascara}`);
     check('el estado dice lo mismo', JSON.stringify(t.estado(n.sesion).disposicion) === JSON.stringify(n.disposicion));
+    // Lo que preparó un alma: la clave de su plantilla.
+    const pr = t.preparar({ clave: 'alya', tareaId: 't_prep0001', caso: 'nueva', perfil: 'sdxl', modelo: MODELO, prompt: 'un faro', negativo: '', ancho: 1024, alto: 1024, loras: [] });
+    const ap = await t.abrir({ alma: 'alya', ventana: 'v-cccccccccccccccc', preparado: pr.id });
+    check('un preparado: plugin:sdxl/nueva, con la del plugin', ap.ok && ap.disposicion.clave === 'plugin:sdxl/nueva' && ap.disposicion.guardada !== null);
+    // Una imagen que se quedó del taller, con su propio flujo: sin clave (§7).
+    const dirF = path.join(indice.dirImagenes('alya'), 'flujos', 't_tallerfijo0001-1');
+    fs.mkdirSync(dirF, { recursive: true });
+    fs.writeFileSync(path.join(dirF, 'grafo.json'), JSON.stringify(n.grafo));
+    fs.writeFileSync(path.join(dirF, 'archivos.json'), '{}');
+    const kept = await t.abrir({ alma: 'alya', ventana, desde: poner({ origen: 'taller', flujo: dirF, caso: null }) });
+    check('una imagen que se quedó del taller: clave null, sin disposición', kept.ok && kept.disposicion.clave === null && kept.disposicion.guardada === null && kept.disposicion.deUsuario === false && kept.disposicion.delPlugin === null);
+    check('y guardarle una da 409 sin-clave', t.guardarDisposicion(kept.sesion, { disposicion: mia }).motivo === 'sin-clave');
     cfg = config({ disposicion_plugin: false });
     const sin = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
     check('con la casilla apagada: la clave sí, la del plugin no', sin.ok && sin.disposicion.clave === 'plugin:sdxl/nueva' && sin.disposicion.guardada === null && sin.disposicion.delPlugin === null);
@@ -286,6 +298,16 @@ async function main() {
     check('después: sin disposición', t.estado(a.sesion).disposicion.guardada === null && t.plantillas().plantillas.find((p) => p.id === g.id).conDisposicion === false);
     const grande = t.guardarPlantilla({ nombre: 'Enorme', grafo, disposicion: conNodos(350) });
     check('una de 350 nodos: la plantilla se guarda igual, sin disposición', grande.ok && grande.sinDisposicion === true && /se guardó sin ella/.test(grande.motivo) && !Object.hasOwn(JSON.parse(fs.readFileSync(path.join(dirTaller, 'plantillas', `${grande.id.slice(7)}.json`), 'utf8')), 'disposicion'));
+    // El peor caso: un grafo de casi 2 MB (el tope de formaDeGrafo) con una disposición grande. Entra en los 2,5 MB con que
+    // se lee: se guarda con ella, y guardarle otra después la deja legible.
+    const relleno = (bytes) => ({ ...grafo, 999: { class_type: 'Note', inputs: { text: 'x'.repeat(bytes) } } });
+    const enorme = conNodos(300, { tipo: '世'.repeat(200) });
+    const borde = t.guardarPlantilla({ nombre: 'Borde', grafo: relleno(2 * 1024 * 1024 - 20 * 1024), disposicion: enorme });
+    const archivoBorde = () => path.join(dirTaller, 'plantillas', borde.id.slice(7) + '.json');
+    check('al borde: se guarda con su disposición y se sigue viendo', borde.ok && !borde.sinDisposicion && fs.statSync(archivoBorde()).size > 2 * 1024 * 1024 && t.plantillas().plantillas.find((p) => p.id === borde.id).conDisposicion === true);
+    const ab = await t.abrir({ alma: 'alya', ventana, plantilla: borde.id });
+    const otraGrande = conNodos(300, { tipo: '界'.repeat(200) });
+    check('guardarle otra después: sigue legible', ab.ok && t.guardarDisposicion(ab.sesion, { disposicion: otraGrande }).ok && t.estado(ab.sesion).disposicion.deUsuario === true && fs.statSync(archivoBorde()).size <= 2.5 * 1024 * 1024);
     check('sin disposición en el pedido, como antes', (() => { const s = t.guardarPlantilla({ nombre: 'Sola', grafo }); return s.ok && s.sinDisposicion === undefined; })());
     fs.rmSync(archivo, { force: true });
     check('borrada la plantilla: guardar y borrar dan 404', t.guardarDisposicion(a.sesion, { disposicion: mia }).status === 404 && t.borrarDisposicion(a.sesion).status === 404);

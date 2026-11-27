@@ -974,7 +974,10 @@ export function crearTaller({
       const pid = r.clave.slice(7);
       const o = leerPropia(pid);
       if (!o) return no(404, 'no-existe', 'Esa plantilla ya no está.');
-      archivos.escribirAtomico(rutaPropia(pid), `${JSON.stringify({ ...o, disposicion: v.disposicion })}\n`);
+      // El archivo nunca pasa el tope con que se lee: si no, la plantilla dejaría de verse y no se podría deshacer.
+      const texto = `${JSON.stringify({ ...o, disposicion: v.disposicion })}\n`;
+      if (Buffer.byteLength(texto) > TOPE_PROPIA) return no(413, 'grande', 'Con esa disposición, la plantilla pasaría los 2,5 MB: no se guardó.');
+      archivos.escribirAtomico(rutaPropia(pid), texto);
       return { ok: true, clave: r.clave };
     }
     const ruta = archivoDisposicion(r.clave);
@@ -1077,8 +1080,15 @@ export function crearTaller({
       if (v.ok) disposicion = v.disposicion; else sinDisposicion = `${v.campo} ${v.motivo}`;
     }
     const id = id16();
+    const creada = ahora().toISOString();
+    let texto = `${JSON.stringify({ nombre, grafo: c.grafo, ...(disposicion ? { disposicion } : {}), creada })}\n`;
+    // El archivo nunca pasa el tope con que se lee (el grafo ya va hasta 2 MB, por formaDeGrafo).
+    if (disposicion && Buffer.byteLength(texto) > TOPE_PROPIA) {
+      sinDisposicion = 'la plantilla con su disposición pasaría los 2,5 MB';
+      texto = `${JSON.stringify({ nombre, grafo: c.grafo, creada })}\n`;
+    }
     fs.mkdirSync(dirPlantillas, { recursive: true });
-    archivos.escribirAtomico(path.join(dirPlantillas, `${id}.json`), `${JSON.stringify({ nombre, grafo: c.grafo, ...(disposicion ? { disposicion } : {}), creada: ahora().toISOString() })}\n`);
+    archivos.escribirAtomico(path.join(dirPlantillas, `${id}.json`), texto);
     return { ok: true, id: `propia:${id}`, ...(sinDisposicion ? { sinDisposicion: true, motivo: `La disposición no vale (${sinDisposicion}): se guardó sin ella.` } : {}) };
   }
 
