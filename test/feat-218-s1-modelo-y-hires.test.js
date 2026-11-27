@@ -140,6 +140,8 @@ async function main() {
     const logs2 = [];
     const g = arma(2048, 2048, logs2);
     check('2048² (un desde del taller): por debajo de 1,25 va con nueva, con su log', g.ok && !g.hires && g.resuelto.nombre === 'sdxl/nueva' && logs2.some((l) => /Sin hires/.test(l)));
+    const tres = armarPedido({ seccion: sec, caso: 'nueva', modelo: WAI, perfil: pi, pedido: { prompt: 'x', ancho: 2048, alto: 2048 }, resolverFlujo: (s, p, c) => F.resolverFlujo(s, p, c) });
+    check('un resolver de tres argumentos y 2048²: no manda la de hires', !tres.ok && tres.codigo === 'fallo-del-flujo', JSON.stringify({ ok: tres.ok, nombre: tres.resuelto && tres.resuelto.nombre }));
     check('escalaConTope', escalaConTope(1.5, 1088, 1088) === 1.5 && escalaConTope(1.5, 1536, 1536) === 1.3 && escalaConTope(1.25, 1024, 1024) === 1.25);
     const sinCasilla = armarPedido({ seccion: config(), caso: 'nueva', modelo: WAI, perfil: pi, pedido: { prompt: 'x', ancho: 1088, alto: 1088 } });
     check('sin la casilla: nueva y sin hires', sinCasilla.ok && !sinCasilla.hires && sinCasilla.resuelto.nombre === 'sdxl/nueva');
@@ -256,6 +258,12 @@ async function main() {
     const ka = C.candidatosDe(conAgy, { ...auto, desdeFoto: true });
     const sa = R.consigna(C.disponiblesDe(conAgy, { ...auto, desdeFoto: true }), { candidatos: ka });
     check('una nueva que solo puede agy: Available, y los candidatos solo variación', ka && ka.every((k) => k.puede.join() === 'variacion') && /- nueva: [^\n]*Available\./.test(sa));
+    // Dos casos que ningún candidato cubre, con el mismo perfil: el bloque una vez.
+    const sn = { ...copia(P.PERFILES.get('sdxl-illustrious')), nombre: 'Solo nueva', casos: ['nueva'] };
+    const dos = conCandidatos({ perfiles_propios: { 'solo-nueva': sn } }, { candidatos: [{ archivo: 'a.safetensors', para: 'a' }, { archivo: 'b.safetensors', para: 'b' }], perfil_de: { 'a.safetensors': 'solo-nueva', 'b.safetensors': 'solo-nueva' } });
+    const sd = R.consigna(C.disponiblesDe(dos, { ...auto, desdeFoto: true }), { candidatos: C.candidatosDe(dos, { ...auto, desdeFoto: true }) });
+    const tramoCasos = sd.split('\nCases:\n')[1] || '';
+    check('variación y retoque sin candidato, mismo perfil: el bloque una vez', tramoCasos.split('Model profile: SDXL.').length === 2 && tramoCasos.includes('Same profile as "variacion".'), tramoCasos.slice(0, 200));
     // Edición con Kontext: ningún candidato la cubre y conserva su bloque.
     const ed = conCandidatos({}, { modelo_edicion: 'flux1-kontext.safetensors' });
     const se = R.consigna(C.disponiblesDe(ed, { ...auto, desdeFoto: true }), { candidatos: C.candidatosDe(ed, { ...auto, desdeFoto: true }) });

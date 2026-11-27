@@ -139,6 +139,7 @@ function consignaConCandidatos(disponibles, { base, fuerzaAutomatica, candidatos
     const d = disponibles[caso];
     const igualA = perfilesVistos.get(d.perfil.id);
     lineas.push(...lineasDePerfil(d, { campo: caso === 'edicion' ? '"instruccion"' : '"prompt"', tope: d.tope, soloTopeYLoras: Boolean(igualA), igualA }));
+    if (!igualA) perfilesVistos.set(d.perfil.id, caso);
   }
   return lineas.join('\n');
 }

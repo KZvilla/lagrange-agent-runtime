@@ -127,6 +127,8 @@ export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = 
       log(`[imagenes] Sin hires: con ${pedido.ancho}×${pedido.alto} la imagen pasaría de 4 MP.`);
       resuelto = resolverFlujo(seccion, perfil, caso, { hires: false });
       if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
+      // Un resolver que no entiende { hires: false } devuelve otra vez la de hires: pasaría de 4 MP, así que no va.
+      if (!resuelto.propio && resuelto.nombre === `${perfil.plantillas}/nueva-hires`) return { ok: false, codigo: 'fallo-del-flujo', detalle: 'la imagen pasaría de 4 MP con la segunda pasada' };
       hires = false;
       hiresEscala = null;
     } else if (hiresEscala < escala) log(`[imagenes] Hires a ${hiresEscala}× (no ${escala}×): la imagen no pasa de 4 MP.`);
