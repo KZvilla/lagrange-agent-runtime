@@ -223,6 +223,12 @@ async function main() {
     const crudo = copia(p1); crudo.perfiles_propios.mio.muestreo.hires.metodo = 'raro';
     const p4 = tira(() => aplica({ perfiles_propios: { mio: sinMetodo } }, crudo)) || aplica({ perfiles_propios: { mio: sinMetodo } }, crudo);
     check('un método guardado que no vale no se copia: guarda sin él', p4 && p4.perfiles_propios && !('metodo' in p4.perfiles_propios.mio.muestreo.hires), p4 && p4.message);
+    const sinHiresPedido = copia(propio); delete sinHiresPedido.muestreo.hires; sinHiresPedido.nombre = 'Sin hires en el pedido';
+    let p5 = null;
+    try { p5 = aplica({ perfiles_propios: { mio: sinHiresPedido } }, crudo); } catch (e) { p5 = e; }
+    check('…y tampoco con un pedido sin muestreo.hires (un Desktop viejo): conserva los números sin el método', p5 && p5.perfiles_propios && p5.perfiles_propios.mio.muestreo.hires.pasos === 15 && !('metodo' in p5.perfiles_propios.mio.muestreo.hires), p5 && p5.message);
+    const nz = A.normalizar({ comfyui: { hires_de: { flux: true, sdxl: true, nope: true }, hires_modelo_de: { flux: US, nope: US, 'sdxl-pony': US } } });
+    check('normalizar: hires_de y hires_modelo_de solo de perfiles sdxl que existan, con su aviso', JSON.stringify(nz.imagenes.comfyui.hires_de) === '{"sdxl":true}' && JSON.stringify(nz.imagenes.comfyui.hires_modelo_de) === `{"sdxl-pony":"${US}"}` && nz.invalidos.length === 4);
     check('un método que no es: 400', /metodo/.test(tira(() => aplica({ perfiles_propios: { mio: { ...propio, muestreo: { ...propio.muestreo, hires: { ...propio.muestreo.hires, metodo: 'lanczos' } } } } })).campo));
     const v = ajustesV2({ imagenes: A.leerImagenes({ imagenes: { ...p1, comfyui: { hires_modelo_de: { 'sdxl-illustrious': US } } } }).imagenes }).imagenes;
     check('comfyuiV2: hires_modelo_de (la señal de 2.26.1)', v.comfyui.hires_modelo_de['sdxl-illustrious'] === US && esObjeto(ajustesV2({ imagenes: A.leerImagenes({ imagenes: {} }).imagenes }).imagenes.comfyui.hires_modelo_de));

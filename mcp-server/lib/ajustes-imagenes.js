@@ -240,6 +240,12 @@ function rangoTolerante(v, campo) {
  * La lectura tolerante: cada campo inválido cae a su valor por defecto y se avisa. `{ imagenes, avisos }`.
  * `almas`, si viene, filtra `por_alma` a las que existen (con aviso).
  */
+/** FEAT-218 S1.1 — ¿`id` es un perfil de la familia sdxl, del plugin o propio (ya normalizado en `d`)? */
+function esSdxl(d, id) {
+  const p = perfiles.perfil(d, id);
+  return Boolean(p && p.plantillas === 'sdxl');
+}
+
 function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
   const d = defectos();
   d[flujosLib.DENY] = denyPaths;
@@ -340,6 +346,8 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
           for (const [k, v] of Object.entries(c.hires_de)) {
             if (!perfiles.RE_ID.test(k) || reservada(k)) invalido(`comfyui.hires_de.${k}`, 'tiene que ser el id de un perfil');
             else if (typeof v !== 'boolean') invalido(`comfyui.hires_de.${k}`, 'tiene que ser true o false');
+            // S1.1 — Como en aplicarImagenes: solo un perfil sdxl que exista (si no, cualquier PATCH que la devuelva daría 400).
+            else if (!esSdxl(d, k)) invalido(`comfyui.hires_de.${k}`, 'no es un perfil sdxl que exista');
             else if (validos.length >= MAX_SEGURO_DE) invalido(`comfyui.hires_de.${k}`, `pasa las ${MAX_SEGURO_DE} entradas`);
             else validos.push([k, v]);
           }
@@ -354,6 +362,7 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
           for (const [k, v] of Object.entries(c.hires_modelo_de)) {
             if (!perfiles.RE_ID.test(k) || reservada(k)) invalido(`comfyui.hires_modelo_de.${k}`, 'tiene que ser el id de un perfil');
             else if (perfiles.formaDeArchivo(v, MAX_TEXTO) !== null) invalido(`comfyui.hires_modelo_de.${k}`, perfiles.formaDeArchivo(v, MAX_TEXTO));
+            else if (!esSdxl(d, k)) invalido(`comfyui.hires_modelo_de.${k}`, 'no es un perfil sdxl que exista');
             else if (validos.length >= MAX_SEGURO_DE) invalido(`comfyui.hires_modelo_de.${k}`, `pasa las ${MAX_SEGURO_DE} entradas`);
             else validos.push([k, v.trim()]);
           }
@@ -609,7 +618,12 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
         const m = { ...v0.muestreo };
         const antes = esObjeto(tabla[id]) && esObjeto(tabla[id].muestreo) ? tabla[id].muestreo.hires : undefined;
         if (m.hires === null) delete m.hires;
-        else if (m.hires === undefined && esObjeto(antes) && v0.plantillas === 'sdxl') m.hires = antes;
+        else if (m.hires === undefined && esObjeto(antes) && v0.plantillas === 'sdxl') {
+          // S1.1 — Sin el método guardado si no vale (editado a mano): si no, el PATCH entero daría 400.
+          const h = { ...antes };
+          if (h.metodo !== undefined && !perfiles.METODOS_LATENTE.includes(h.metodo)) delete h.metodo;
+          m.hires = h;
+        }
         else if (esObjeto(m.hires)) {
           // S1.1 — `metodo`: la misma regla dentro del objeto (un Desktop que manda los tres números sin él no lo borra).
           const h = { ...m.hires };
