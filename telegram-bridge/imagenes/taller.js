@@ -405,7 +405,7 @@ export function crearTaller({
       const b = caso === 'nueva' ? { ok: true, ruta: null, externo: false, num: null } : conBase();
       if (!b.ok) return b;
       const [ancho, alto] = caso === 'nueva' ? est.perfil.medidas['1:1'] : medidasParaBase(est.perfil, b.e);
-      const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
+      const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas, est.modelo), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
       return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto), modelo: est.modelo };
     }

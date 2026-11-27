@@ -100,12 +100,14 @@ function lineasDePerfil(d, { campo = '"prompt"', tope = d.tope, soloTopeYLoras =
 }
 
 /** FEAT-218 — Lo que se suma a la base cuando el refinador elige el modelo. */
+// El texto que midió S0 (12 de 12): "modelo" en el ejemplo del JSON y estas líneas, en este orden.
 const SOBRE_MODELO = Object.freeze([
-  'Also add "modelo" to the JSON: the key of one model from "Models:".',
-  'Choose "modelo" by what the request is about and by each model\'s description.',
-  'If the user\'s message names one of these models, or a style that only one of them is for, choose it.',
-  'Write "prompt" and "negativo" with the rules of the model you chose.'
+  'Choose "modelo" from the list of models by what the request is about and by each model\'s description.',
+  'If the user\'s message names one of these models, or a style that only one of them is for, choose it.'
 ]);
+const SOBRE_MODELO_FIN = 'Write "prompt" and "negativo" with the rules of the model you chose.';
+const JSON_SIN_MODELO = '"loras": []}.';
+const JSON_CON_MODELO = '"loras": [], "modelo": "<model key>"}.';
 const SOBRE_MODELO_FOTO = 'When a photo is attached and the case uses it, also choose by the photo\'s style (for example drawn or anime versus photographic).';
 
 /**
@@ -114,9 +116,10 @@ const SOBRE_MODELO_FOTO = 'When a photo is attached and the case uses it, also c
  * retoque `fill`) conserva el bloque de su perfil.
  */
 function consignaConCandidatos(disponibles, { base, fuerzaAutomatica, candidatos, conFoto }) {
-  const lineas = cabeza(disponibles, { base, fuerzaAutomatica });
+  const lineas = cabeza(disponibles, { base, fuerzaAutomatica }).map((l, i) => (i === 2 ? l.split(JSON_SIN_MODELO).join(JSON_CON_MODELO) : l));
   lineas.push(...SOBRE_MODELO);
   if (conFoto) lineas.push(SOBRE_MODELO_FOTO);
+  lineas.push(SOBRE_MODELO_FIN);
   lineas.push('', 'Models:');
   const perfilesVistos = new Map();
   for (const c of candidatos) {
@@ -200,7 +203,7 @@ function sanear(o, { disponibles, candidatos = null, desdeFoto = false, base = n
   // FEAT-213 — La fuerza la calcula el código: de la salida solo vale `cambio`, y solo con el interruptor prendido.
   const r = casos.ajustarAlCaso({ ...o, fuerza: undefined, cambio: fuerzaAutomatica ? o.cambio : undefined }, caso, usar[caso]);
   if (!r) return null;
-  const modelo = conElegido ? { modelo: elegido.archivo, modeloAuto: true } : candidatos && clave ? { modeloDescartado: clave } : {};
+  const modelo = conElegido ? { modelo: elegido.archivo, modeloAuto: true } : elegido ? { modeloDescartado: elegido.clave } : {};
   return { ...r, caso, casoPedido, ...modelo };
 }
 

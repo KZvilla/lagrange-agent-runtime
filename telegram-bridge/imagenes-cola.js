@@ -52,13 +52,14 @@ const EXT = Object.freeze({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp
  * - `proveedor(id, imagenes)`: el proveedor con la config vigente (ComfyUI, agy, los remotos);
  * - `leerConfig()`: la sección `imagenes` normalizada, leída ahora;
  * - `catalogoDe(url)`: el catálogo de ComfyUI (de su caché) o `null`;
+ * - FEAT-218: `catalogoEnCache(url)`: el catálogo que ya está en la caché, sin pedirlo, o `null`;
  * - `refinador`, `vision`, `registrarUso`, `log`, `env` (para las rutas de las almas);
  * - FEAT-213: `comfy` (`comprobar(config)`, `levantar(config)` y `anotarUso(config)` del proceso de ComfyUI), `dirAdjuntos()`,
  *   `fotosEnUso()` (las rutas de las fotos de los turnos abiertos) y `alCambiar(clave)` (una imagen nueva, borrada o podada).
  */
 export function crearColaImagenes({
   registro, proveedor, leerConfig = () => disponible.leerImagenes(), refinador = refinadorReal, vision = visionReal,
-  catalogoDe = (url) => catalogos.catalogoDe(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined,
+  catalogoDe = (url) => catalogos.catalogoDe(url), catalogoEnCache = (url) => catalogos.enCache(url), registrarUso = () => {}, log = () => {}, env = process.env, ahora = () => new Date(), manual = undefined,
   comfy = null, dirAdjuntos = () => null, fotosEnUso = () => [], alCambiar = () => {},
   // FEAT-214 — `preparar(datos)` → `{ ok, id }` y `fallo({ tareaId, clave, codigo })`: «Que lo prepare el alma».
   taller = null
@@ -233,8 +234,10 @@ export function crearColaImagenes({
   function primeroComfy(job, config, { opcional = false } = {}) {
     const conFoto = Boolean((job.desdeFoto || (job.fotoOpcional && (opcional || job.caso))) && job.foto);
     const caso = job.caso || (conFoto ? 'variacion' : 'nueva');
-    // FEAT-218 — El modelo al que va a caer el trabajo: el de una repetición si todavía puede; si no, el fijo.
-    const modelo = modeloQuePuede(config, job.modelo, caso, null);
+    // FEAT-218 — El modelo al que va a caer el trabajo: el de una repetición si todavía puede; si no, el fijo. Con el
+    // catálogo de la caché, un modelo que ya no está instalado no cuenta (sin caché, como antes: no se sabe).
+    const enCache = job.modelo && config.orden.includes('comfyui') ? catalogoEnCache(config.comfyui.url) : null;
+    const modelo = modeloQuePuede(config, job.modelo, caso, enCache || null);
     const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual, modelo })[caso];
     return Boolean(d && d.proveedores[0] === 'comfyui');
   }
@@ -833,7 +836,7 @@ export function crearColaImagenes({
 
   const estadoDeImagenes = () => ({ pendientes: pendientes.length + esperando.size, enCurso: enCurso ? 1 : 0 });
 
-  return { encolar, podar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, variar, partir, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando };
+  return { encolar, podar, cancelarImagenes, lasDeComfy, cortarLasDeComfy, avisarAfuera, tieneAbiertas, otra, variar, partir, reintentar, bytesDe, bytesDelIndice, borrarImagen, enUso, reconocer, reconocerTelegram, invalidarMapas, transicionImagen, estadoDeImagenes, alArrancar, _pendientes: pendientes, _esperando: esperando, _primeroComfy: primeroComfy };
 }
 
 /**

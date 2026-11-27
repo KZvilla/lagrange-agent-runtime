@@ -54,7 +54,7 @@ async function main() {
   const { crearColaImagenes, camposDeImagen } = await importar('telegram-bridge/imagenes-cola.js');
   const { crearGaleria } = await importar('telegram-bridge/imagenes/galeria.js');
   const { ajustesV2 } = await importar('telegram-bridge/web/v2/ajustes.js');
-  const { imagenesDe } = await importar('telegram-bridge/web/v2/productores.js');
+  const { imagenesDe, turnoDe } = await importar('telegram-bridge/web/v2/productores.js');
   const { validar, revisarContrato } = await importar('telegram-bridge/web/v2/esquema.js');
 
   // ------------------------------------------------------------ perfiles
@@ -163,6 +163,10 @@ async function main() {
     check('con modelos: solo con esos, «\\» igual a «/»', C.lorasDe(loras(['SDXL\\' + PONY]), 'sdxl', 'SDXL/' + PONY).length === 1 && C.lorasDe(loras([PONY]), 'sdxl', WAI).length === 0);
     check('con modelos y sin saber el modelo: no se ofrece (y no lanza)', C.lorasDe(loras([PONY]), 'sdxl').length === 0);
     const d = C.disponiblesDe(loras([PONY]), { ...auto, modelo: PONY });
+    const fx = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'feat-218', 'consigna-2.25.1.json'), 'utf8'));
+    const proyectar = (dd) => Object.fromEntries(Object.entries(dd).map(([k, v]) => [k, { proveedores: v.proveedores, afuera: v.afuera, motivo: v.motivo, perfil: v.perfil ? v.perfil.id : null, modelo: v.modelo ?? null, tope: v.tope, huecos: v.huecos, loras: v.loras, seguro: v.seguro }]));
+    const distintosDisp = fx.casos.filter((k) => JSON.stringify(proyectar(C.disponiblesDe(fx.configs[k.nombre], { desdeFoto: k.desdeFoto, catalogo: null, manual: () => false }))) !== JSON.stringify(k.disponibles));
+    check(`disponiblesDe sin modelo: lo mismo que ${fx.version} en los ${fx.casos.length} casos`, fx.version === '2.25.1' && fx.casos.length === 28 && distintosDisp.length === 0, distintosDisp.map((k) => k.nombre).join());
     check('disponiblesDe con modelo ofrece la LoRA de ese modelo', d.nueva.modelo === PONY && d.nueva.loras.length === 1 && C.disponiblesDe(loras([PONY]), auto).nueva.loras.length === 0);
   });
 
@@ -180,6 +184,9 @@ async function main() {
     check('uno que no está instalado no se lista', sinPony && sinPony.length === 2 && !sinPony.some((c) => c.archivo === PONY));
     const repetida = C.candidatosDe(conCandidatos({}, { candidatos: [{ archivo: 'a/x.safetensors', para: 'a' }, { archivo: 'b/x.safetensors', para: 'b' }] }), auto);
     check('dos con la misma clave: la segunda lleva -2', repetida && repetida[1].clave === 'x-2');
+    const choca = C.candidatosDe(conCandidatos({}, { candidatos: [{ archivo: 'a/x.safetensors', para: 'a' }, { archivo: 'b/x.safetensors', para: 'b' }, { archivo: 'x-2.safetensors', para: 'c' }] }), auto);
+    check('una clave natural que choca con una sufijada: todas distintas', choca && choca.map((c) => c.clave).join() === 'x,x-2,x-2-2', choca && choca.map((c) => c.clave).join());
+    check('dos en la lista y uno solo instalado: no elige', C.candidatosDe(conCandidatos({}, { candidatos: [CANDIDATOS[0], CANDIDATOS[1]] }), { ...auto, catalogo: catalogo([WAI]) }) === null);
     // Un perfil propio que solo hace nueva, para un candidato que no retoca.
     const soloNueva = { ...copia(P.PERFILES.get('sdxl')), nombre: 'Solo nueva', casos: ['nueva'] };
     const mixta = conCandidatos({ perfiles_propios: { 'solo-nueva': soloNueva } }, { candidatos: [{ archivo: 'solo.safetensors', para: 'solo nuevas' }, { archivo: WAI, para: 'anime' }], perfil_de: { 'solo.safetensors': 'solo-nueva' } });
@@ -193,10 +200,16 @@ async function main() {
   await group('La consigna', async () => {
     const cfg = conCandidatos();
     const disp = C.disponiblesDe(cfg, auto);
+    const fx = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'feat-218', 'consigna-2.25.1.json'), 'utf8'));
+    const distintas = fx.casos.filter((k) => {
+      const dd = C.disponiblesDe(fx.configs[k.nombre], { desdeFoto: k.desdeFoto, catalogo: null, manual: () => false });
+      return R.consigna(dd, k.opciones) !== k.consigna || R.consigna(dd, { ...k.opciones, candidatos: null }) !== k.consigna || R.consigna(dd, { ...k.opciones, candidatos: [] }) !== k.consigna;
+    });
+    check(`sin candidatos: byte por byte la de ${fx.version} (${fx.casos.length} casos; null y [] también)`, fx.version === '2.25.1' && distintas.length === 0, distintas.map((k) => `${k.nombre}/${k.desdeFoto}/${JSON.stringify(k.opciones)}`).join(' '));
     check('sin candidatos, la misma que antes (null o lista vacía)', R.consigna(disp, {}) === R.consigna(disp, { candidatos: null }) && R.consigna(disp, {}) === R.consigna(disp, { candidatos: [] }) && !R.consigna(disp, {}).includes('Models:'));
     const cands = C.candidatosDe(cfg, auto);
     const s = R.consigna(disp, { candidatos: cands });
-    check('con candidatos: el bloque Models y el JSON con modelo', s.includes('\nModels:\n- "wai-nsfw-illustrious-17": anime. Can do: nueva.') && s.includes('Also add "modelo" to the JSON'));
+    check('con candidatos: el bloque Models y el JSON con modelo', s.includes('\nModels:\n- "wai-nsfw-illustrious-17": anime. Can do: nueva.') && s.split('\n')[2].endsWith('"loras": [], "modelo": "<model key>"}.') && s.includes('Choose "modelo" from the list of models'));
     check('cada candidato con su perfil (Pony con source_, WAI con Danbooru)', s.includes('Model profile: Pony V6.') && s.includes('Model profile: Illustrious (WAI).') && s.includes('Model profile: SDXL.'));
     check('sin foto: variación sigue en «Not available now.»', /- variacion: [^\n]*Not available now\./.test(s) && !s.includes('When a photo is attached'));
     check('con foto: la línea del estilo de la foto', R.consigna(C.disponiblesDe(cfg, { ...auto, desdeFoto: true }), { candidatos: C.candidatosDe(cfg, { ...auto, desdeFoto: true }), conFoto: true }).includes('When a photo is attached'));
@@ -208,6 +221,18 @@ async function main() {
     const sm = R.consigna(C.disponiblesDe(mismo, auto), { candidatos: C.candidatosDe(mismo, auto) });
     const bloqueB = sm.split('- "b-wai":')[1] || '';
     check('el mismo perfil: una vez, y el segundo con su tope y sus LoRAs', sm.split('Model profile: Illustrious (WAI).').length === 2 && bloqueB.includes('Same profile as "a-wai".') && bloqueB.split('\nCases:')[0].includes('"dos"') && !bloqueB.split('\nCases:')[0].includes('"uno"') && /at most \d+ characters/.test(bloqueB));
+    const cf = C.candidatosDe(cfg, { ...auto, desdeFoto: true });
+    const sf = R.consigna(C.disponiblesDe(cfg, { ...auto, desdeFoto: true }), { candidatos: cf, conFoto: true });
+    const topeWai = Math.min(...cf[0].puede.map((k) => cf[0].disponibles[k].tope));
+    const bloqueWai = sf.split('- "wai-nsfw-illustrious-17":')[1].split('\n- "')[0];
+    check('el tope del candidato: el mínimo de lo que puede', bloqueWai.includes(`has at most ${topeWai} characters.`), String(topeWai));
+    // Un caso que solo puede agy: «Available.» también con candidatos. Los perfiles de todos solo hacen variaciones, así
+    // que una nueva solo la hace agy (agy solo declara nueva).
+    const sv = { ...copia(P.PERFILES.get('sdxl')), nombre: 'Solo var', casos: ['variacion'] };
+    const conAgy = conCandidatos({ orden: ['comfyui', 'antigravity'], perfiles_propios: { 'solo-var': sv } }, { modelo: 'f.safetensors', candidatos: [{ archivo: 'a.safetensors', para: 'a' }, { archivo: 'b.safetensors', para: 'b' }], perfil_de: { 'f.safetensors': 'solo-var', 'a.safetensors': 'solo-var', 'b.safetensors': 'solo-var' } });
+    const ka = C.candidatosDe(conAgy, { ...auto, desdeFoto: true });
+    const sa = R.consigna(C.disponiblesDe(conAgy, { ...auto, desdeFoto: true }), { candidatos: ka });
+    check('una nueva que solo puede agy: Available, y los candidatos solo variación', ka && ka.every((k) => k.puede.join() === 'variacion') && /- nueva: [^\n]*Available\./.test(sa));
     // Edición con Kontext: ningún candidato la cubre y conserva su bloque.
     const ed = conCandidatos({}, { modelo_edicion: 'flux1-kontext.safetensors' });
     const se = R.consigna(C.disponiblesDe(ed, { ...auto, desdeFoto: true }), { candidatos: C.candidatosDe(ed, { ...auto, desdeFoto: true }) });
@@ -223,7 +248,7 @@ async function main() {
     const r = R.sanear({ caso: 'nueva', prompt: 'source_furry, a fox', modelo: 'ponydiffusionv6xl' }, { disponibles: disp, candidatos: cands });
     check('una clave válida: entrega el archivo, no la clave', r.modelo === PONY && r.modeloAuto === true && !('modeloDescartado' in r));
     const r2 = R.sanear({ caso: 'nueva', prompt: 'x', modelo: 'no-existe' }, { disponibles: disp, candidatos: cands });
-    check('una que no existe: el fijo, sin modeloAuto', !r2.modelo && !r2.modeloAuto && r2.modeloDescartado === 'no-existe');
+    check('una que no existe: el fijo, como si no eligiera (sin modeloDescartado)', !('modelo' in r2) && !('modeloAuto' in r2) && !('modeloDescartado' in r2));
     const r3 = R.sanear({ caso: 'nueva', prompt: 'x' }, { disponibles: disp, candidatos: cands });
     check('sin modelo: el fijo, sin nada', !('modelo' in r3) && !('modeloAuto' in r3) && !('modeloDescartado' in r3));
     // Un candidato sin pesos ni retoque.
@@ -249,7 +274,7 @@ async function main() {
   const entrada = (id, n = 1) => (tareas.obtener(id).imagenes || []).find((e) => e.n === n);
   const prov = (id, fn = () => ({ ok: true })) => ({ id, vistos: [], async generar(op) { this.vistos.push(op); const r = await fn(op); if (!r.ok) return { proveedor: id, ...r }; const ruta = `${op.destino}.png`; fs.writeFileSync(ruta, PNG); return { ok: true, ruta, tipo: 'image/png', ancho: op.ancho, alto: op.alto, semilla: 5, proveedor: id, modelo: op.modelo || null }; } });
   const elige = (modelo, antes = () => {}) => ({ async refinar(o) { await antes(); return { ...R.sanear({ caso: 'nueva', prompt: 'x', modelo }, { disponibles: o.disponibles, candidatos: o.candidatos, desdeFoto: o.desdeFoto }), refinado: true, vistosCandidatos: o.candidatos }; }, sinRefinar: R.sinRefinar });
-  const armar = ({ provs, cfg, ref, cat = null, logs = [], taller = null }) => crearColaImagenes({ registro, proveedor: (id) => provs[id] || null, leerConfig: cfg, refinador: ref, vision: { llamar: async () => ({ ok: false }) }, manual: () => false, catalogoDe: async () => cat, log: (m) => logs.push(m), env: process.env, taller });
+  const armar = ({ provs, cfg, ref, cat = null, enCache = null, logs = [], taller = null }) => crearColaImagenes({ registro, proveedor: (id) => provs[id] || null, leerConfig: cfg, refinador: ref, vision: { llamar: async () => ({ ok: false }) }, manual: () => false, catalogoDe: async () => cat, catalogoEnCache: () => enCache, log: (m) => logs.push(m), env: process.env, taller });
   const termina = (id, n = 1) => hasta(() => entrada(id, n) && entrada(id, n).estado !== 'generando');
 
   await group('La cola: el modelo elegido', async () => {
@@ -316,6 +341,17 @@ async function main() {
     check('sin candidatos: el refinador recibe null', vistos === null && entrada(id4).modeloAuto === false);
   });
 
+  await group('La cola: primeroComfy con el modelo de una repetición', async () => {
+    // El fijo solo hace variaciones: una nueva con él va a agy. El de la repetición (Pony) sí hace nuevas.
+    const soloVar = { ...copia(P.PERFILES.get('sdxl')), nombre: 'Solo var', casos: ['variacion'] };
+    const cfg = config({ orden: ['comfyui', 'antigravity'], alma_la_ve: false, perfiles_propios: { 'solo-var': soloVar } }, { modelo: 'fijo.safetensors', perfil_de: { 'fijo.safetensors': 'solo-var' } });
+    const pc = (enCache) => armar({ provs: {}, cfg: () => cfg, ref: elige(null), enCache })._primeroComfy({ modelo: PONY }, cfg);
+    check('sin el modelo de antes, el fijo: agy primero', armar({ provs: {}, cfg: () => cfg, ref: elige(null) })._primeroComfy({}, cfg) === false);
+    check('con job.modelo que puede: ComfyUI primero', pc(null) === true);
+    check('con job.modelo instalado según la caché: ComfyUI primero', pc(catalogo([PONY, 'fijo.safetensors'])) === true);
+    check('con job.modelo que ya no está instalado (la caché lo dice): el fijo, agy primero', pc(catalogo(['fijo.safetensors'])) === false);
+  });
+
   await group('La cola: el preparado del taller', async () => {
     let datos = null;
     const taller = { preparar: (d) => { datos = d; return { ok: true, id: 'p-0123456789abcdef' }; }, fallo: () => {} };
@@ -337,6 +373,11 @@ async function main() {
     let esquema = null;
     (function ver(o) { if (o && typeof o === 'object') { if (o.imagenes?.items?.properties?.casoPedido) esquema = o.imagenes; Object.values(o).forEach(ver); } })(c);
     check('el contrato conoce modeloAuto (boolean)', ok && esquema && esquema.items.properties.modeloAuto.type === 'boolean');
+    const tm = tareas.crear({ carril: 'alma', origen: 'telegram', sujeto: { tipo: 'alma', clave: 'alya' }, pedido: 'hola' });
+    tareas.actualizar(tm.id, { estado: 'ok', imagenes: [{ n: 1, estado: 'lista', proveedor: 'comfyui', modelo: PONY, modeloAuto: true }, { n: 2, estado: 'lista', proveedor: 'comfyui', modeloAuto: false }] });
+    const turno = turnoDe(tareas.obtener(tm.id), { recorte: '…' });
+    const malo = copia(turno); malo.imagenes[0].modeloAuto = 'si';
+    check('un turno con modeloAuto (true y false) vale contra el contrato, y con un texto no', turno.imagenes[0].modeloAuto === true && turno.imagenes[1].modeloAuto === false && validar(c, 'turno', turno).length === 0 && validar(c, 'turno', malo).length > 0, JSON.stringify(validar(c, 'turno', turno)));
   });
 
   // ------------------------------------------------------------ ajustes
@@ -356,7 +397,9 @@ async function main() {
     check('5 candidatos: 400', tira(() => aplica({ comfyui: { candidatos: [...CANDIDATOS, { archivo: 'd.st', para: 'd' }, { archivo: 'e.st', para: 'e' }] } })).campo === 'imagenes.comfyui.candidatos');
     check('«para qué sirve» vacío o de 201: 400', /para/.test(tira(() => aplica({ comfyui: { candidatos: [{ archivo: 'a.st', para: ' ' }] } })).campo) && /para/.test(tira(() => aplica({ comfyui: { candidatos: [{ archivo: 'a.st', para: 'x'.repeat(201) }] } })).campo));
     check('un archivo repetido: 400', /archivo/.test(tira(() => aplica({ comfyui: { candidatos: [{ archivo: 'a/x.st', para: 'a' }, { archivo: 'a\\x.st', para: 'b' }] } })).campo));
-    check('hires de un perfil de Flux: 400', /hires_de\.flux/.test(tira(() => aplica({ comfyui: { hires_de: { flux: true } } })).campo));
+    check('hires de un perfil de Flux: 400, con true y con false', /hires_de\.flux/.test(tira(() => aplica({ comfyui: { hires_de: { flux: true } } })).campo) && /hires_de\.flux/.test(tira(() => aplica({ comfyui: { hires_de: { flux: false } } })).campo));
+    const leido = A.normalizar(aplica({ comfyui: { modelo_automatico: false, candidatos: CANDIDATOS, hires_de: { 'sdxl-illustrious': true } } })).imagenes;
+    check('guardar y leer: las tres vuelven igual', leido.comfyui.modelo_automatico === false && leido.comfyui.candidatos.length === 3 && leido.comfyui.hires_de['sdxl-illustrious'] === true);
     check('hires de un perfil que no existe: 400', /hires_de\.nope/.test(tira(() => aplica({ comfyui: { hires_de: { nope: true } } })).campo));
     // Las LoRAs de un Desktop viejo (sin `modelos`).
     const lora = { archivo: 'l.safetensors', clave: 'acuarela', familias: ['sdxl'], fuerza: 0.8, activo: true };

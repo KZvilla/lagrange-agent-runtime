@@ -43,6 +43,8 @@ for (const f of ['nueva', 'variacion', 'retoque-florence2', 'edicion', 'retoque-
 }
 const info = Object.fromEntries([...clases, 'PreviewImage'].map((c) => [c, { input: { required: {} } }]));
 info.CheckpointLoaderSimple.input.required.ckpt_name = [[MODELO]];
+// FEAT-218 — Una LoRA instalada, para las plantillas del plugin con LoRAs por modelo.
+if (info.LoraLoader) info.LoraLoader.input.required.lora_name = [['acuarela.safetensors']];
 const CATALOGO = catalogo.leerObjectInfo(info);
 
 /** Un ComfyUI falso: guarda lo subido, sirve el historial, la cola y los archivos por `/view`. */
@@ -383,6 +385,22 @@ async function main() {
     };
     const va = await abre([MODELO]);
     check('con su modelo en la lista: la LoRA va', va.ok && JSON.stringify(va.grafo).includes('acuarela.safetensors'));
+    const no = await abre(['otro.safetensors']);
+    check('con otro modelo en la lista: se saltea', no.ok && !JSON.stringify(no.grafo).includes('acuarela.safetensors'));
+    cfg = config();
+  });
+
+  // FEAT-218 — Una plantilla del plugin: las LoRAs, con el modelo en uso (el fijo).
+  await group('Una plantilla del plugin: las LoRAs por modelo', async () => {
+    const abre = async (modelos) => {
+      cfg = config({}, { loras: [{ archivo: 'acuarela.safetensors', clave: 'acuarela', familias: ['sdxl'], fuerza: 0.8, activo: true, modelos }] });
+      const { t } = armar();
+      const r = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+      t.parar();
+      return r;
+    };
+    const va = await abre([MODELO]);
+    check('con el modelo fijo en la lista: la LoRA va', va.ok && JSON.stringify(va.grafo).includes('acuarela.safetensors'), va.ok ? '' : String(va.mensaje || va.codigo));
     const no = await abre(['otro.safetensors']);
     check('con otro modelo en la lista: se saltea', no.ok && !JSON.stringify(no.grafo).includes('acuarela.safetensors'));
     cfg = config();

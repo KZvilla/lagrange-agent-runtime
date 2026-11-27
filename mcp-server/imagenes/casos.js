@@ -171,17 +171,17 @@ const claveDeModelo = (archivo) => String(archivo).replace(/^.*[\\/]/, '').repla
 function candidatosDe(imagenes, { desdeFoto = false, catalogo = null, manual = enModoManual } = {}) {
   const c = imagenes.comfyui;
   if (c.modelo_automatico === false || !Array.isArray(c.candidatos) || c.candidatos.length < 2) return null;
-  const vistas = new Map();
+  const usadas = new Set();
   const salida = [];
   for (const cand of c.candidatos.slice(0, MAX_CANDIDATOS)) {
     const disponibles = disponiblesDe(imagenes, { desdeFoto, catalogo, manual, modelo: cand.archivo });
     // ComfyUI tiene que ir primero en el caso: si va otro (agy), el modelo no se usaría.
     const puede = CASOS.filter((k) => usaModeloPrincipal(imagenes, k) && disponibles[k].proveedores[0] === 'comfyui');
     if (!puede.length) continue;
-    let clave = claveDeModelo(cand.archivo);
-    const n = (vistas.get(clave) || 0) + 1;
-    vistas.set(clave, n);
-    if (n > 1) clave = `${clave}-${n}`;
+    const raiz = claveDeModelo(cand.archivo);
+    let clave = raiz;
+    for (let n = 2; usadas.has(clave); n++) clave = `${raiz}-${n}`;
+    usadas.add(clave);
     salida.push({ clave, archivo: cand.archivo, para: cand.para, disponibles, puede });
   }
   const algunoEnComun = CASOS.some((k) => salida.filter((x) => x.puede.includes(k)).length >= 2);

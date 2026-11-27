@@ -752,7 +752,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
         if (typeof v !== 'boolean') throw new ErrorAjuste('hires_de: tiene que ser true o false', campo);
         const p = perfiles.perfil(e, k);
         if (!p) throw new ErrorAjuste(`hires_de: "${k}" no es un perfil que exista`, campo);
-        if (v && p.plantillas !== 'sdxl') throw new ErrorAjuste(`hires_de: la segunda pasada es solo para los perfiles de la familia sdxl, y "${k}" es de ${p.plantillas}`, campo);
+        if (p.plantillas !== 'sdxl') throw new ErrorAjuste(`hires_de: la segunda pasada es solo para los perfiles de la familia sdxl, y "${k}" es de ${p.plantillas}`, campo);
         tabla = conClave(tabla, k, v);
       }
       if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con la segunda pasada elegida`, 'imagenes.comfyui.hires_de');
