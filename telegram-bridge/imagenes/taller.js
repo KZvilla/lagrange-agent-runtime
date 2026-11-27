@@ -30,6 +30,8 @@ const procesoLib = perezoso('../../mcp-server/imagenes/comfyui-proceso.js');
 const ajustes = perezoso('../../mcp-server/lib/ajustes-imagenes.js');
 const almasRutas = perezoso('../../mcp-server/almas/rutas.js');
 const archivos = perezoso('../../mcp-server/almas/archivos.js');
+// FEAT-217 — La disposición de los nodos: la forma, los topes y la clave de cada flujo.
+const disposicionLib = perezoso('../../mcp-server/imagenes/disposicion.js');
 
 export const RE_SESION = /^s-[a-z0-9]{16}$/;
 export const RE_VENTANA = /^v-[a-z0-9]{16}$/;
@@ -56,6 +58,10 @@ const DISCO_VIEJO_MS = 60 * 1000;
 const ESPERA_LEVANTAR_MS = 120 * 1000;
 const PEDIDO_MS = 30 * 1000;
 const TOPE_FALLOS = 200;
+// FEAT-217 — Hasta 200 disposiciones de plantillas del plugin y flujos propios; una plantilla propia se lee hasta 2,5 MB
+// (el tope del cuerpo con que se guarda).
+export const TOPE_DISPOSICIONES = 200;
+const TOPE_PROPIA = Math.round(2.5 * 1024 * 1024);
 
 const esObjeto = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const id16 = () => crypto.randomBytes(8).toString('hex');
@@ -185,6 +191,7 @@ export function crearTaller({
   const dirSesiones = path.join(dir, 'sesiones');
   const dirPlantillas = path.join(dir, 'plantillas');
   const dirPreparados = path.join(dir, 'preparados');
+  const dirDisposiciones = path.join(dir, 'disposiciones');
   const sesiones = new Map();
   const fallos = new Map();
   const rutaFallos = path.join(dir, 'preparados', 'fallos.json');
@@ -227,7 +234,7 @@ export function crearTaller({
     for (const id of nombres) {
       if (!RE_SESION.test(id) && !RE_VENTANA.test(id)) continue;
       const s = leerJsonSeguro(path.join(dirDe(id), 'sesion.json'));
-      if (s && s.id === id && esObjeto(s.imagenes) && RE_VENTANA.test(String(s.ventana))) sesiones.set(id, { ...s, enCurso: [] });
+      if (s && s.id === id && esObjeto(s.imagenes) && RE_VENTANA.test(String(s.ventana))) sesiones.set(id, { ...s, clave: disposicionLib.validarClave(s.clave), enCurso: [] });
     }
   }
 
@@ -337,7 +344,7 @@ export function crearTaller({
         const ruta = typeof local === 'string' && RE_LOCAL.test(local) ? indice.rutaDentroDe(dirF, path.join(dirF, local)) : null;
         if (ruta && fs.existsSync(ruta)) lista.push({ orig, ruta }); else falta = true;
       }
-      return { ok: true, grafo, archivos: lista, externoBase, origen, caso: e.caso || null, etiqueta, aviso: falta ? 'Faltó un archivo del flujo (la máscara o la base): revisá los LoadImage.' : null };
+      return { ok: true, grafo, archivos: lista, externoBase, origen, caso: e.caso || null, etiqueta, aviso: falta ? 'Faltó un archivo del flujo (la máscara o la base): revisá los LoadImage.' : null, clave: null };
     }
     const perfil = typeof e.perfil === 'string' ? perfilesLib.perfil(config, e.perfil) : null;
     if (!perfil || (e.proveedor && e.proveedor !== 'comfyui')) return no(409, 'sin-flujo', 'Esa imagen no la hizo ComfyUI: abrila como base de una variación.');
@@ -355,7 +362,7 @@ export function crearTaller({
       pedido: { prompt: e.prompt || '', negativo: e.negativo || '', ancho, alto, semilla: Number.isInteger(e.semilla) ? e.semilla : undefined, fuerza: e.fuerza ?? null, zona: e.zona || '', instruccion: e.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', `No se pudo armar su flujo${p.detalle ? ` (${p.detalle})` : ''}.`);
-    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
   }
 
   function armarPlantilla(c, config, catalogo) {
@@ -376,7 +383,7 @@ export function crearTaller({
       const [ancho, alto] = caso === 'nueva' ? est.perfil.medidas['1:1'] : medidasParaBase(est.perfil, b.e);
       const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
     }
     if (id === 'plugin:retoque-a-mano') {
       if (!catalogo) return no(409, 'no-disponible', 'ComfyUI no respondió: probá de nuevo en un momento.');
@@ -388,11 +395,11 @@ export function crearTaller({
       const [ancho, alto] = medidasParaBase(est.perfil, b.e);
       const p = armarPedido({ seccion: config, plantilla: 'retoque-a-mano', modelo: est.modelo, perfil: est.perfil, catalogo, log, pedido: { prompt: '', negativo: '', ancho, alto, fuerza: est.perfil.muestreo.fuerzaRetoque } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
     }
     m = /^propia:([a-z0-9]{16})$/.exec(id);
     if (m) {
-      const o = leerJsonSeguro(path.join(dirPlantillas, `${m[1]}.json`));
+      const o = leerPropia(m[1]);
       if (!o || !esObjeto(o.grafo) || !flujosLib.formaDeGrafo(o.grafo).ok) return no(404, 'no-existe', 'Esa plantilla ya no está.');
       // Si tiene un LoadImage, la lista dice `conBase`: sin base no se abre (cargaría lo que haya quedado en `input`).
       if (c.base === undefined && cargadoresDe(o.grafo).length) return no(400, 'base', 'Esta plantilla parte de una imagen: falta base.');
@@ -400,7 +407,7 @@ export function crearTaller({
       if (c.base !== undefined) b = conBase();
       if (!b.ok) return b;
       // Una plantilla propia puede cargar cualquier cosa: lo que sale de ella cuenta como de afuera.
-      return { ok: true, grafo: o.grafo, baseEnPropia: b.ruta, externoBase: true, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: null, etiqueta: String(o.nombre || 'plantilla').slice(0, 80), aviso: null };
+      return { ok: true, grafo: o.grafo, baseEnPropia: b.ruta, externoBase: true, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: null, etiqueta: String(o.nombre || 'plantilla').slice(0, 80), aviso: null, clave: `propia:${m[1]}` };
     }
     return no(400, 'plantilla', 'No es una plantilla.');
   }
@@ -422,13 +429,13 @@ export function crearTaller({
       pedido: { prompt: pr.prompt || '', negativo: pr.negativo || '', ancho: pr.ancho, alto: pr.alto, semilla: Number.isInteger(pr.semilla) ? pr.semilla : undefined, fuerza: pr.fuerza ?? null, zona: pr.zona || '', instruccion: pr.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', 'No se pudo armar el flujo del preparado.');
-    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
   }
 
   const vivas = () => [...sesiones.values()].filter((s) => RE_SESION.test(s.id) && s.abierta);
 
   /** La respuesta de `:abrir`. */
-  const abierta = (s, config) => ({ ok: true, sesion: s.id, url: base(config), nombre: `Lagrange: ${s.etiqueta}`, grafo: s.grafo, aviso: s.aviso || null });
+  const abierta = (s, config) => ({ ok: true, sesion: s.id, url: base(config), nombre: `Lagrange: ${s.etiqueta}`, grafo: s.grafo, aviso: s.aviso || null, disposicion: disposicionDe(s, config) });
 
   /** Hasta 4 abiertas: la que se abre cierra la más vieja sin actividad. */
   function aplicarTope(nueva) {
@@ -522,7 +529,7 @@ export function crearTaller({
     const s = {
       id, alma: c.alma, ventana: c.ventana, idCliente: c.idCliente || null, origen: a.origen, caso: a.caso, etiqueta: a.etiqueta, aviso: a.aviso || (a.armado && usaMarcador(a.armado, 'zona') && !(a.datos && a.datos.zona) ? 'Escribí qué parte retocar en el nodo «Zona a retocar»: sin eso, la máscara sale vacía o al azar.' : null),
       clientId: null, vistos, abierta: true, ultimaSenal: ms(), creada: ahora().toISOString(),
-      preparado: c.preparado !== undefined ? String(c.preparado) : null,
+      preparado: c.preparado !== undefined ? String(c.preparado) : null, clave: disposicionLib.validarClave(a.clave),
       grafo, subidos, nodosBase, externoBase: Boolean(a.externoBase), baseRuta: a.base || a.baseEnPropia || null, imagenes: {}, entradas: {}, salidas: [], enCurso: []
     };
     sesiones.set(id, s);
@@ -787,7 +794,8 @@ export function crearTaller({
     const config = leerConfig();
     return {
       ok: true, sesion: s.id, alma: s.alma, origen: s.origen, aviso: s.aviso || null, abierta: Boolean(s.abierta), mirando: Boolean(reloj) && config.taller.mirar !== false, sinComfy,
-      enCurso: s.enCurso || [], grafo: s.grafo, imagenes: Object.values(s.imagenes).sort((a, b) => (a.creada < b.creada ? 1 : -1)).map(fila)
+      enCurso: s.enCurso || [], grafo: s.grafo, imagenes: Object.values(s.imagenes).sort((a, b) => (a.creada < b.creada ? 1 : -1)).map(fila),
+      disposicion: disposicionDe(s, config)
     };
   }
 
@@ -911,11 +919,100 @@ export function crearTaller({
     return resultados;
   }
 
+  // ---------------------------------------------------------------- FEAT-217 — La disposición de los nodos.
+  const rutaPropia = (id) => path.join(dirPlantillas, `${id}.json`);
+  /** Una plantilla propia, leída con tope (`statSync` antes de leer); `null` si no está o pesa más de 2,5 MB. */
+  const leerPropia = (id) => (RE_PROPIA.test(String(id)) ? disposicionLib.leerJsonHasta(rutaPropia(id), TOPE_PROPIA) : null);
+  /** El archivo de la del usuario para una clave `plugin:` o `flujo:`. */
+  const archivoDisposicion = (clave) => path.join(dirDisposiciones, `${crypto.createHash('sha1').update(clave).digest('hex').slice(0, 16)}.json`);
+  /** Una disposición ya validada, o `null` si no está o no vale. */
+  const validada = (d) => { if (d === undefined || d === null) return null; const v = disposicionLib.validarDisposicion(d); return v.ok ? v.disposicion : null; };
+
+  /** La del usuario para una clave: dentro de su plantilla propia o en `disposiciones/`. Una que no vale cuenta como que no está. */
+  function deUsuario(clave) {
+    if (clave.startsWith('propia:')) { const o = leerPropia(clave.slice(7)); return o ? validada(o.disposicion) : null; }
+    const o = disposicionLib.leerJsonHasta(archivoDisposicion(clave), disposicionLib.TOPE_ARCHIVO);
+    return o && o.clave === clave ? validada(o.disposicion) : null;
+  }
+
+  /** La del plugin para una clave, si la casilla está prendida. */
+  const delPluginSegun = (clave, config) => (clave && clave.startsWith('plugin:') && config.taller.disposicion_plugin !== false ? disposicionLib.delPlugin(clave) : null);
+
+  /**
+   * La disposición de una sesión: `{ clave, guardada, deUsuario, delPlugin }`. `guardada` es la que se aplica (la del usuario y, si
+   * no hay, la del plugin); con la casilla apagada, nunca es la del plugin. La usan `:abrir`, el estado y `:disposicion-borrar`.
+   */
+  function disposicionDe(s, config) {
+    const clave = disposicionLib.validarClave(s && s.clave);
+    if (!clave) return { clave: null, guardada: null, deUsuario: false, delPlugin: null };
+    const usuario = deUsuario(clave);
+    const plugin = delPluginSegun(clave, config);
+    return { clave, guardada: usuario || plugin, deUsuario: Boolean(usuario), delPlugin: plugin };
+  }
+
+  /** Lo que dice cada fila del plugin de la lista de plantillas. */
+  const marcasDeFila = (clave, config) => ({ conDisposicion: Boolean(clave && deUsuario(clave)), disposicionDelPlugin: Boolean(delPluginSegun(clave, config)) });
+
+  /** La sesión y su clave, o el error: 409 `sin-clave` si no tiene a qué guardarle la disposición. */
+  function sesionConClave(id) {
+    const s = sesionDe(id);
+    if (s === undefined) return no(400, 'sesion', 'No es una sesión.');
+    if (!s) return no(404, 'no-existe', 'Esa sesión no está.');
+    const clave = disposicionLib.validarClave(s.clave);
+    if (!clave) return no(409, 'sin-clave', 'Este flujo no es de una plantilla: no tiene a qué guardarle la disposición.');
+    return { ok: true, s, clave };
+  }
+
+  /** `POST /taller/<sesion>:disposicion`: guarda la del usuario según la clave de la sesión. `{ ok, clave }`. */
+  function guardarDisposicion(id, c = {}) {
+    const ap = activo(); if (ap) return ap;
+    const r = sesionConClave(id);
+    if (!r.ok) return r;
+    const v = disposicionLib.validarDisposicion(esObjeto(c) ? c.disposicion : undefined);
+    if (!v.ok) return { ...no(400, 'disposicion', `La disposición no vale: ${v.campo} ${v.motivo}.`), campo: v.campo };
+    if (r.clave.startsWith('propia:')) {
+      const pid = r.clave.slice(7);
+      const o = leerPropia(pid);
+      if (!o) return no(404, 'no-existe', 'Esa plantilla ya no está.');
+      archivos.escribirAtomico(rutaPropia(pid), `${JSON.stringify({ ...o, disposicion: v.disposicion })}\n`);
+      return { ok: true, clave: r.clave };
+    }
+    const ruta = archivoDisposicion(r.clave);
+    if (!fs.existsSync(ruta)) {
+      let cuantas = 0;
+      try { cuantas = fs.readdirSync(dirDisposiciones).filter((f) => /^[0-9a-f]{16}\.json$/.test(f)).length; } catch {}
+      if (cuantas >= TOPE_DISPOSICIONES) return no(409, 'tope', `Ya hay ${TOPE_DISPOSICIONES} disposiciones guardadas: volvé alguna plantilla al acomodo automático.`);
+    }
+    fs.mkdirSync(dirDisposiciones, { recursive: true });
+    archivos.escribirAtomico(ruta, `${JSON.stringify({ clave: r.clave, disposicion: v.disposicion, guardada: ahora().toISOString() })}\n`);
+    return { ok: true, clave: r.clave };
+  }
+
+  /** `POST /taller/<sesion>:disposicion-borrar` («Acomodo automático»): `{ ok, borrada, delPlugin }`. */
+  function borrarDisposicion(id) {
+    const ap = activo(); if (ap) return ap;
+    const r = sesionConClave(id);
+    if (!r.ok) return r;
+    const borrada = deUsuario(r.clave);
+    if (r.clave.startsWith('propia:')) {
+      const pid = r.clave.slice(7);
+      const o = leerPropia(pid);
+      if (!o) return no(404, 'no-existe', 'Esa plantilla ya no está.');
+      if (Object.hasOwn(o, 'disposicion')) {
+        const { disposicion: _fuera, ...resto } = o;
+        archivos.escribirAtomico(rutaPropia(pid), `${JSON.stringify(resto)}\n`);
+      }
+    } else {
+      try { fs.rmSync(archivoDisposicion(r.clave), { force: true }); } catch {}
+    }
+    return { ok: true, borrada, delPlugin: disposicionDe(r.s, leerConfig()).delPlugin };
+  }
+
   // ---------------------------------------------------------------- Plantillas.
   function filaRetoqueAMano(config, catalogo) {
     const est = casosLib.estadoComfyui(config, 'variacion', catalogo);
     const r = flujosLib.resolverPlantillaTaller(est.perfil, 'retoque-a-mano');
-    const fila = { id: 'plugin:retoque-a-mano', nombre: 'Retoque a mano', caso: 'retoque', perfil: est.perfil ? est.perfil.id : null, modelo: est.modelo || null, conBase: true, disponible: false, motivo: null };
+    const fila = { id: 'plugin:retoque-a-mano', nombre: 'Retoque a mano', caso: 'retoque', perfil: est.perfil ? est.perfil.id : null, modelo: est.modelo || null, conBase: true, disponible: false, motivo: null, ...marcasDeFila(disposicionLib.claveDeResuelto(r), config) };
     if (!catalogo) return { ...fila, motivo: 'ComfyUI no respondió' };
     if (!r.ok) return { ...fila, motivo: r.motivo };
     if (!est.modelo) return { ...fila, motivo: 'falta el modelo' };
@@ -939,7 +1036,8 @@ export function crearTaller({
       const est = casosLib.estadoComfyui(config, caso, catalogo);
       return {
         id: `plugin:${caso}`, nombre: NOMBRE_CASO[caso].replace(/^./, (x) => x.toUpperCase()), caso, perfil: est.perfil ? est.perfil.id : null, modelo: est.modelo || null,
-        conBase: caso !== 'nueva', disponible: Boolean(catalogo) && est.puede, motivo: !catalogo ? 'ComfyUI no respondió' : est.puede ? null : est.motivo
+        conBase: caso !== 'nueva', disponible: Boolean(catalogo) && est.puede, motivo: !catalogo ? 'ComfyUI no respondió' : est.puede ? null : est.motivo,
+        ...marcasDeFila(disposicionLib.claveDeResuelto(est.resuelto), config)
       };
     });
     lista.push(filaRetoqueAMano(config, catalogo));
@@ -947,14 +1045,15 @@ export function crearTaller({
     try { nombres = fs.readdirSync(dirPlantillas); } catch {}
     for (const f of nombres) {
       const m = /^([a-z0-9]{16})\.json$/.exec(f);
-      const o = m ? leerJsonSeguro(path.join(dirPlantillas, f)) : null;
+      const o = m ? leerPropia(m[1]) : null;
       if (!o || !esObjeto(o.grafo)) continue;
       const clases = Object.values(o.grafo).filter(esObjeto).map((n) => n.class_type);
       const faltan = catalogo ? clases.filter((cl) => !catalogo.nodos.has(cl)) : [];
       const faltaModelo = catalogo ? modelosQueFaltan(o.grafo, catalogo) : false;
       lista.push({
         id: `propia:${m[1]}`, nombre: String(o.nombre || '').slice(0, 80), caso: null, perfil: null, modelo: null, conBase: cargadoresDe(o.grafo).length > 0,
-        disponible: Boolean(catalogo) && !faltan.length && !faltaModelo, motivo: !catalogo ? 'ComfyUI no respondió' : faltan.length ? 'faltan nodos de ComfyUI' : faltaModelo ? 'falta el modelo' : null, creada: typeof o.creada === 'string' ? o.creada : null
+        disponible: Boolean(catalogo) && !faltan.length && !faltaModelo, motivo: !catalogo ? 'ComfyUI no respondió' : faltan.length ? 'faltan nodos de ComfyUI' : faltaModelo ? 'falta el modelo' : null, creada: typeof o.creada === 'string' ? o.creada : null,
+        conDisposicion: validada(o.disposicion) !== null
       });
     }
     return { ok: true, plantillas: lista };
@@ -970,10 +1069,17 @@ export function crearTaller({
     let cuantas = 0;
     try { cuantas = fs.readdirSync(dirPlantillas).filter((f) => /^[a-z0-9]{16}\.json$/.test(f)).length; } catch {}
     if (cuantas >= TOPE_PLANTILLAS) return no(409, 'tope', `Ya hay ${TOPE_PLANTILLAS} plantillas: borrá alguna.`);
+    // FEAT-217 — «Siempre» no depende de un tope visual: si la disposición no vale, la plantilla se guarda sin ella.
+    let disposicion = null;
+    let sinDisposicion = null;
+    if (c.disposicion !== undefined && c.disposicion !== null) {
+      const v = disposicionLib.validarDisposicion(c.disposicion);
+      if (v.ok) disposicion = v.disposicion; else sinDisposicion = `${v.campo} ${v.motivo}`;
+    }
     const id = id16();
     fs.mkdirSync(dirPlantillas, { recursive: true });
-    archivos.escribirAtomico(path.join(dirPlantillas, `${id}.json`), `${JSON.stringify({ nombre, grafo: c.grafo, creada: ahora().toISOString() })}\n`);
-    return { ok: true, id: `propia:${id}` };
+    archivos.escribirAtomico(path.join(dirPlantillas, `${id}.json`), `${JSON.stringify({ nombre, grafo: c.grafo, ...(disposicion ? { disposicion } : {}), creada: ahora().toISOString() })}\n`);
+    return { ok: true, id: `propia:${id}`, ...(sinDisposicion ? { sinDisposicion: true, motivo: `La disposición no vale (${sinDisposicion}): se guardó sin ella.` } : {}) };
   }
 
   function borrarPlantilla(c = {}) {
@@ -1053,7 +1159,7 @@ export function crearTaller({
   function parar() { clearInterval(reloj); reloj = null; clearInterval(relojBarrido); relojBarrido = null; }
 
   return {
-    abrir, sigue, estado, bytes, quedar, descartar, cerrar, plantillas, guardarPlantilla, borrarPlantilla, preparar, fallo, preparadoDe, fotosEnUso, abiertas, barrer, parar,
+    abrir, sigue, estado, bytes, quedar, descartar, cerrar, plantillas, guardarPlantilla, borrarPlantilla, guardarDisposicion, borrarDisposicion, preparar, fallo, preparadoDe, fotosEnUso, abiertas, barrer, parar,
     _vuelta: vuelta, _sesiones: sesiones
   };
 }

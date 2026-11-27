@@ -23,6 +23,8 @@ const RE_ID_TURNO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const TOPE_FOTO_CUERPO = 14 * 1024 * 1024;
 // FEAT-214 — Un grafo de hasta 2 MB, con su sobre.
 const TOPE_GRAFO_CUERPO = Math.round(2.5 * 1024 * 1024);
+// FEAT-217 — Una disposición de hasta 256 KB, con su sobre: el tope por defecto (64 KB) cortaría disposiciones válidas.
+export const TOPE_DISPOSICION_CUERPO = 300 * 1024;
 const error = (codigo, texto) => ({ codigo, ok: false, error: texto });
 const sale = (r) => !(r?.ok === false || (Number.isInteger(r?.codigo) && r.codigo >= 400));
 
@@ -80,7 +82,7 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     const tl = elTaller();
     if (!tl) return sinTaller();
     const res = await fn(tl);
-    if (res && res.ok === false) return { ...error(res.status || 409, res.mensaje || 'No se pudo.'), motivo: res.motivo || 'error' };
+    if (res && res.ok === false) return { ...error(res.status || 409, res.mensaje || 'No se pudo.'), motivo: res.motivo || 'error', ...(typeof res.campo === 'string' ? { campo: res.campo.slice(0, 200) } : {}) };
     return res;
   };
   const forzarDe = (cuerpo) => (cuerpo.forzar === undefined || typeof cuerpo.forzar === 'boolean' ? { ok: true, forzar: cuerpo.forzar === true } : { ok: false });
@@ -277,6 +279,9 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     { metodo: 'GET', patron: /^\/api\/v2\/taller\/([^/:]+)\/?$/, fn: ({ p }) => deTaller((tl) => tl.estado(p[0])) },
     { metodo: 'GET', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+)$/, fn: ({ p }) => deTaller((tl) => { const res = tl.bytes(p[0], p[1]); return res.ok ? { binario: res.bytes, tipo: res.tipo } : res; }) },
     { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+):sigue$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.sigue(p[0], cuerpo)) },
+    // FEAT-217 — La disposición de los nodos: guardarla y volver al acomodo automático.
+    { metodo: 'POST', topeCuerpo: TOPE_DISPOSICION_CUERPO, patron: /^\/api\/v2\/taller\/([^/:]+):disposicion$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.guardarDisposicion(p[0], cuerpo)) },
+    { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+):disposicion-borrar$/, fn: ({ p }) => deTaller((tl) => tl.borrarDisposicion(p[0])) },
     { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+):cerrar$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.cerrar(p[0], cuerpo)) },
     { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+):quedar$/, fn: ({ p, cuerpo }) => deTaller((tl) => tl.quedar(p[0], p[1], cuerpo)) },
     { metodo: 'POST', patron: /^\/api\/v2\/taller\/([^/:]+)\/([^/:]+):descartar$/, fn: ({ p }) => deTaller((tl) => tl.descartar(p[0], p[1])) },

@@ -1,0 +1,224 @@
+{
+  "nodos": {
+    "3": {
+      "tipo": "KSampler",
+      "pos": [
+        2960,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "4": {
+      "tipo": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        30
+      ],
+      "tam": [
+        296,
+        98
+      ]
+    },
+    "6": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        2091,
+        30
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "7": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        2091,
+        310
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "8": {
+      "tipo": "VAEDecode",
+      "pos": [
+        3328,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "9": {
+      "tipo": "SaveImage",
+      "pos": [
+        3968,
+        30
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "10": {
+      "tipo": "LoadImage",
+      "pos": [
+        0,
+        394
+      ],
+      "tam": [
+        340,
+        440
+      ]
+    },
+    "20": {
+      "tipo": "MaskToImage",
+      "pos": [
+        860,
+        30
+      ],
+      "tam": [
+        260,
+        26
+      ]
+    },
+    "21": {
+      "tipo": "PreviewImage",
+      "pos": [
+        1631,
+        236
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "22": {
+      "tipo": "ImageScale",
+      "pos": [
+        1277,
+        30
+      ],
+      "tam": [
+        284,
+        130
+      ]
+    },
+    "30": {
+      "tipo": "DownloadAndLoadFlorence2Model",
+      "pos": [
+        0,
+        208
+      ],
+      "tam": [
+        333,
+        106
+      ]
+    },
+    "31": {
+      "tipo": "Florence2Run",
+      "pos": [
+        400,
+        30
+      ],
+      "tam": [
+        400,
+        364
+      ]
+    },
+    "40": {
+      "tipo": "InpaintCropImproved",
+      "pos": [
+        860,
+        136
+      ],
+      "tam": [
+        357,
+        650
+      ]
+    },
+    "41": {
+      "tipo": "DifferentialDiffusion",
+      "pos": [
+        2091,
+        590
+      ],
+      "tam": [
+        270,
+        58
+      ]
+    },
+    "42": {
+      "tipo": "InpaintModelConditioning",
+      "pos": [
+        2551,
+        30
+      ],
+      "tam": [
+        349,
+        138
+      ]
+    },
+    "43": {
+      "tipo": "InpaintStitchImproved",
+      "pos": [
+        3648,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "101": {
+      "tipo": "LoraLoader",
+      "pos": [
+        400,
+        474
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "102": {
+      "tipo": "LoraLoader",
+      "pos": [
+        860,
+        866
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "103": {
+      "tipo": "LoraLoader",
+      "pos": [
+        1277,
+        240
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "104": {
+      "tipo": "LoraLoader",
+      "pos": [
+        1631,
+        30
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    }
+  }
+}

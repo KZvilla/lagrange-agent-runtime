@@ -592,7 +592,7 @@ async function main() {
   await group('Los ajustes del taller', async () => {
     const n = A.normalizar({ taller: { activo: false, mirar: 'si', al_cerrar: 'quedar' } });
     check('normalizar: lo que vale, y un aviso por lo que no', n.imagenes.taller.activo === false && n.imagenes.taller.mirar === true && n.imagenes.taller.al_cerrar === 'quedar' && n.avisos.some((x) => /taller\.mirar/.test(x)));
-    check('por defecto: todo prendido, al cerrar preguntar', JSON.stringify(A.defectos().taller) === JSON.stringify({ activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, al_cerrar: 'preguntar' }));
+    check('por defecto: todo prendido, al cerrar preguntar', JSON.stringify(A.defectos().taller) === JSON.stringify({ activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, al_cerrar: 'preguntar' }));
     const g = A.aplicarImagenes({ imagenes: { taller: { mirar: false } } }, { taller: { activo: false } });
     check('aplicar: campo por campo', g.imagenes.taller.mirar === false && g.imagenes.taller.activo === false);
     const mal = (p) => { try { A.aplicarImagenes({}, p); return null; } catch (err) { return err.message; } };

@@ -39,8 +39,11 @@ const BOOLEANOS = Object.freeze(['activas', 'refinar', 'alma_la_ve', 'otra_versi
 /** FEAT-215 — Con varias versiones sin elegir. */
 const VARIAS_VERSIONES = Object.freeze(['preguntar', 'ultima']);
 const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma', 'orden', 'por_alma', 'comfyui', 'perfiles_propios', 'openai_imagen', 'gemini_imagen', 'taller']);
-/** FEAT-214 — El taller: cuatro interruptores (prendidos) y qué pasa con lo que quedó en la tira al cerrarlo. */
-const TALLER_BOOLEANOS = Object.freeze(['activo', 'abrir_en_taller', 'prepara_alma', 'mirar']);
+/**
+ * FEAT-214 — El taller: los interruptores (prendidos) y qué pasa con lo que quedó en la tira al cerrarlo.
+ * FEAT-217 — `disposicion_plugin`: acomodar las plantillas del plugin con la disposición que traen.
+ */
+const TALLER_BOOLEANOS = Object.freeze(['activo', 'abrir_en_taller', 'prepara_alma', 'mirar', 'disposicion_plugin']);
 const AL_CERRAR = Object.freeze(['preguntar', 'descartar', 'quedar']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
@@ -96,7 +99,7 @@ function defectos() {
     },
     openai_imagen: { url: null, modelo: null, key_env: null },
     gemini_imagen: { url: null, modelo: null, key_env: null },
-    taller: { activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, al_cerrar: 'preguntar' }
+    taller: { activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, al_cerrar: 'preguntar' }
   };
 }
 
