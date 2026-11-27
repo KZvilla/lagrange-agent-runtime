@@ -37,7 +37,8 @@ const config = (taller = {}, comfy = {}) => { const d = A.defectos(); return { .
 
 // El catálogo con todos los nodos de las plantillas SDXL y el modelo.
 const clases = new Set();
-for (const f of ['nueva', 'variacion', 'retoque-florence2', 'edicion', 'retoque-a-mano']) {
+// FEAT-218 — Y las de hires (LatentUpscaleBy, y en S1.1 UpscaleModelLoader, ImageUpscaleWithModel, ImageScale, VAEEncode).
+for (const f of ['nueva', 'variacion', 'retoque-florence2', 'edicion', 'retoque-a-mano', 'nueva-hires', 'nueva-hires-modelo']) {
   const ruta = path.join(F.DIR_PLANTILLAS, 'sdxl', `${f}.json`);
   if (fs.existsSync(ruta)) for (const n of Object.values(JSON.parse(fs.readFileSync(ruta, 'utf8')))) clases.add(n.class_type);
 }
@@ -45,6 +46,8 @@ const info = Object.fromEntries([...clases, 'PreviewImage'].map((c) => [c, { inp
 info.CheckpointLoaderSimple.input.required.ckpt_name = [[MODELO]];
 // FEAT-218 — Una LoRA instalada, para las plantillas del plugin con LoRAs por modelo.
 if (info.LoraLoader) info.LoraLoader.input.required.lora_name = [['acuarela.safetensors']];
+// FEAT-218 S1.1 — Un modelo de reescalado instalado (en la forma V3 del combo).
+if (info.UpscaleModelLoader) info.UpscaleModelLoader.input.required.model_name = ['COMBO', { options: ['4x-UltraSharp.safetensors'] }];
 const CATALOGO = catalogo.leerObjectInfo(info);
 
 /** Un ComfyUI falso: guarda lo subido, sirve el historial, la cola y los archivos por `/view`. */
@@ -407,6 +410,54 @@ async function main() {
   });
 
   // ------------------------------------------------------------- quedar
+  // FEAT-218 — «Nueva» del taller sigue la casilla de hires, también con un modelo de reescalado.
+  await group('«Nueva» del taller con la casilla de hires', async () => {
+    const abre = async (comfy) => {
+      cfg = config({}, comfy);
+      const { t } = armar();
+      const r = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+      t.parar();
+      return r;
+    };
+    const clases = (g) => Object.values(g).map((n) => n.class_type);
+    const lat = await abre({ hires_de: { sdxl: true } });
+    check('con la casilla: la segunda pasada por latente', lat.ok && clases(lat.grafo).includes('LatentUpscaleBy') && !clases(lat.grafo).includes('UpscaleModelLoader'), lat.ok ? '' : String(lat.mensaje));
+    const mod = await abre({ hires_de: { sdxl: true }, hires_modelo_de: { sdxl: '4x-UltraSharp.safetensors' } });
+    const esc = mod.ok && Object.values(mod.grafo).find((n) => n.class_type === 'ImageScale');
+    check('con un modelo: nueva-hires-modelo, a 1536²', mod.ok && clases(mod.grafo).includes('UpscaleModelLoader') && esc && esc.inputs.width === 1536 && esc.inputs.height === 1536, mod.ok ? '' : String(mod.mensaje));
+    const sin = await abre({});
+    check('sin la casilla: nueva, como siempre', sin.ok && !clases(sin.grafo).includes('LatentUpscaleBy') && clases(sin.grafo).filter((c) => c === 'KSampler').length === 1);
+    cfg = config();
+  });
+
+  // FEAT-218 — Un desde de una imagen grande con la casilla: por encima de 4 MP no hay hires.
+  await group('Abrir desde una imagen de 2048² con la casilla de hires', async () => {
+    cfg = config({}, { hires_de: { sdxl: true }, hires_modelo_de: { sdxl: '4x-UltraSharp.safetensors' } });
+    const { t } = armar({ sinCatalogo: true });
+    const r = await t.abrir({ alma: 'alya', ventana, desde: poner({ caso: 'nueva', ancho: 2048, alto: 2048 }).ref });
+    t.parar();
+    const clases = r.ok ? Object.values(r.grafo).map((n) => n.class_type) : [];
+    check('va con nueva, sin segunda pasada', r.ok && !clases.includes('LatentUpscaleBy') && !clases.includes('UpscaleModelLoader') && clases.filter((c) => c === 'KSampler').length === 1, r.ok ? '' : String(r.mensaje));
+    cfg = config();
+  });
+
+  // FEAT-218 — El modelo que eligió el refinador, del preparado hasta quedar.
+  await group('Un preparado con modeloAuto, hasta quedar', async () => {
+    const x = armar();
+    const { t, comfy } = x;
+    const tm = tareas.crear({ carril: 'alma', origen: 'web', sujeto: { tipo: 'alma', clave: 'alya' }, pedido: 'hola' });
+    const p = t.preparar({ tareaId: tm.id, n: 1, clave: 'alya', caso: 'nueva', casoPedido: 'nueva', perfil: 'sdxl', modelo: MODELO, modeloAuto: true, prompt: 'a red fox', negativo: '', proporcion: '1:1', ancho: 1024, alto: 1024, zona: '', instruccion: '', loras: [], cambio: null, fuerza: null, semilla: null, base: null, externo: false, hilo: null });
+    const ab = await t.abrir({ alma: 'alya', ventana, preparado: p.id });
+    check('se abre', ab.ok, ab.ok ? '' : String(ab.mensaje));
+    comfy.correr('pm', ab.grafo, { salidas: [{ filename: 'm.png', subfolder: `lagrange-taller/${ab.sesion}` }] });
+    await t._vuelta();
+    const img = t.estado(ab.sesion).imagenes[0];
+    const q = await t.quedar(ab.sesion, img.id, { alma: 'alya' });
+    const e = q.ok ? indice.leer('alya', q.tareaId, 1) : {};
+    check('quedar guarda el modelo y modeloAuto: true', q.ok && e.modelo === MODELO && e.modeloAuto === true, JSON.stringify({ ok: q.ok, modelo: e.modelo, auto: e.modeloAuto }));
+    t.parar();
+  });
+
   await group('Quedármela: a la galería, con su grafo, y reabrirla', async () => {
     const x = armar();
     const { t, comfy } = x;

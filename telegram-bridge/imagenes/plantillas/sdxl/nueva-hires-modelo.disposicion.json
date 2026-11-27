@@ -1,0 +1,191 @@
+{
+  "nodos": {
+    "3": {
+      "tipo": "KSampler",
+      "pos": [
+        2230,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "4": {
+      "tipo": "CheckpointLoaderSimple",
+      "pos": [
+        0,
+        30
+      ],
+      "tam": [
+        296,
+        98
+      ]
+    },
+    "5": {
+      "tipo": "EmptyLatentImage",
+      "pos": [
+        0,
+        208
+      ],
+      "tam": [
+        270,
+        106
+      ]
+    },
+    "6": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        1770,
+        30
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "7": {
+      "tipo": "CLIPTextEncode",
+      "pos": [
+        1770,
+        310
+      ],
+      "tam": [
+        400,
+        200
+      ]
+    },
+    "8": {
+      "tipo": "VAEDecode",
+      "pos": [
+        4232,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "9": {
+      "tipo": "SaveImage",
+      "pos": [
+        4552,
+        30
+      ],
+      "tam": [
+        400,
+        460
+      ]
+    },
+    "10": {
+      "tipo": "VAEDecode",
+      "pos": [
+        2598,
+        30
+      ],
+      "tam": [
+        260,
+        46
+      ]
+    },
+    "11": {
+      "tipo": "KSampler",
+      "pos": [
+        3864,
+        30
+      ],
+      "tam": [
+        308,
+        262
+      ]
+    },
+    "12": {
+      "tipo": "UpscaleModelLoader",
+      "pos": [
+        2598,
+        136
+      ],
+      "tam": [
+        315,
+        58
+      ]
+    },
+    "13": {
+      "tipo": "ImageUpscaleWithModel",
+      "pos": [
+        2918,
+        30
+      ],
+      "tam": [
+        241,
+        46
+      ]
+    },
+    "14": {
+      "tipo": "ImageScale",
+      "pos": [
+        3219,
+        30
+      ],
+      "tam": [
+        315,
+        130
+      ]
+    },
+    "15": {
+      "tipo": "VAEEncode",
+      "pos": [
+        3594,
+        30
+      ],
+      "tam": [
+        210,
+        46
+      ]
+    },
+    "101": {
+      "tipo": "LoraLoader",
+      "pos": [
+        356,
+        30
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "102": {
+      "tipo": "LoraLoader",
+      "pos": [
+        709,
+        30
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "103": {
+      "tipo": "LoraLoader",
+      "pos": [
+        1063,
+        30
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    },
+    "104": {
+      "tipo": "LoraLoader",
+      "pos": [
+        1416,
+        30
+      ],
+      "tam": [
+        294,
+        126
+      ]
+    }
+  }
+}

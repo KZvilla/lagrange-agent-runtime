@@ -46,6 +46,8 @@ function leerObjectInfo(info) {
     clips: archivos(['DualCLIPLoader', 'clip_name1'], ['DualCLIPLoader', 'clip_name2']),
     vaes: archivos(['VAELoader', 'vae_name']),
     loras: archivos(['LoraLoader', 'lora_name'], ['LoraLoaderModelOnly', 'lora_name']),
+    // FEAT-218 S1.1 — Los modelos de reescalado (en ComfyUI nuevos es un io.Combo: ["COMBO", { options }]).
+    upscalers: archivos(['UpscaleModelLoader', 'model_name']),
     samplers: opcionesDe(info, 'KSampler', 'sampler_name'),
     schedulers: opcionesDe(info, 'KSampler', 'scheduler'),
     nodos: new Set(Object.keys(info))

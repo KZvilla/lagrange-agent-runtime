@@ -19,9 +19,10 @@ const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Los marcadores que se pueden usar en cualquier caso, y los que suma cada uno. */
 // FEAT-218 — `hires_*`: los números de la segunda pasada (los pone siempre `datosDe`; un flujo propio también los puede usar).
-const COMUNES = Object.freeze(['semilla', 'ancho', 'alto', 'pasos', 'cfg', 'guia', 'fuerza', 'prompt', 'negativo', 'modelo', 'unet', 'clip_1', 'clip_2', 'vae', 'sampler', 'scheduler', 'hires_escala', 'hires_pasos', 'hires_fuerza']);
+const COMUNES = Object.freeze(['semilla', 'ancho', 'alto', 'pasos', 'cfg', 'guia', 'fuerza', 'prompt', 'negativo', 'modelo', 'unet', 'clip_1', 'clip_2', 'vae', 'sampler', 'scheduler', 'hires_escala', 'hires_pasos', 'hires_fuerza', 'hires_metodo', 'hires_modelo', 'hires_ancho', 'hires_alto']);
 const DEL_CASO = Object.freeze({ nueva: [], variacion: ['foto'], retoque: ['foto', 'zona'], edicion: ['foto', 'instruccion'] });
-const ENTEROS = new Set(['semilla', 'ancho', 'alto', 'pasos', 'hires_pasos']);
+// FEAT-218 S1.1 — `hires_metodo` y `hires_modelo` son texto: no van a ninguno de los dos.
+const ENTEROS = new Set(['semilla', 'ancho', 'alto', 'pasos', 'hires_pasos', 'hires_ancho', 'hires_alto']);
 // La escala y la fuerza de la segunda pasada van solo acá: en ENTEROS, 1,5 se redondearía a 2.
 const DECIMALES = new Set(['cfg', 'guia', 'fuerza', 'lora_1_fuerza', 'lora_2_fuerza', 'lora_3_fuerza', 'lora_4_fuerza', 'hires_escala', 'hires_fuerza']);
 const MAX_HUECOS = 4;
@@ -238,8 +239,10 @@ function leerFlujo(ruta, { caso = 'nueva', denyPaths = null } = {}) {
  * El archivo de la plantilla del plugin para un perfil y un caso, o `{ ok: false, motivo }`.
  * FEAT-218 — Una nueva con la segunda pasada prendida usa `<familia>/nueva-hires`, si existe. `{ hires: false }` la apaga
  * para un pedido (el tope de 4 MP de `armarPedido`).
+ * S1.1 — Con un modelo de reescalado (`hires_modelo_de`), `<familia>/nueva-hires-modelo`; `{ conModelo: false }` da la del
+ * latente (el modelo no está instalado).
  */
-function plantillaDe(imagenes, perfil, caso, { hires = true } = {}) {
+function plantillaDe(imagenes, perfil, caso, { hires = true, conModelo = true } = {}) {
   // Con `fill`, el modelo de retoque tiene que ser un Fill: otro repintaría con Crop and Stitch sin que nadie lo pidiera.
   if (caso === 'retoque' && imagenes.comfyui.retoque === 'fill' && perfil.plantillas !== 'flux-fill') return { ok: false, motivo: 'el modelo de retoque no es un Fill' };
   const nombre = caso === 'retoque' ? `retoque-${imagenes.comfyui.mascara}` : caso;
@@ -249,6 +252,10 @@ function plantillaDe(imagenes, perfil, caso, { hires = true } = {}) {
   if (perfil.carga.tipo === 'unet' && !(perfil.carga.clip1 && perfil.carga.clip2 && perfil.carga.vae)) return { ok: false, motivo: 'falta el clip o el vae' };
   // FEAT-218 — Después de los chequeos de carga: un sdxl con carga unet sigue sin plantilla.
   if (caso === 'nueva' && hires && perfiles.hiresActivo(imagenes, perfil)) {
+    if (conModelo && perfiles.hiresModeloDe(imagenes, perfil)) {
+      const conModeloRuta = path.join(DIR_PLANTILLAS, perfil.plantillas, 'nueva-hires-modelo.json');
+      if (fs.existsSync(conModeloRuta)) return { ok: true, ruta: conModeloRuta, nombre: `${perfil.plantillas}/nueva-hires-modelo` };
+    }
     const conHires = path.join(DIR_PLANTILLAS, perfil.plantillas, 'nueva-hires.json');
     if (fs.existsSync(conHires)) return { ok: true, ruta: conHires, nombre: `${perfil.plantillas}/nueva-hires` };
   }
@@ -267,7 +274,7 @@ function flujoPropio(imagenes, perfilId, caso) {
  * Qué flujo usa un caso con un perfil.
  * `{ ok, flujo, ficha, salida, salidaMascara, huecos, marcadores, salidas, propio, archivo, nombre, conFicha, motivo }`.
  */
-function resolverFlujo(imagenes, perfil, caso, { hires = true } = {}) {
+function resolverFlujo(imagenes, perfil, caso, { hires = true, conModelo = true } = {}) {
   const propio = flujoPropio(imagenes, perfil.id, caso);
   const base = propio
     ? { propio: true, archivo: propio.archivo, nombre: path.basename(propio.archivo), conFicha: false }
@@ -277,7 +284,7 @@ function resolverFlujo(imagenes, perfil, caso, { hires = true } = {}) {
   if (!perfil.casos.includes(caso)) return mal('el perfil no tiene este caso');
   let ruta = propio ? propio.archivo : null;
   if (!propio) {
-    const p = plantillaDe(imagenes, perfil, caso, { hires });
+    const p = plantillaDe(imagenes, perfil, caso, { hires, conModelo });
     if (!p.ok) return mal(p.motivo);
     ruta = p.ruta;
     base.nombre = p.nombre;
