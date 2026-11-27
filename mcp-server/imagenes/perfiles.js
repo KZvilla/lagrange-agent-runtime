@@ -24,6 +24,9 @@ const MAX_PROPIOS = 20;
 const FUERZA_RETOQUE = 0.9;
 const MAX_FIJO = 300;
 const MAX_SEGURO = 200;
+// FEAT-218 — La segunda pasada (hires): los topes de sus números.
+const HIRES_ESCALA = Object.freeze({ min: 1.25, max: 2 });
+const HIRES_FUERZA = Object.freeze({ min: 0.2, max: 0.8 });
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 // Las reglas llevan saltos de línea.
 const CONTROLES_TEXTO = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
@@ -98,7 +101,7 @@ function validarPerfil(id, p) {
 
   const s = p.muestreo;
   if (!esObjeto(s)) return mal('muestreo', 'tiene que ser un objeto');
-  for (const k of Object.keys(s)) if (!['pasos', 'cfg', 'guia', 'sampler', 'scheduler', 'fuerza', 'fuerzaRetoque'].includes(k)) return mal(`muestreo.${k}`, 'no está permitido');
+  for (const k of Object.keys(s)) if (!['pasos', 'cfg', 'guia', 'sampler', 'scheduler', 'fuerza', 'fuerzaRetoque', 'hires'].includes(k)) return mal(`muestreo.${k}`, 'no está permitido');
   if (!Number.isInteger(s.pasos) || s.pasos < 1 || s.pasos > 150) return mal('muestreo.pasos', 'tiene que ser un entero de 1 a 150');
   if (!Number.isFinite(s.cfg) || s.cfg < 0 || s.cfg > 30) return mal('muestreo.cfg', 'tiene que ser un número de 0 a 30');
   const guia = s.guia === undefined ? null : s.guia;
@@ -111,6 +114,18 @@ function validarPerfil(id, p) {
   // Repintar una zona pide más fuerza que variar la foto entera (con 0,6 casi no cambia).
   const fuerzaRetoque = s.fuerzaRetoque === undefined ? FUERZA_RETOQUE : s.fuerzaRetoque;
   if (!Number.isFinite(fuerzaRetoque) || fuerzaRetoque < 0 || fuerzaRetoque > 1) return mal('muestreo.fuerzaRetoque', 'tiene que ser un número de 0 a 1');
+  // FEAT-218 — La segunda pasada: opcional y solo en la familia sdxl (sus plantillas son las que la tienen).
+  let hires = null;
+  if (s.hires !== undefined && s.hires !== null) {
+    const h = s.hires;
+    if (!esObjeto(h)) return mal('muestreo.hires', 'tiene que ser un objeto { escala, fuerza, pasos } o null');
+    for (const k of Object.keys(h)) if (!['escala', 'fuerza', 'pasos'].includes(k)) return mal(`muestreo.hires.${k}`, 'no está permitido');
+    if (p.plantillas !== 'sdxl') return mal('muestreo.hires', 'solo los perfiles de la familia sdxl tienen la segunda pasada');
+    if (!Number.isFinite(h.escala) || h.escala < HIRES_ESCALA.min || h.escala > HIRES_ESCALA.max) return mal('muestreo.hires.escala', `tiene que ser un número de ${HIRES_ESCALA.min} a ${HIRES_ESCALA.max}`);
+    if (!Number.isFinite(h.fuerza) || h.fuerza < HIRES_FUERZA.min || h.fuerza > HIRES_FUERZA.max) return mal('muestreo.hires.fuerza', `tiene que ser un número de ${HIRES_FUERZA.min} a ${HIRES_FUERZA.max}`);
+    if (!Number.isInteger(h.pasos) || h.pasos < 1 || h.pasos > 150) return mal('muestreo.hires.pasos', 'tiene que ser un entero de 1 a 150');
+    hires = { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos };
+  }
 
   if (!esObjeto(p.medidas)) return mal('medidas', 'tiene que ser un objeto');
   for (const k of Object.keys(p.medidas)) if (!PROPORCIONES.includes(k)) return mal(`medidas.${k}`, 'no es una proporción');
@@ -130,7 +145,7 @@ function validarPerfil(id, p) {
     perfil: {
       id, nombre: p.nombre.trim(), plantillas: p.plantillas, carga,
       prompt: { estilo: q.estilo, reglas: q.reglas, tope: q.tope, negativo: q.negativo, negativoPorDefecto: q.negativoPorDefecto, pesos: q.pesos, prefijo: prefijo.v, negativoFijo: negativoFijo.v, seguro },
-      muestreo: { pasos: s.pasos, cfg: s.cfg, guia, sampler: s.sampler.trim(), scheduler: s.scheduler.trim(), fuerza: s.fuerza, fuerzaRetoque },
+      muestreo: { pasos: s.pasos, cfg: s.cfg, guia, sampler: s.sampler.trim(), scheduler: s.scheduler.trim(), fuerza: s.fuerza, fuerzaRetoque, ...(hires ? { hires } : {}) },
       medidas: Object.fromEntries(medidas), casos: CASOS.filter((c) => p.casos.includes(c))
     }
   };
@@ -284,6 +299,25 @@ function quitarEtiquetas(texto, quitar) {
   return etiquetasDe(texto).map((e) => filtrarEtiqueta(e, (k) => lista.has(k))).filter(Boolean).join(', ');
 }
 
+/**
+ * FEAT-218 — ¿La segunda pasada está prendida para este perfil? Solo con `comfyui.hires_de[id] === true` y en la familia
+ * sdxl (la única con plantilla hires). Apagada por defecto.
+ */
+function hiresActivo(imagenes, p) {
+  if (!p || p.plantillas !== 'sdxl') return false;
+  const c = imagenes && esObjeto(imagenes.comfyui) ? imagenes.comfyui : {};
+  const tabla = esObjeto(c.hires_de) ? c.hires_de : {};
+  return tiene(tabla, p.id) && tabla[p.id] === true;
+}
+
+/** FEAT-218 — Los números de la segunda pasada de un perfil: los suyos, o `{ 1,5, 0,5, la mitad de sus pasos }`. */
+function hiresDe(p) {
+  const h = p && p.muestreo && esObjeto(p.muestreo.hires) ? p.muestreo.hires : null;
+  if (h) return { escala: h.escala, fuerza: h.fuerza, pasos: h.pasos };
+  const pasos = p && p.muestreo && Number.isInteger(p.muestreo.pasos) ? p.muestreo.pasos : 30;
+  return { escala: 1.5, fuerza: 0.5, pasos: Math.max(1, Math.round(pasos / 2)) };
+}
+
 /** ¿El modo seguro está prendido para este perfil? Si el perfil lo define, sí, salvo `comfyui.seguro_de[id] === false`. */
 function seguroActivo(imagenes, p) {
   if (!p || !p.prompt || !p.prompt.seguro) return false;
@@ -330,6 +364,16 @@ function enLista(lista, nombre) {
   return a ? a.valor : null;
 }
 
+/**
+ * FEAT-218 — ¿Son el mismo archivo? Para listas de textos (las `modelos` de una LoRA): `enLista` es para el catálogo, que
+ * trae objetos `{ valor }`. Iguala `\` con `/` y saca los espacios de los bordes.
+ */
+function mismoArchivo(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const igual = (v) => v.trim().replace(/\\/g, '/');
+  return igual(a) !== '' && igual(a) === igual(b);
+}
+
 /** En qué listas del catálogo está el archivo: `{ checkpoint, unet }`. */
 function cargasEnCatalogo(modelo, catalogo) {
   const en = (lista) => Boolean(enLista(lista, modelo));
@@ -364,5 +408,6 @@ function perfilDe(imagenes, modelo, catalogo = null, { cargaSugerida = null } = 
 module.exports = {
   FAMILIAS, CARGA_DE_FAMILIA, CASOS, PROPORCIONES, ESTILOS, NEGATIVOS, RESERVADAS, RE_ID, MAX_PROPIOS, PERFILES,
   formaDeArchivo, validarPerfil, perfil, perfilesEfectivos, perfilDePartida, idPorNombre, enLista, cargasEnCatalogo, pareceUnet, perfilDe,
-  MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt, sinFijas
+  MAX_FIJO, MAX_SEGURO, claveEtiqueta, etiquetasDe, unirEtiquetas, quitarEtiquetas, seguroActivo, componerPrompt, sinFijas,
+  HIRES_ESCALA, HIRES_FUERZA, hiresActivo, hiresDe, mismoArchivo
 };

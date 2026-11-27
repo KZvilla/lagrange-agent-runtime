@@ -43,6 +43,8 @@ for (const f of ['nueva', 'variacion', 'retoque-florence2', 'edicion', 'retoque-
 }
 const info = Object.fromEntries([...clases, 'PreviewImage'].map((c) => [c, { input: { required: {} } }]));
 info.CheckpointLoaderSimple.input.required.ckpt_name = [[MODELO]];
+// FEAT-218 — Una LoRA instalada, para las plantillas del plugin con LoRAs por modelo.
+if (info.LoraLoader) info.LoraLoader.input.required.lora_name = [['acuarela.safetensors']];
 const CATALOGO = catalogo.leerObjectInfo(info);
 
 /** Un ComfyUI falso: guarda lo subido, sirve el historial, la cola y los archivos por `/view`. */
@@ -371,6 +373,39 @@ async function main() {
     t.parar();
   });
 
+  // FEAT-218 — Reabrir una imagen con una LoRA que ya no va con su modelo: se saltea.
+  await group('Abrir desde una imagen: las LoRAs por modelo', async () => {
+    const lora = (modelos) => config({}, { loras: [{ archivo: 'acuarela.safetensors', clave: 'acuarela', familias: ['sdxl'], fuerza: 0.8, activo: true, modelos }] });
+    const abre = async (modelos) => {
+      cfg = lora(modelos);
+      const { t } = armar({ sinCatalogo: true });
+      const r = await t.abrir({ alma: 'alya', ventana, desde: poner({ caso: 'nueva', lorasUsadas: [{ clave: 'acuarela', fuerza: 0.8 }] }).ref });
+      t.parar();
+      return r;
+    };
+    const va = await abre([MODELO]);
+    check('con su modelo en la lista: la LoRA va', va.ok && JSON.stringify(va.grafo).includes('acuarela.safetensors'));
+    const no = await abre(['otro.safetensors']);
+    check('con otro modelo en la lista: se saltea', no.ok && !JSON.stringify(no.grafo).includes('acuarela.safetensors'));
+    cfg = config();
+  });
+
+  // FEAT-218 — Una plantilla del plugin: las LoRAs, con el modelo en uso (el fijo).
+  await group('Una plantilla del plugin: las LoRAs por modelo', async () => {
+    const abre = async (modelos) => {
+      cfg = config({}, { loras: [{ archivo: 'acuarela.safetensors', clave: 'acuarela', familias: ['sdxl'], fuerza: 0.8, activo: true, modelos }] });
+      const { t } = armar();
+      const r = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+      t.parar();
+      return r;
+    };
+    const va = await abre([MODELO]);
+    check('con el modelo fijo en la lista: la LoRA va', va.ok && JSON.stringify(va.grafo).includes('acuarela.safetensors'), va.ok ? '' : String(va.mensaje || va.codigo));
+    const no = await abre(['otro.safetensors']);
+    check('con otro modelo en la lista: se saltea', no.ok && !JSON.stringify(no.grafo).includes('acuarela.safetensors'));
+    cfg = config();
+  });
+
   // ------------------------------------------------------------- quedar
   await group('Quedármela: a la galería, con su grafo, y reabrirla', async () => {
     const x = armar();
@@ -385,6 +420,7 @@ async function main() {
     check('queda con su tareaId del taller y su número', q.ok && /^t_taller[a-f0-9]{16}$/.test(q.tareaId) && Number.isInteger(q.num));
     const e = indice.leer('alya', q.tareaId, 1);
     check('el índice: origen taller, sin hilo ni vista, externo heredado', e.origen === 'taller' && e.hilo === null && e.vistaEstado === null && e.externo === true && e.lista === true && e.sha256 && e.proveedor === 'comfyui');
+    check('FEAT-218: el modelo con que se armó la sesión (desde) pasa al índice, sin modeloAuto', e.modelo === MODELO && e.modeloAuto === false);
     check('los mismos campos que la cola', Object.keys(camposDeImagen({ archivo: 'x', tipo: 'image/png', externo: false, sha256: 's', proveedor: 'comfyui', bytes: 1 })).every((k) => Object.hasOwn(e, k)));
     check('poda esa alma sin la recién guardada, e invalida el mapa', x.podadas.some(([c, a]) => c === 'alya' && a.tareaId === q.tareaId) && x.invalidadas() === 1);
     const gal = crearGaleria({ cola: { avisarAfuera: () => {}, bytesDelIndice: () => ({ ok: true }) }, registro, leerConfig: () => cfg });

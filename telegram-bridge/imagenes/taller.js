@@ -235,13 +235,16 @@ export function crearTaller({
     return indice.rutaDentroDe(dirDe(s.id), path.join(dirDe(s.id), nombre));
   }
 
+  /** FEAT-218 — El modelo de una sesión: un nombre de archivo de hasta 200, o `null`. */
+  const modeloValido = (m) => (typeof m === 'string' && m && perfilesLib.formaDeArchivo(m) === null ? m.trim() : null);
+
   function cargar() {
     let nombres = [];
     try { nombres = fs.readdirSync(dirSesiones); } catch { return; }
     for (const id of nombres) {
       if (!RE_SESION.test(id) && !RE_VENTANA.test(id)) continue;
       const s = leerJsonSeguro(path.join(dirDe(id), 'sesion.json'));
-      if (s && s.id === id && esObjeto(s.imagenes) && RE_VENTANA.test(String(s.ventana))) sesiones.set(id, { ...s, clave: disposicionLib.validarClave(s.clave), enCurso: [] });
+      if (s && s.id === id && esObjeto(s.imagenes) && RE_VENTANA.test(String(s.ventana))) sesiones.set(id, { ...s, clave: disposicionLib.validarClave(s.clave), modelo: modeloValido(s.modelo), modeloAuto: s.modeloAuto === true, enCurso: [] });
     }
   }
 
@@ -289,11 +292,14 @@ export function crearTaller({
   }
 
   /** Los LoRAs de una imagen vieja, por su clave en los de ComfyUI (los que ya no están se saltean). */
-  function lorasPorClave(config, usadas) {
+  function lorasPorClave(config, usadas, modelo = null) {
     const todos = Array.isArray(config.comfyui.loras) ? config.comfyui.loras : [];
     return (Array.isArray(usadas) ? usadas : []).map((u) => {
       const l = todos.find((x) => x && x.clave === (u && u.clave));
-      return l ? { clave: l.clave, archivo: l.archivo, fuerza: Number.isFinite(u.fuerza) ? u.fuerza : l.fuerza } : null;
+      if (!l) return null;
+      // FEAT-218 — Una LoRA que ya no va con este modelo se saltea.
+      if (!casosLib.loraVaCon(l, modelo)) { log(`[taller] El LoRA "${l.clave}" no va con ${String(modelo).slice(0, 80)}; se saltea.`); return null; }
+      return { clave: l.clave, archivo: l.archivo, fuerza: Number.isFinite(u.fuerza) ? u.fuerza : l.fuerza };
     }).filter(Boolean);
   }
 
@@ -376,11 +382,11 @@ export function crearTaller({
     const [ancho, alto] = Number.isInteger(e.ancho) && Number.isInteger(e.alto) ? [e.ancho, e.alto] : (perfil.medidas && perfil.medidas[e.proporcion]) || [1024, 1024];
     const modelo = e.modelo || casosLib.modeloDeCaso(config, caso);
     const p = armarPedido({
-      seccion: config, caso, modelo, perfil, catalogo, log, loras: lorasPorClave(config, e.lorasUsadas),
+      seccion: config, caso, modelo, perfil, catalogo, log, loras: lorasPorClave(config, e.lorasUsadas, modelo),
       pedido: { prompt: e.prompt || '', negativo: e.negativo || '', ancho, alto, semilla: Number.isInteger(e.semilla) ? e.semilla : undefined, fuerza: e.fuerza ?? null, zona: e.zona || '', instruccion: e.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', `No se pudo armar su flujo${p.detalle ? ` (${p.detalle})` : ''}.`);
-    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase, origen, caso, etiqueta, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto), modelo };
   }
 
   function armarPlantilla(c, config, catalogo) {
@@ -399,9 +405,9 @@ export function crearTaller({
       const b = caso === 'nueva' ? { ok: true, ruta: null, externo: false, num: null } : conBase();
       if (!b.ok) return b;
       const [ancho, alto] = caso === 'nueva' ? est.perfil.medidas['1:1'] : medidasParaBase(est.perfil, b.e);
-      const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
+      const p = armarPedido({ seccion: config, caso, modelo: est.modelo, perfil: est.perfil, catalogo, log, loras: casosLib.lorasDe(config, est.perfil.plantillas, est.modelo), pedido: { prompt: '', negativo: '', ancho, alto, zona: '', instruccion: '' } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso, etiqueta: NOMBRE_CASO[caso], aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto), modelo: est.modelo };
     }
     if (id === 'plugin:retoque-a-mano') {
       if (!catalogo) return no(409, 'no-disponible', 'ComfyUI no respondió: probá de nuevo en un momento.');
@@ -413,7 +419,7 @@ export function crearTaller({
       const [ancho, alto] = medidasParaBase(est.perfil, b.e);
       const p = armarPedido({ seccion: config, plantilla: 'retoque-a-mano', modelo: est.modelo, perfil: est.perfil, catalogo, log, pedido: { prompt: '', negativo: '', ancho, alto, fuerza: est.perfil.muestreo.fuerzaRetoque } });
       if (!p.ok) return no(409, 'no-disponible', 'No se pudo armar la plantilla.');
-      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
+      return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: b.ruta, externoBase: b.externo, origen: { tipo: 'plantilla', plantilla: id, num: b.num }, caso: 'retoque', etiqueta: 'retoque a mano', aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto), modelo: est.modelo };
     }
     m = /^propia:([a-z0-9]{16})$/.exec(id);
     if (m) {
@@ -447,7 +453,9 @@ export function crearTaller({
       pedido: { prompt: pr.prompt || '', negativo: pr.negativo || '', ancho: pr.ancho, alto: pr.alto, semilla: Number.isInteger(pr.semilla) ? pr.semilla : undefined, fuerza: pr.fuerza ?? null, zona: pr.zona || '', instruccion: pr.instruccion || '' }
     });
     if (!p.ok) return no(409, 'sin-flujo', 'No se pudo armar el flujo del preparado.');
-    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto) };
+    return { ok: true, armado: p.armado, datos: p.datos, mascara: (p.resuelto && p.resuelto.salidaMascara) || null, base: baseRuta, externoBase: Boolean(pr.externo), origen: { tipo: 'preparado', tareaId: pr.tareaId, alma: pr.clave }, caso: pr.caso, etiqueta: `${NOMBRE_CASO[pr.caso] || 'imagen'} de ${pr.clave}`, aviso: null, clave: disposicionLib.claveDeResuelto(p.resuelto),
+      // FEAT-218 — El modelo del preparado, y si lo eligió el refinador.
+      modelo: typeof pr.modelo === 'string' ? pr.modelo : null, modeloAuto: pr.modeloAuto === true };
   }
 
   const vivas = () => [...sesiones.values()].filter((s) => RE_SESION.test(s.id) && s.abierta);
@@ -549,6 +557,8 @@ export function crearTaller({
       id, alma: c.alma, ventana: c.ventana, idCliente: c.idCliente || null, origen: a.origen, caso: a.caso, etiqueta: a.etiqueta, aviso: a.aviso || (a.armado && usaMarcador(a.armado, 'zona') && !(a.datos && a.datos.zona) ? 'Escribí qué parte retocar en el nodo «Zona a retocar»: sin eso, la máscara sale vacía o al azar.' : null),
       clientId: null, vistos, abierta: true, ultimaSenal: ms(), creada: ahora().toISOString(),
       preparado: c.preparado !== undefined ? String(c.preparado) : null, clave: disposicionLib.validarClave(a.clave),
+      // FEAT-218 — Con qué modelo se armó (`null` en una propia: su grafo trae su loader), y si lo eligió el refinador.
+      modelo: modeloValido(a.modelo), modeloAuto: a.modeloAuto === true,
       grafo, subidos, nodosBase, externoBase: Boolean(a.externoBase), baseRuta: a.base || a.baseEnPropia || null, imagenes: {}, entradas: {}, salidas: [], enCurso: []
     };
     sesiones.set(id, s);
@@ -882,8 +892,10 @@ export function crearTaller({
     indice.actualizar(alma, tareaId, 1, () => ({
       ...camposDeImagen({
         archivo: final, tipo, foto: null, hilo: null, externo: img.externo !== false, sha256: indice.sha256(datos), prompt: img.prompt || '', negativo: '', proporcion: null,
-        semilla: img.semilla, perfil: null, proveedor: 'comfyui', modelo: null, ancho: m ? m.ancho : img.ancho, alto: m ? m.alto : img.alto, bytes: datos.length,
-        cambio: null, fuerza: null, lorasUsadas: [], vistaEstado: null, ahora: ahora(), intento: 1, num
+        semilla: img.semilla, perfil: null, proveedor: 'comfyui', modelo: s.modelo || null, ancho: m ? m.ancho : img.ancho, alto: m ? m.alto : img.alto, bytes: datos.length,
+        cambio: null, fuerza: null, lorasUsadas: [], vistaEstado: null, ahora: ahora(), intento: 1, num,
+        // FEAT-218 — El modelo con que se armó la sesión; elegido por el refinador solo en un preparado que lo trae.
+        modeloAuto: s.modeloAuto === true && Boolean(s.modelo)
       }),
       caso: s.caso && CASOS.includes(s.caso) ? s.caso : null, casoPedido: null, zona: '', instruccion: '', loras: [], origen: 'taller', deNum: null,
       baseNum: s.origen && Number.isInteger(s.origen.num) ? s.origen.num : null, elegida: null, baseFija: false, fotoOpcional: false,

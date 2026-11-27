@@ -102,7 +102,9 @@ export function crearGaleria({ cola, registro, leerConfig, alCambiar = () => {},
     return {
       alma: clave, tareaId: e.tareaId, n: e.n, intento: e.intento || 1, creada: texto(e.creada, 40),
       prompt: texto(de('prompt'), 2000), negativo: texto(de('negativo'), 500), caso: CASOS.has(de('caso')) ? de('caso') : null, casoPedido: CASOS.has(de('casoPedido')) ? de('casoPedido') : null,
-      perfil: texto(de('perfil'), 40), proveedor: texto(de('proveedor'), 32), modelo: texto(de('modelo'), 200), ancho, alto, bytes: bytesDe(clave, e), tipo: texto(e.tipo, 32),
+      perfil: texto(de('perfil'), 40), proveedor: texto(de('proveedor'), 32), modelo: texto(de('modelo'), 200),
+      // FEAT-218 — Si el modelo lo eligió el refinador.
+      modeloAuto: de('modeloAuto') === true, ancho, alto, bytes: bytesDe(clave, e), tipo: texto(e.tipo, 32),
       zona: texto(de('zona'), 120), instruccion: texto(de('instruccion'), 2000),
       loras: loras.filter((l) => l && typeof l.clave === 'string').slice(0, 4).map((l) => ({ clave: l.clave.slice(0, 30), fuerza: Number.isFinite(l.fuerza) ? l.fuerza : null })),
       cambio: CAMBIOS.has(e.cambio) ? e.cambio : null, fuerza: Number.isFinite(e.fuerza) ? e.fuerza : null,

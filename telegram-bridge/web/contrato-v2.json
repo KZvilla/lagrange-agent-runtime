@@ -553,6 +553,10 @@
                 "nullable": true,
                 "maxLength": 200
               },
+              "modeloAuto": {
+                "type": "boolean",
+                "description": "FEAT-218 — true si el modelo lo eligió el refinador entre los candidatos."
+              },
               "prompt": {
                 "type": "string",
                 "nullable": true,

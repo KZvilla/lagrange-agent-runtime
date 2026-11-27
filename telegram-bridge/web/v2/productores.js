@@ -137,6 +137,8 @@ export function imagenesDe(lista) {
     .map((i) => sinIndefinidos({
       n: i.n, estado: i.estado, ancho: enteroPositivo(i.ancho), alto: enteroPositivo(i.alto),
       tipo: textoONulo(i.tipo, 32), proveedor: textoONulo(i.proveedor, 32), modelo: textoONulo(i.modelo, 200),
+      // FEAT-218 — Si el modelo lo eligió el refinador.
+      modeloAuto: typeof i.modeloAuto === 'boolean' ? i.modeloAuto : undefined,
       prompt: textoONulo(i.prompt, 2000), negativo: textoONulo(i.negativo, 500),
       desdeFoto: typeof i.desdeFoto === 'boolean' ? i.desdeFoto : undefined,
       fotoIgnorada: typeof i.fotoIgnorada === 'boolean' ? i.fotoIgnorada : undefined,

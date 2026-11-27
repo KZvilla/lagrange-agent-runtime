@@ -55,28 +55,91 @@ const SOBRE_CAMBIO = 'Add "cambio" to the JSON only for "variacion": "leve" if a
  * La consigna: la base y, por cada caso disponible, el estilo, las reglas completas y el tope de su perfil.
  * FEAT-213 — `base`: `'fija'` (parte de la foto, nunca `nueva`), `'opcional'` (la foto vino en el turno y puede no usarse) o `null`.
  */
-function consigna(disponibles, { base = null, fuerzaAutomatica = false } = {}) {
-  const lineas = [...BASE];
-  if (fuerzaAutomatica && casos.estaDisponible(disponibles, 'variacion')) lineas.push(SOBRE_CAMBIO);
-  if (base === 'fija') lineas.push('The image has to start from the attached photo: never choose "nueva".');
-  if (base === 'opcional') lineas.push('A photo came with the message, but the request may not be about it: choose "nueva" unless the request asks to start from that photo.');
+function consigna(disponibles, { base = null, fuerzaAutomatica = false, candidatos = null, conFoto = false } = {}) {
+  // FEAT-218 — Con candidatos, el perfil va por modelo y no por caso.
+  if (candidatos && candidatos.length) return consignaConCandidatos(disponibles, { base, fuerzaAutomatica, candidatos, conFoto });
+  const lineas = cabeza(disponibles, { base, fuerzaAutomatica });
   lineas.push('', 'Cases:');
   for (const caso of CASOS) {
     const d = disponibles[caso];
     const hay = casos.estaDisponible(disponibles, caso);
     lineas.push(`- ${caso}: ${QUE_ES[caso]}. ${hay ? 'Available.' : 'Not available now.'}`);
     if (!hay) continue;
-    const p = d.perfil.prompt;
+    lineas.push(...lineasDePerfil(d, { campo: caso === 'edicion' ? '"instruccion"' : '"prompt"', tope: d.tope }));
+  }
+  return lineas.join('\n');
+}
+
+/** La base de la consigna, con las líneas de la variación y de la foto. */
+function cabeza(disponibles, { base, fuerzaAutomatica }) {
+  const lineas = [...BASE];
+  if (fuerzaAutomatica && casos.estaDisponible(disponibles, 'variacion')) lineas.push(SOBRE_CAMBIO);
+  if (base === 'fija') lineas.push('The image has to start from the attached photo: never choose "nueva".');
+  if (base === 'opcional') lineas.push('A photo came with the message, but the request may not be about it: choose "nueva" unless the request asks to start from that photo.');
+  return lineas;
+}
+
+/** Las líneas del perfil de un caso (o de un candidato): el estilo, las reglas, los pesos, el negativo, el tope, las fijas y las LoRAs. */
+function lineasDePerfil(d, { campo = '"prompt"', tope = d.tope, soloTopeYLoras = false, igualA = null } = {}) {
+  const lineas = [];
+  const p = d.perfil.prompt;
+  if (soloTopeYLoras) lineas.push(`  Same profile as "${igualA}".`);
+  else {
     // FEAT-216 — Con prefijo, la calidad la pone el sistema: la línea de estilo no la pide.
     const estilo = p.prefijo && p.estilo === 'etiquetas' ? ESTILO_CON_PREFIJO : ESTILOS[p.estilo];
     lineas.push(`  Model profile: ${d.perfil.nombre}. ${estilo}`);
     if (p.reglas) for (const l of p.reglas.split('\n')) lineas.push(`  ${l}`);
     lineas.push(`  Weights like (word:1.2) are ${p.pesos ? 'allowed' : 'not allowed'}.`);
     lineas.push(`  ${p.negativo === 'no' ? 'This model has no negative prompt: leave "negativo" empty.' : p.negativo === 'si' ? 'Write a "negativo".' : 'Write a "negativo" only if something specific must be avoided.'}`);
-    lineas.push(`  Its ${caso === 'edicion' ? '"instruccion"' : '"prompt"'} has at most ${d.tope} characters.`);
-    // FEAT-216 — Solo si ComfyUI puede hacerlo: es el único que agrega el prefijo y el modo seguro.
-    if (d.resuelto) for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
-    if (d.huecos && d.loras.length) lineas.push(`  LoRAs you may add to "loras" (at most ${d.huecos}, only when the request asks for that look): ${d.loras.map((l) => `"${l.clave}"`).join(', ')}.`);
+  }
+  lineas.push(`  Its ${campo} has at most ${tope} characters.`);
+  // FEAT-216 — Solo si ComfyUI puede hacerlo: es el único que agrega el prefijo y el modo seguro.
+  if (!soloTopeYLoras && d.resuelto) for (const l of lineasFijas(p, d.seguro)) lineas.push(`  ${l}`);
+  if (d.huecos && d.loras.length) lineas.push(`  LoRAs you may add to "loras" (at most ${d.huecos}, only when the request asks for that look): ${d.loras.map((l) => `"${l.clave}"`).join(', ')}.`);
+  return lineas;
+}
+
+/** FEAT-218 — Lo que se suma a la base cuando el refinador elige el modelo. */
+// El texto que midió S0 (12 de 12): "modelo" en el ejemplo del JSON y estas líneas, en este orden.
+const SOBRE_MODELO = Object.freeze([
+  'Choose "modelo" from the list of models by what the request is about and by each model\'s description.',
+  'If the user\'s message names one of these models, or a style that only one of them is for, choose it.'
+]);
+const SOBRE_MODELO_FIN = 'Write "prompt" and "negativo" with the rules of the model you chose.';
+const JSON_SIN_MODELO = '"loras": []}.';
+const JSON_CON_MODELO = '"loras": [], "modelo": "<model key>"}.';
+const SOBRE_MODELO_FOTO = 'When a photo is attached and the case uses it, also choose by the photo\'s style (for example drawn or anime versus photographic).';
+
+/**
+ * FEAT-218 — La consigna con candidatos: un bloque «Models:» con el perfil de cada uno (un perfil repetido se escribe una
+ * vez; el tope y las LoRAs, siempre) y la lista de casos. Un caso que ningún candidato cubre y el fijo sí (edición, el
+ * retoque `fill`) conserva el bloque de su perfil.
+ */
+function consignaConCandidatos(disponibles, { base, fuerzaAutomatica, candidatos, conFoto }) {
+  const lineas = cabeza(disponibles, { base, fuerzaAutomatica }).map((l, i) => (i === 2 ? l.split(JSON_SIN_MODELO).join(JSON_CON_MODELO) : l));
+  lineas.push(...SOBRE_MODELO);
+  if (conFoto) lineas.push(SOBRE_MODELO_FOTO);
+  lineas.push(SOBRE_MODELO_FIN);
+  lineas.push('', 'Models:');
+  const perfilesVistos = new Map();
+  for (const c of candidatos) {
+    lineas.push(`- "${c.clave}": ${c.para}. Can do: ${c.puede.join(', ')}.`);
+    const d = c.disponibles[c.puede[0]];
+    const tope = Math.min(...c.puede.map((k) => c.disponibles[k].tope));
+    const igualA = perfilesVistos.get(d.perfil.id);
+    lineas.push(...lineasDePerfil(d, { tope, soloTopeYLoras: Boolean(igualA), igualA }));
+    if (!igualA) perfilesVistos.set(d.perfil.id, c.clave);
+  }
+  lineas.push('', 'Cases:');
+  for (const caso of CASOS) {
+    const cubre = candidatos.some((c) => c.puede.includes(caso));
+    const hay = cubre || casos.estaDisponible(disponibles, caso);
+    lineas.push(`- ${caso}: ${QUE_ES[caso]}. ${hay ? 'Available.' : 'Not available now.'}`);
+    if (cubre || !hay) continue;
+    const d = disponibles[caso];
+    const igualA = perfilesVistos.get(d.perfil.id);
+    lineas.push(...lineasDePerfil(d, { campo: caso === 'edicion' ? '"instruccion"' : '"prompt"', tope: d.tope, soloTopeYLoras: Boolean(igualA), igualA }));
+    if (!igualA) perfilesVistos.set(d.perfil.id, caso);
   }
   return lineas.join('\n');
 }
@@ -120,16 +183,29 @@ function parsearSalida(texto) {
 const texto = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /** La salida del refinador, con su caso bajado y cada campo limpio. `null` si no queda prompt; `{ sinCaso }` si no hay ningún caso. */
-function sanear(o, { disponibles, desdeFoto = false, base = null, fuerzaAutomatica = false }) {
-  const elegido = CASOS.includes(o.caso) ? o.caso : desdeFoto && base !== 'opcional' ? 'variacion' : 'nueva';
-  const casoPedido = base === 'fija' && elegido === 'nueva' ? 'variacion' : elegido;
+function sanear(o, { disponibles, candidatos = null, desdeFoto = false, base = null, fuerzaAutomatica = false }) {
+  const pedidoCaso = CASOS.includes(o.caso) ? o.caso : desdeFoto && base !== 'opcional' ? 'variacion' : 'nueva';
+  const casoPedido = base === 'fija' && pedidoCaso === 'nueva' ? 'variacion' : pedidoCaso;
   const campos = { zona: texto(o.zona), instruccion: texto(o.instruccion), prompt: texto(o.prompt) };
   if (!campos.prompt && !campos.instruccion) return null;
-  const caso = casos.bajarCaso(casoPedido, disponibles, campos, { base: base === 'fija' });
+  const opciones = { base: base === 'fija' };
+  // FEAT-218 — El modelo: la clave que eligió el refinador entre los candidatos. Si el elegido no puede el caso pedido y
+  // el fijo sí, va el fijo sin bajar el caso (un retoque no se vuelve variación porque el elegido no retoca).
+  const clave = texto(o.modelo).toLowerCase();
+  const elegido = candidatos && clave ? candidatos.find((c) => c.clave === clave) || null : null;
+  let usar = disponibles;
+  let conElegido = false;
+  if (elegido) {
+    const conEl = elegido.puede.includes(casoPedido) || !casos.estaDisponible(disponibles, casoPedido) ? casos.bajarCaso(casoPedido, elegido.disponibles, campos, opciones) : null;
+    if (conEl && elegido.puede.includes(conEl)) { usar = elegido.disponibles; conElegido = true; }
+  }
+  const caso = casos.bajarCaso(casoPedido, usar, campos, opciones);
   if (!caso) return { sinCaso: true, casoPedido };
   // FEAT-213 — La fuerza la calcula el código: de la salida solo vale `cambio`, y solo con el interruptor prendido.
-  const r = casos.ajustarAlCaso({ ...o, fuerza: undefined, cambio: fuerzaAutomatica ? o.cambio : undefined }, caso, disponibles[caso]);
-  return r ? { ...r, caso, casoPedido } : null;
+  const r = casos.ajustarAlCaso({ ...o, fuerza: undefined, cambio: fuerzaAutomatica ? o.cambio : undefined }, caso, usar[caso]);
+  if (!r) return null;
+  const modelo = conElegido ? { modelo: elegido.archivo, modeloAuto: true } : elegido ? { modeloDescartado: elegido.clave } : {};
+  return { ...r, caso, casoPedido, ...modelo };
 }
 
 /** Sin refinador: el texto del alma, con la misma limpieza por perfil. `motivo`, por qué (al log de la cola). */
@@ -147,8 +223,9 @@ function sinRefinar(pedido, { disponibles, desdeFoto = false, base = null, motiv
  * `refinar({ pedido, mensaje, foto, disponibles, desdeFoto, signal, … })` → `{ prompt, negativo, proporcion, zona, instruccion, loras,
  * caso, casoPedido, refinado, conFoto }`. `foto = { ruta, descripcion: { ok, texto } }`. Nunca lanza; un cancelado devuelve `{ cancelado: true }`.
  */
-async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFoto = Boolean(foto), base = null, fuerzaAutomatica = false, signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
-  const sistema = consigna(disponibles, { base, fuerzaAutomatica });
+async function refinar({ pedido, mensaje = '', foto = null, disponibles, candidatos = null, desdeFoto = Boolean(foto), base = null, fuerzaAutomatica = false, signal, vision = visionReal, homeDir, leer, ejecutar, fetchImpl, registrarUso = () => {}, clave = null, origen = 'usuario' }) {
+  // FEAT-218 — `candidatos` (de `casos.candidatosDe`): el refinador también elige el modelo.
+  const sistema = consigna(disponibles, { base, fuerzaAutomatica, candidatos, conFoto: Boolean(foto) });
   const lineas = [`Assistant's request: ${String(pedido || '').slice(0, 600)}`, `User's message: ${String(mensaje || '').slice(0, 1000)}`];
   const intentos = [];
   let motivo = null;
@@ -169,7 +246,7 @@ async function refinar({ pedido, mensaje = '', foto = null, disponibles, desdeFo
       registrarUso({ tool: 'refinador_imagen', motor: 'opencode-go', rol: clave ? `alma:${clave}` : 'imagen', modelo: r.modelo || null, modeloReal: r.modelo || null, esfuerzo: null, conversationId: null, duracion: (Date.now() - inicio) / 1000, usage: r.uso || null, error: null, costoUsd: null, origen, cuota: null });
     } catch {}
     const o = parsearSalida(r.texto);
-    const limpio = o && sanear(o, { disponibles, desdeFoto, base, fuerzaAutomatica });
+    const limpio = o && sanear(o, { disponibles, candidatos, desdeFoto, base, fuerzaAutomatica });
     if (limpio) return { ...limpio, refinado: true, conFoto: intento.conFoto };
     motivo = 'el refinador respondió algo que no es el JSON pedido';
     break; // respondió pero no parsea: el texto del alma
