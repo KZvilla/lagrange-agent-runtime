@@ -45,7 +45,7 @@ const conCandidatos = (extra = {}, comfy = {}) => config({ orden: ['comfyui'], a
 /** Un catálogo con esos checkpoints y los nodos de las plantillas sdxl (con la segunda pasada). */
 const catalogo = (checkpoints) => ({
   checkpoints: checkpoints.map((valor) => ({ valor })), unets: [], clips: [], vaes: [], loras: [],
-  nodos: new Set(['CheckpointLoaderSimple', 'KSampler', 'CLIPTextEncode', 'EmptyLatentImage', 'VAEDecode', 'SaveImage', 'LoraLoader', 'LoadImage', 'VAEEncode', 'ImageScale', 'LatentUpscaleBy'])
+  nodos: new Set(['CheckpointLoaderSimple', 'KSampler', 'CLIPTextEncode', 'EmptyLatentImage', 'VAEDecode', 'SaveImage', 'LoraLoader', 'LoadImage', 'VAEEncode', 'ImageScale', 'LatentUpscaleBy', 'UpscaleModelLoader', 'ImageUpscaleWithModel'])
 });
 
 async function main() {

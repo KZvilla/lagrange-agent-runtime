@@ -614,7 +614,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
           // S1.1 — `metodo`: la misma regla dentro del objeto (un Desktop que manda los tres números sin él no lo borra).
           const h = { ...m.hires };
           if (h.metodo === null) delete h.metodo;
-          else if (h.metodo === undefined && esObjeto(antes) && antes.metodo !== undefined) h.metodo = antes.metodo;
+          else if (h.metodo === undefined && esObjeto(antes) && perfiles.METODOS_LATENTE.includes(antes.metodo)) h.metodo = antes.metodo;
           m.hires = h;
         }
         v = { ...v0, muestreo: m };

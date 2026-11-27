@@ -82,7 +82,7 @@ async function main() {
     const [idEnc, enc] = clase('VAEEncode');
     check('KSampler 3 → VAEDecode → modelo → ImageScale → VAEEncode → KSampler 11 → VAEDecode 8', JSON.stringify(l.flujo['8'].inputs.samples) === '["11",0]' && JSON.stringify(l.flujo['11'].inputs.latent_image) === `["${idEnc}",0]` && JSON.stringify(enc.inputs.pixels) === `["${idEsc}",0]` && JSON.stringify(esc.inputs.image) === `["${idUp}",0]`);
     check('ImageScale a hires_ancho × hires_alto, con lanczos', esc.inputs.width === '{{hires_ancho}}' && esc.inputs.height === '{{hires_alto}}' && esc.inputs.upscale_method === 'lanczos' && esc.inputs.crop === 'disabled');
-    check('hires_ancho y hires_alto son enteros; hires_modelo y hires_metodo, texto', F.ENTEROS.has('hires_ancho') && F.ENTEROS.has('hires_alto') && !F.ENTEROS.has('hires_modelo') && !F.DECIMALES.has('hires_modelo') && !F.ENTEROS.has('hires_metodo'));
+    check('hires_ancho y hires_alto son enteros; hires_modelo y hires_metodo, texto', F.ENTEROS.has('hires_ancho') && F.ENTEROS.has('hires_alto') && !F.ENTEROS.has('hires_modelo') && !F.DECIMALES.has('hires_modelo') && !F.ENTEROS.has('hires_metodo') && !F.DECIMALES.has('hires_metodo'));
     const disp = JSON.parse(fs.readFileSync(path.join(DIR_SDXL, 'nueva-hires-modelo.disposicion.json'), 'utf8'));
     check('su disposición vale y cubre los 17 nodos', D.validarDisposicion(disp).ok && Object.keys(disp.nodos).length === 17 && Object.keys(l.flujo).every((id) => disp.nodos[id] && disp.nodos[id].tipo === l.flujo[id].class_type));
     check('su clave es plugin:sdxl/nueva-hires-modelo', D.delPlugin('plugin:sdxl/nueva-hires-modelo') !== null);
@@ -116,6 +116,14 @@ async function main() {
     check('los dos KSampler y los clip de 6 y 7 toman de 104 en la plantilla, y de 101 con una LoRA usada', toman(cruda, '104') && toman(fl, '101') && fl['101'].inputs.lora_name === 'a.safetensors');
     const lat = arma({ sec: conHires(null) });
     check('sin modelo: latente, con el método', lat.hires === 'latente' && F.aplicarMarcadores(lat.armado, lat.datos)['10'].inputs.upscale_method === 'nearest-exact');
+    // Un método elegido llega al grafo final.
+    const conBislerp = { ...copia(PI), muestreo: { ...copia(PI.muestreo), hires: { ...PI.muestreo.hires, metodo: 'bislerp' } } };
+    const bl = armarPedido({ seccion: conHires(null), caso: 'nueva', modelo: WAI, perfil: conBislerp, pedido: { prompt: 'x', negativo: '', ancho: 1088, alto: 1088 } });
+    check('bislerp en el perfil: llega al LatentUpscaleBy del grafo final', bl.hires === 'latente' && F.aplicarMarcadores(bl.armado, bl.datos)['10'].inputs.upscale_method === 'bislerp');
+    // datosDe de un perfil sin muestreo.hires: nearest-exact.
+    const sinH = copia(P.PERFILES.get('sdxl')); delete sinH.muestreo.hires;
+    const dsh = datosDe({ caso: 'nueva', modelo: BASE, perfil: sinH, prompt: 'x', ancho: 1024, alto: 1024 });
+    check('datosDe de un perfil sin muestreo.hires: nearest-exact, 1,5 y la mitad de los pasos', dsh.hires_metodo === 'nearest-exact' && dsh.hires_escala === 1.5 && dsh.hires_pasos === Math.max(1, Math.round(sinH.muestreo.pasos / 2)));
     // El catálogo con el archivo en otra forma: el valor exacto del catálogo.
     const cat = catalogo([WAI], ['ESRGAN\\' + US]);
     const enSub = arma({ sec: conHires('ESRGAN/' + US), cat });
@@ -174,10 +182,13 @@ async function main() {
     check('la forma vieja [[...]] también', catalogos.leerObjectInfo({ UpscaleModelLoader: { input: { required: { model_name: [[US]] } } } }).upscalers[0].valor === US);
     check('publico entrega upscalers (y no nodos)', catalogos.publico(cat).upscalers.length === 2 && !('nodos' in catalogos.publico(cat)));
     // Lo que sostiene el reemplazo: faltantes no cuenta el archivo de reescalado.
-    const e = C.estadoComfyui(conHires(), 'nueva', catalogo([BASE], ['otro.pth']));
-    check('estadoComfyui con los nodos y sin el archivo de reescalado: puede', e.puede === true, JSON.stringify(e.motivo));
-    const f = F.faltantes(F.resolverFlujo(conHires(), P.PERFILES.get('sdxl'), 'nueva'), { modelo: BASE }, catalogo([BASE], ['otro.pth']));
-    check('…y faltan.archivos no lo nombra', !JSON.stringify(f).includes(US));
+    // Con WAI (Illustrious), el perfil que tiene la casilla y el modelo: el flujo es de verdad nueva-hires-modelo.
+    const catHires = catalogo([WAI], ['otro.pth']);
+    const e = C.estadoComfyui(conHires(), 'nueva', catHires, { modelo: WAI });
+    check('estadoComfyui con nueva-hires-modelo, los nodos y sin el archivo de reescalado: puede', e.puede === true && e.resuelto && e.resuelto.nombre === 'sdxl/nueva-hires-modelo', JSON.stringify({ motivo: e.motivo, nombre: e.resuelto && e.resuelto.nombre }));
+    const r = F.resolverFlujo(conHires(), PI, 'nueva');
+    const f = F.faltantes(r, { modelo: WAI }, catHires);
+    check('…y faltantes no lo nombra (ni archivos ni nodos)', r.nombre === 'sdxl/nueva-hires-modelo' && f.faltan.archivos.length === 0 && f.faltan.nodos.length === 0 && !JSON.stringify(f).includes(US), JSON.stringify(f));
   });
 
   // ------------------------------------------------------------ ajustes
@@ -208,6 +219,10 @@ async function main() {
     check('los tres números sin metodo: se conserva el método', p2.perfiles_propios.mio.muestreo.hires.pasos === 20 && p2.perfiles_propios.mio.muestreo.hires.metodo === 'bicubic');
     const conNull = copia(propio); conNull.muestreo.hires.metodo = null;
     check('metodo: null lo saca', !('metodo' in aplica({ perfiles_propios: { mio: conNull } }, p1).perfiles_propios.mio.muestreo.hires));
+    // Un método guardado que no vale (editado a mano): un PATCH sin metodo no lo copia, y guarda.
+    const crudo = copia(p1); crudo.perfiles_propios.mio.muestreo.hires.metodo = 'raro';
+    const p4 = tira(() => aplica({ perfiles_propios: { mio: sinMetodo } }, crudo)) || aplica({ perfiles_propios: { mio: sinMetodo } }, crudo);
+    check('un método guardado que no vale no se copia: guarda sin él', p4 && p4.perfiles_propios && !('metodo' in p4.perfiles_propios.mio.muestreo.hires), p4 && p4.message);
     check('un método que no es: 400', /metodo/.test(tira(() => aplica({ perfiles_propios: { mio: { ...propio, muestreo: { ...propio.muestreo, hires: { ...propio.muestreo.hires, metodo: 'lanczos' } } } } })).campo));
     const v = ajustesV2({ imagenes: A.leerImagenes({ imagenes: { ...p1, comfyui: { hires_modelo_de: { 'sdxl-illustrious': US } } } }).imagenes }).imagenes;
     check('comfyuiV2: hires_modelo_de (la señal de 2.26.1)', v.comfyui.hires_modelo_de['sdxl-illustrious'] === US && esObjeto(ajustesV2({ imagenes: A.leerImagenes({ imagenes: {} }).imagenes }).imagenes.comfyui.hires_modelo_de));
