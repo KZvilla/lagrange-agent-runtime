@@ -244,6 +244,8 @@ export function tallerImagenes() {
     leerConfig: leerConfigImagenes, proceso: procesoComfy(), dirAdjuntos: () => dirAdjuntos(),
     cola: { podar: (clave, actual) => colaImagenes().podar(clave, actual), invalidarMapas: () => colaImagenes().invalidarMapas() },
     alCambiar: avisarImagenes, publicar: (tema, tipo, datos) => { try { if (publicarTaller) publicarTaller(tema, tipo, datos); } catch {} },
+    // 2.25.1 — Sin el catálogo en la caché (nadie generó ni probó en 5 minutos), el taller lo pide.
+    pedirCatalogo: (url) => imgCatalogo().catalogoDe(url),
     log: (linea) => console.error(redactSecrets(linea))
   }));
 }

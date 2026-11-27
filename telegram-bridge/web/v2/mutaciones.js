@@ -272,7 +272,7 @@ export function rutasMutacionV2({ nucleo, cola, ctx, chatTerminal, registro, ide
     } },
     // ---------------------------------------------------------------- FEAT-214 — El taller.
     { metodo: 'POST', patron: /^\/api\/v2\/taller:abrir$/, fn: ({ cuerpo }) => deTaller((tl) => tl.abrir(cuerpo)) },
-    { metodo: 'GET', patron: /^\/api\/v2\/taller\/plantillas\/?$/, fn: () => deTaller((tl) => tl.plantillas()) },
+    { metodo: 'GET', patron: /^\/api\/v2\/taller\/plantillas\/?$/, fn: () => deTaller((tl) => (typeof tl.listarPlantillas === 'function' ? tl.listarPlantillas() : tl.plantillas())) },
     { metodo: 'POST', topeCuerpo: TOPE_GRAFO_CUERPO, patron: /^\/api\/v2\/taller\/plantillas\/?$/, fn: ({ cuerpo }) => deTaller((tl) => tl.guardarPlantilla(cuerpo)) },
     { metodo: 'POST', patron: /^\/api\/v2\/taller\/plantillas:borrar$/, fn: ({ cuerpo }) => deTaller((tl) => tl.borrarPlantilla(cuerpo)) },
     { metodo: 'GET', patron: /^\/api\/v2\/taller\/preparados\/?$/, fn: ({ url }) => deTaller((tl) => tl.preparadoDe(url.searchParams.get('tareaId'))) },

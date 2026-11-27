@@ -117,6 +117,7 @@ async function main() {
     let invalidadas = 0;
     const t = crearTaller({
       leerConfig: () => cfg, proceso, dirAdjuntos: () => adjuntos, fetchImpl: comfy.fetch, catalogoDe: () => (extra.sinCatalogo ? null : CATALOGO),
+      ...(extra.pedirCatalogo ? { pedirCatalogo: extra.pedirCatalogo } : {}),
       cola: { podar: (c, a) => podadas.push([c, a]), invalidarMapas: () => { invalidadas++; } }, publicar: (tema, tipo, datos) => eventos.push({ tema, tipo, datos }),
       tiempos: { vuelta: 1e9, levantar: 50, ...(extra.tiempos || {}) }, ...(extra.dir ? { dir: extra.dir } : {})
     });
@@ -646,6 +647,41 @@ async function main() {
     const { ajustesV2 } = await importar('telegram-bridge/web/v2/ajustes.js');
     const a = ajustesV2({ imagenes: { taller: { activo: false, al_cerrar: 'x' } } });
     check('la vista v2: campo por campo, con lo que falta prendido', a.imagenes.taller.activo === false && a.imagenes.taller.mirar === true && a.imagenes.taller.al_cerrar === 'preguntar');
+  });
+
+  await group('2.25.1: sin el catálogo en la caché, el taller lo pide', async () => {
+    // Nadie generó ni probó en 5 minutos: la caché está vacía, pero ComfyUI contesta.
+    const pedidos = [];
+    const { t } = armar({ sinCatalogo: true, pedirCatalogo: async (url) => { pedidos.push(url); return CATALOGO; } });
+    const lista = await t.listarPlantillas();
+    check('la lista pide el catálogo y las plantillas quedan disponibles', lista.ok && pedidos.length === 1 && lista.plantillas.find((p) => p.id === 'plugin:nueva').disponible && !lista.plantillas.some((p) => /no respondió/.test(p.motivo || '')));
+    check('a la URL de ComfyUI de la config', pedidos[0] === cfg.comfyui.url);
+    const n = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+    check('abrir una plantilla también lo pide (no 409 «ComfyUI no respondió»)', n.ok && pedidos.length === 2);
+    t.parar();
+    // ComfyUI no contesta de verdad: «ComfyUI no respondió», como antes.
+    const { t: caido } = armar({ sinCatalogo: true, pedirCatalogo: async () => null });
+    check('sin respuesta: todas apagadas con su motivo', (await caido.listarPlantillas()).plantillas.every((p) => !p.disponible && /no respondió/.test(p.motivo)));
+    caido.parar();
+    // Un pedido que lanza o que tarda más que el tope: tampoco cuelga la lista (la terminal espera 10 s).
+    const { t: lanza } = armar({ sinCatalogo: true, pedirCatalogo: () => { throw new Error('x'); } });
+    check('un pedido que lanza: null, sin romper', (await lanza.listarPlantillas()).plantillas.every((p) => !p.disponible));
+    lanza.parar();
+    const { t: lento } = armar({ sinCatalogo: true, pedirCatalogo: () => new Promise((ok) => setTimeout(() => ok(CATALOGO), 2000)), tiempos: { catalogo: 30 } });
+    const t0 = Date.now();
+    const l = await lento.listarPlantillas();
+    check('uno más lento que el tope: corta y dice que no respondió', Date.now() - t0 < 1500 && l.plantillas.every((p) => !p.disponible && /no respondió/.test(p.motivo)));
+    lento.parar();
+    // Con el catálogo en la caché no se pide nada.
+    const otros = [];
+    const { t: conCache } = armar({ pedirCatalogo: async (u) => { otros.push(u); return CATALOGO; } });
+    check('con caché, no pide', (await conCache.listarPlantillas()).plantillas.find((p) => p.id === 'plugin:nueva').disponible && otros.length === 0);
+    conCache.parar();
+    // El daemon le pasa el pedido de verdad y la ruta usa listarPlantillas.
+    const botSrc = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'bot.js'), 'utf8');
+    const rutas = fs.readFileSync(path.join(__dirname, '..', 'telegram-bridge', 'web', 'v2', 'mutaciones.js'), 'utf8');
+    check('bot.js: pedirCatalogo con catalogo.catalogoDe', /pedirCatalogo: \(url\) => imgCatalogo\(\)\.catalogoDe\(url\)/.test(botSrc));
+    check('la ruta GET de plantillas usa listarPlantillas', rutas.includes('tl.listarPlantillas()'));
   });
 
   await group('El contrato: la capacidad y los dos eventos', () => {
