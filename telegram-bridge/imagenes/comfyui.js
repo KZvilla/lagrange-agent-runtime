@@ -73,7 +73,7 @@ export { TOPE_BYTES, leerHasta, medidasDe, tipoDe, extDe };
  * FEAT-214 — Los datos de los marcadores de un pedido: lo del perfil (muestreo y carga) y lo del pedido. La semilla, la que
  * viene o una al azar.
  */
-export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [], seguro = false }) {
+export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo = '', ancho, alto, semilla, fuerza = null, zona = '', instruccion = '', catalogo = null, marcadores = [], seguro = false, hiresEscala = null }) {
   const seed = Number.isInteger(semilla) ? semilla : crypto.randomInt(0, 2 ** 31);
   const m = perfil.muestreo;
   // FEAT-216 — El prefijo y el negativo fijo del perfil, y el modo seguro: sin etiquetas repetidas.
@@ -82,6 +82,12 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
     prompt: final.prompt, negativo: final.negativo, semilla: seed, ancho, alto, pasos: m.pasos, cfg: m.cfg, guia: m.guia, sampler: m.sampler, scheduler: m.scheduler, fuerza: caso === 'retoque' ? m.fuerzaRetoque : caso === 'variacion' && Number.isFinite(fuerza) ? fuerza : m.fuerza,
     ...casosLib.comoLosLista(casosLib.valoresDeCarga(modelo, perfil), catalogo)
   };
+  // FEAT-218 — Los números de la segunda pasada, siempre (un flujo propio también los puede usar). `hiresEscala` es la
+  // que dejó el tope de 4 MP de `armarPedido`.
+  const h = perfilesLib.hiresDe(perfil);
+  datos.hires_escala = Number.isFinite(hiresEscala) ? hiresEscala : h.escala;
+  datos.hires_pasos = h.pasos;
+  datos.hires_fuerza = h.fuerza;
   if (caso === 'retoque') datos.zona = zona;
   if (caso === 'edicion') {
     datos.instruccion = perfilesLib.componerPrompt(perfil, { prompt: instruccion, negativo, seguro }).prompt;
@@ -91,15 +97,41 @@ export function datosDe({ caso = 'nueva', modelo, perfil, prompt = '', negativo 
   return datos;
 }
 
+/** FEAT-218 — El área final máxima de una imagen con la segunda pasada, y la escala mínima que vale la pena. */
+export const TOPE_AREA_HIRES = 4_000_000;
+export const ESCALA_HIRES_MINIMA = 1.25;
+
+/** FEAT-218 — La escala de la segunda pasada con el tope de 4 MP: la del perfil, o menos. */
+export function escalaConTope(escala, ancho, alto) {
+  const area = Number(ancho) * Number(alto);
+  if (!(area > 0)) return escala;
+  return Math.min(escala, Math.floor(Math.sqrt(TOPE_AREA_HIRES / area) * 100) / 100);
+}
+
 /**
  * FEAT-214 — Arma el flujo de un pedido sin mandarlo: resuelve cuál (o la `plantilla` del taller), pone los LoRAs que sigue
  * teniendo ComfyUI y puentea los huecos libres. Los marcadores todavía no se aplican (falta la base).
  * `{ ok, resuelto, datos, armado, usadas }` o `{ ok: false, codigo, detalle?, extra? }`.
  */
-export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = {}, loras = [], catalogo = null, plantilla = null, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), log = () => {} }) {
-  const resuelto = plantilla ? flujosLib.resolverPlantillaTaller(perfil, plantilla) : resolverFlujo(seccion, perfil, caso);
+export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = {}, loras = [], catalogo = null, plantilla = null, resolverFlujo = (s, p, c, o) => flujosLib.resolverFlujo(s, p, c, o), log = () => {} }) {
+  let resuelto = plantilla ? flujosLib.resolverPlantillaTaller(perfil, plantilla) : resolverFlujo(seccion, perfil, caso);
   if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
-  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores, seguro: perfilesLib.seguroActivo(seccion, perfil) });
+  // FEAT-218 — La segunda pasada, solo con la plantilla hires del plugin (un flujo propio no se toca): la escala con el
+  // tope de 4 MP y, si queda por debajo de 1,25 (un `desde` del taller de una imagen grande), sin hires.
+  let hiresEscala = null;
+  let hires = !plantilla && !resuelto.propio && resuelto.nombre === `${perfil.plantillas}/nueva-hires`;
+  if (hires) {
+    const escala = perfilesLib.hiresDe(perfil).escala;
+    hiresEscala = escalaConTope(escala, pedido.ancho, pedido.alto);
+    if (hiresEscala < ESCALA_HIRES_MINIMA) {
+      log(`[imagenes] Sin hires: con ${pedido.ancho}×${pedido.alto} la imagen pasaría de 4 MP.`);
+      resuelto = resolverFlujo(seccion, perfil, caso, { hires: false });
+      if (!resuelto.ok) return { ok: false, codigo: 'fallo-del-flujo', detalle: resuelto.motivo };
+      hires = false;
+      hiresEscala = null;
+    } else if (hiresEscala < escala) log(`[imagenes] Hires a ${hiresEscala}× (no ${escala}×): la imagen no pasa de 4 MP.`);
+  }
+  const datos = datosDe({ ...pedido, caso: plantilla ? 'variacion' : caso, modelo, perfil, catalogo, marcadores: resuelto.marcadores, seguro: perfilesLib.seguroActivo(seccion, perfil), hiresEscala });
   // Un LoRA que ya no está en ComfyUI se saltea (solo con un catálogo válido se sabe).
   const usadas = [];
   for (const l of loras.slice(0, resuelto.huecos.length)) {
@@ -112,7 +144,7 @@ export function armarPedido({ seccion, caso = 'nueva', modelo, perfil, pedido = 
   const usaFoto = plantilla ? true : caso !== 'nueva';
   const falta = flujosLib.marcadorFaltante(armado, usaFoto ? { ...datos, foto: 'x' } : datos);
   if (falta) return { ok: false, codigo: 'flujo-marcador', extra: { marcador: falta } };
-  return { ok: true, resuelto, datos, armado, usadas };
+  return { ok: true, resuelto, datos, armado, usadas, hires };
 }
 
 /** FEAT-214 — Sube una foto al `input` de ComfyUI con un nombre al azar. El nombre como lo usa un `LoadImage`. */
@@ -130,7 +162,7 @@ export async function subirBase({ json, foto, signal }) {
  * Crea el proveedor. `config` es la sección `imagenes` entera (normalizada); `resolverFlujo(config, perfil, caso)`, quien
  * dice qué flujo se usa. `fetchImpl`, `esperar` y `log` se inyectan en los tests.
  */
-export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flujosLib.resolverFlujo(s, p, c), catalogoDe = (url) => catalogos.enCache(url), fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS, idCliente = () => `lagrange-${crypto.randomBytes(4).toString('hex')}` }) {
+export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c, o) => flujosLib.resolverFlujo(s, p, c, o), catalogoDe = (url) => catalogos.enCache(url), fetchImpl = globalThis.fetch, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, ahora = () => Date.now(), pedidoMs = PEDIDO_MS, idCliente = () => `lagrange-${crypto.randomBytes(4).toString('hex')}` }) {
   const config = seccion.comfyui;
   const base = String(config.url || ajustesImagenes.URL_COMFYUI).replace(/\/+$/, '');
   // El `signal` del trabajo (si viene) más el tope del pedido.
@@ -239,7 +271,8 @@ export function crearComfyui({ config: seccion, resolverFlujo = (s, p, c) => flu
     // Desde que el flujo sale para /prompt, ComfyUI pudo haberlo aceptado aunque no conteste.
     let enviado = false;
     let resultado;
-    const tope = ahora() + config.tiempo_s * 1000;
+    // FEAT-218 — Con la segunda pasada, el triple: S0 midió entre 2,3 y 2,5 veces lo de una sin hires.
+    const tope = ahora() + config.tiempo_s * 1000 * (a.hires ? 3 : 1);
     try {
       if (usaFoto) datos.foto = await subirBase({ json, foto, signal });
       const flujo = flujosLib.aplicarMarcadores(armado, datos);

@@ -622,7 +622,9 @@ async function main() {
     check('las flags: nombres y valores', flags.comoArgumento({ flag: '--a', valor: 'x y' }) === '--a=x y' && flags.comoArgumento({ flag: '--a', valor: null }) === '--a');
   });
 
+  // Las carpetas temporales no quedan en TEMP.
+  for (const d of [raiz, home]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
   report();
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => { try { fs.rmSync(raiz, { recursive: true, force: true }); } catch {} console.error(err); process.exit(1); });

@@ -161,7 +161,7 @@ async function main() {
         cuantas++;
       }
     }
-    check('son 10', cuantas === 10);
+    check('son 11 (FEAT-218 suma sdxl/nueva-hires)', cuantas === 11);
     check('las retoque-sam2 no traen (sus nodos no estaban en el ComfyUI de la medición)', D.delPlugin('plugin:sdxl/retoque-sam2') === null && D.delPlugin('plugin:flux-fill/retoque-sam2') === null);
   });
 

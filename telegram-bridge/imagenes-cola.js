@@ -35,6 +35,7 @@ const refinadorReal = perezoso('../mcp-server/imagenes/refinador.js');
 const visionReal = perezoso('../mcp-server/imagenes/vision.js');
 const casosLib = perezoso('../mcp-server/imagenes/casos.js');
 const catalogos = perezoso('../mcp-server/imagenes/catalogo.js');
+const perfilesLib = perezoso('../mcp-server/imagenes/perfiles.js');
 
 export const TOPE_COLA_IMAGENES = 4;
 export const TOPE_IMAGENES_TURNO = 4;
@@ -231,8 +232,17 @@ export function crearColaImagenes({
    */
   function primeroComfy(job, config, { opcional = false } = {}) {
     const conFoto = Boolean((job.desdeFoto || (job.fotoOpcional && (opcional || job.caso))) && job.foto);
-    const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual })[job.caso || (conFoto ? 'variacion' : 'nueva')];
+    const caso = job.caso || (conFoto ? 'variacion' : 'nueva');
+    // FEAT-218 — El modelo al que va a caer el trabajo: el de una repetición si todavía puede; si no, el fijo.
+    const modelo = modeloQuePuede(config, job.modelo, caso, null);
+    const d = casosLib.disponiblesDe(config, { desdeFoto: conFoto, catalogo: null, ...opcionesManual, modelo })[caso];
     return Boolean(d && d.proveedores[0] === 'comfyui');
+  }
+
+  /** FEAT-218 — `modelo` si el caso usa `comfyui.modelo` y ComfyUI puede con él; si no, `null` (el fijo). */
+  function modeloQuePuede(config, modelo, caso, catalogo) {
+    if (typeof modelo !== 'string' || !modelo || !casosLib.usaModeloPrincipal(config, caso)) return null;
+    return casosLib.estadoComfyui(config, caso, catalogo, { modelo }).puede ? modelo : null;
   }
 
   /**
@@ -272,9 +282,9 @@ export function crearColaImagenes({
 
     const conFoto = Boolean((job.desdeFoto || job.fotoOpcional) && job.foto);
     const base = conFoto && job.baseFija ? 'fija' : conFoto && job.fotoOpcional ? 'opcional' : null;
-    const disponiblesDe = async (c) => casosLib.disponiblesDe(c, {
-      desdeFoto: conFoto, catalogo: c.orden.includes('comfyui') ? await catalogoDe(c.comfyui.url) : null, ...opcionesManual
-    });
+    const catalogoPara = async (c) => (c.orden.includes('comfyui') ? await catalogoDe(c.comfyui.url) : null);
+    // FEAT-218 — `modelo`: el elegido por el refinador o el de una repetición (si no, el fijo).
+    const disponiblesDe = async (c, modelo = null) => casosLib.disponiblesDe(c, { desdeFoto: conFoto, catalogo: await catalogoPara(c), ...opcionesManual, modelo });
     // Si otro proveedor del orden hace imágenes pero no puede ahora (agy en manual), se nombra a cada uno con su motivo.
     const sinCaso = (d) => (base === 'fija' ? error(job, 'sin-base') : d.nueva.afuera.some((a) => a.proveedor !== 'comfyui')
       ? error(job, 'sin-proveedor', { intentos: d.nueva.afuera })
@@ -288,27 +298,48 @@ export function crearColaImagenes({
       const pedido = { prompt: job.prompt || '', negativo: job.negativo || '', proporcion: job.proporcion || '1:1', zona: job.zona || '', instruccion: job.instruccion || '', loras: job.loras || [], cambio: job.cambio || null, fuerza: job.fuerza ?? null };
       // Una entrada de antes de 2.19 no tiene caso: sale de si lleva foto.
       const casoPedido = job.caso || (conFoto ? 'variacion' : 'nueva');
+      // FEAT-218 — Una repetición de una que eligió el refinador: el mismo modelo, si todavía puede el caso (antes de bajar,
+      // así un retoque no se vuelve variación porque el modelo de antes ya no está).
+      let modelo = null;
+      if (job.modelo) {
+        modelo = modeloQuePuede(config, job.modelo, casoPedido, await catalogoPara(config));
+        if (modelo) disponibles = await disponiblesDe(config, modelo);
+        else log(`[imagenes] ${job.tareaId}/${job.n}: el modelo de antes ya no puede este caso; va el de siempre.`);
+      }
       const caso = casosLib.bajarCaso(casoPedido, disponibles, pedido, { base: base === 'fija' });
       if (!caso) return sinCaso(disponibles);
-      r = { ...(casosLib.ajustarAlCaso(pedido, caso, disponibles[caso]) || pedido), caso, casoPedido: job.casoPedido || casoPedido };
+      r = { ...(casosLib.ajustarAlCaso(pedido, caso, disponibles[caso]) || pedido), caso, casoPedido: job.casoPedido || casoPedido, ...(modelo ? { modelo, modeloAuto: true } : {}) };
     } else {
+      // FEAT-218 — Los modelos entre los que elige el refinador (o `null`: el fijo, como siempre).
+      const candidatos = config.refinar ? casosLib.candidatosDe(config, { desdeFoto: conFoto, catalogo: await catalogoPara(config), ...opcionesManual }) : null;
       r = config.refinar
-        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, desdeFoto: conFoto, base, fuerzaAutomatica: config.fuerza_automatica !== false, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
+        ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, candidatos, desdeFoto: conFoto, base, fuerzaAutomatica: config.fuerza_automatica !== false, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
         : refinador.sinRefinar(job.pedido, { disponibles, desdeFoto: conFoto, base });
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
       // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo del perfil).
       if (config.refinar && r.refinado === false) log(`[imagenes] ${job.tareaId}/${job.n}: sin refinar (${String(r.motivo || 'sin motivo').slice(0, 200)}); va el texto del alma`);
+      if (r.modeloDescartado) log(`[imagenes] ${job.tareaId}/${job.n}: el refinador eligió "${String(r.modeloDescartado).slice(0, 60)}", que no puede este pedido; va el de siempre.`);
       if (r.sinCaso) return sinCaso(disponibles);
     }
 
     // 2. Generar. Lo disponible se vuelve a mirar: lo que se apagó mientras refinaba vale para esta imagen.
     config = leerConfig();
     if (!habilitada(config, job.clave)) return error(job, 'apagadas');
-    disponibles = await disponiblesDe(config);
+    // FEAT-218 — El elegido, otra vez: una repetición solo pide que siga pudiendo; una elección de este trabajo, además, que
+    // siga entre los candidatos con la casilla prendida.
+    let modeloElegido = null;
+    if (r.modelo) {
+      const sigue = job.modelo || (config.comfyui.modelo_automatico !== false && Array.isArray(config.comfyui.candidatos) && config.comfyui.candidatos.some((c) => perfilesLib.mismoArchivo(c.archivo, r.modelo)));
+      modeloElegido = sigue ? modeloQuePuede(config, r.modelo, r.caso, await catalogoPara(config)) : null;
+      if (!modeloElegido) log(`[imagenes] ${job.tareaId}/${job.n}: el modelo elegido ya no está o no puede; va el de siempre.`);
+    }
+    disponibles = await disponiblesDe(config, modeloElegido);
     if (signal.aborted) return error(job, job.codigoCorte || 'cancelada');
     const caso = casosLib.bajarCaso(r.caso, disponibles, r, { base: base === 'fija' });
     if (!caso) return sinCaso(disponibles);
     const d = disponibles[caso];
+    // Solo cuenta como elegido si el caso que quedó usa ese modelo y lo hace ComfyUI.
+    const modeloAuto = Boolean(modeloElegido && casosLib.usaModeloPrincipal(config, caso) && d.proveedores.includes('comfyui'));
     const hecha = casosLib.ajustarAlCaso(r, caso, d) || r;
     const { prompt, negativo, proporcion, zona, instruccion, loras, cambio: cuanto = null, fuerza = null } = hecha;
     // FEAT-213 — Con una foto que podía no usarse, la entrada dice lo que pasó.
@@ -320,12 +351,15 @@ export function crearColaImagenes({
     try {
       indice.actualizar(job.clave, job.tareaId, job.n, (p) => (p ? {
         ...p, prompt, negativo, proporcion, caso, casoPedido, zona, instruccion, loras: loras.map((l) => l.clave), perfil: conComfy ? d.perfil.id : null,
-        cambio: cuanto, fuerza
+        cambio: cuanto, fuerza,
+        // FEAT-218 — El modelo elegido, para que «otra versión» y reintentar lo repitan.
+        ...(modeloAuto ? { modelo: d.modelo } : {}), modeloAuto
       } : null), env);
     } catch {}
-    transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null, desdeFoto, cambio: cuanto || undefined, fuerza: fuerza ?? undefined });
+    // FEAT-218 — `modeloAuto: false` explícito: un `true` de un intento anterior de esta `n` no sobrevive.
+    transicionImagen(job.tareaId, job.n, { prompt, negativo, ancho, alto, caso, casoPedido, zona: zona || null, instruccion: instruccion || null, perfil: conComfy ? d.perfil.id : null, desdeFoto, cambio: cuanto || undefined, fuerza: fuerza ?? undefined, modeloAuto: false });
     // FEAT-214 — «Que lo prepare el alma»: no se genera. Queda un preparado para abrir en el taller, solo si lo puede ComfyUI.
-    if (job.destino === 'taller') return prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza });
+    if (job.destino === 'taller') return prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza, modeloAuto });
     const tmp = indice.dirTmp(job.clave, env);
     fs.mkdirSync(tmp, { recursive: true });
     const intentos = [];
@@ -398,7 +432,9 @@ export function crearColaImagenes({
         perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null, proveedor: hecho.proveedor, modelo: hecho.modelo, ancho: hecho.ancho, alto: hecho.alto,
         bytes: bytes.length, cambio: cuanto, fuerza, lorasUsadas: hecho.loras,
         // Con alma_la_ve, la vista queda `pendiente` hasta que la mirada termine: un turno que llega antes no la toma.
-        vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, ahora: ahora(), intento: job.intento, num
+        vistaEstado: config.alma_la_ve && !signal.aborted ? 'pendiente' : null, ahora: ahora(), intento: job.intento, num,
+        // FEAT-218 — Elegido por el refinador solo si la hizo ComfyUI con ese modelo.
+        modeloAuto: modeloAuto && hecho.proveedor === 'comfyui'
       })
     }), env);
     // FEAT-215 — Con una más nueva, la elegida de ese hilo deja de valer.
@@ -409,7 +445,8 @@ export function crearColaImagenes({
     transicionImagen(job.tareaId, job.n, {
       estado: 'lista', num: num || undefined, tipo, ancho: hecho.ancho, alto: hecho.alto, proveedor: hecho.proveedor, modelo: hecho.modelo || null,
       semilla: hecho.semilla ?? null, fotoIgnorada: Boolean(hecho.fotoIgnorada || (conFoto && !job.fotoOpcional && caso === 'nueva')), perfil: hecho.proveedor === 'comfyui' ? d.perfil.id : null,
-      loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString()
+      loras: Array.isArray(hecho.loras) && hecho.loras.length ? hecho.loras : undefined, sinChequeoZona: hecho.sinChequeoZona ? true : undefined, codigo: null, mensaje: null, terminada: ahora().toISOString(),
+      modeloAuto: modeloAuto && hecho.proveedor === 'comfyui'
     });
     job.hecha = true;
     podar(job.clave, job);
@@ -420,13 +457,13 @@ export function crearColaImagenes({
     if (config.alma_la_ve && !signal.aborted) await mirar(job, final, prompt);
   }
 
-  function prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza }) {
+  function prepararParaElTaller(job, { caso, casoPedido, d, conComfy, conFoto, prompt, negativo, proporcion, ancho, alto, zona, instruccion, loras, cuanto, fuerza, modeloAuto = false }) {
     if (!taller || !conComfy) return error(job, 'sin-proveedor', { intentos: d.afuera });
     const base = caso !== 'nueva' && conFoto ? { ruta: job.foto.ruta, segura: Boolean(job.foto.segura) } : null;
     let p = null;
     try {
       p = taller.preparar({
-        tareaId: job.tareaId, n: job.n, clave: job.clave, caso, casoPedido, perfil: d.perfil.id, modelo: d.modelo, prompt, negativo, proporcion, ancho, alto,
+        tareaId: job.tareaId, n: job.n, clave: job.clave, caso, casoPedido, perfil: d.perfil.id, modelo: d.modelo, modeloAuto, prompt, negativo, proporcion, ancho, alto,
         zona: zona || '', instruccion: instruccion || '', loras, cambio: cuanto, fuerza, semilla: Number.isInteger(job.semilla) ? job.semilla : null, base,
         // Como al guardar una imagen: de un hilo ya externo, o de una foto de afuera.
         externo: Boolean(job.externo) || Boolean(base && !base.segura), hilo: job.hilo || null
@@ -666,7 +703,9 @@ export function crearColaImagenes({
     return {
       ...de, ...(priv.cambio ? { cambio: priv.cambio, fuerza: priv.fuerza ?? null } : {}),
       prompt: priv.prompt || prompt, negativo: priv.negativo ?? e.negativo ?? '', proporcion: priv.proporcion || '1:1',
-      ...(priv.caso ? { caso: priv.caso, casoPedido: priv.casoPedido || priv.caso, zona: priv.zona || '', instruccion: priv.instruccion || '', loras: priv.loras || [] } : {})
+      ...(priv.caso ? { caso: priv.caso, casoPedido: priv.casoPedido || priv.caso, zona: priv.zona || '', instruccion: priv.instruccion || '', loras: priv.loras || [] } : {}),
+      // FEAT-218 — La que eligió el refinador se repite con el mismo modelo (si todavía puede).
+      ...(priv.modeloAuto === true && typeof priv.modelo === 'string' && priv.modelo ? { modelo: priv.modelo } : {})
     };
   }
 
@@ -803,13 +842,16 @@ export function crearColaImagenes({
  */
 export function camposDeImagen({
   archivo, tipo, foto = null, hilo = null, externo, sha256, prompt = '', negativo = '', proporcion = null, semilla = null, perfil = null, proveedor, modelo = null,
-  ancho = null, alto = null, bytes, cambio = null, fuerza = null, lorasUsadas = [], vistaEstado = null, ahora = new Date(), intento = 1, num = null
+  ancho = null, alto = null, bytes, cambio = null, fuerza = null, lorasUsadas = [], vistaEstado = null, ahora = new Date(), intento = 1, num = null,
+  modeloAuto = false
 }) {
   return {
     archivo, tipo, fotoRuta: foto ? foto.ruta : null, fotoSegura: Boolean(foto && foto.segura),
     hilo: hilo || null, externo: Boolean(externo), sha256, prompt, negativo, proporcion, semilla: semilla ?? null, perfil,
     // FEAT-213 — Lo que muestra la galería cuando la tarea ya no está en el registro.
     proveedor, modelo: modelo || null, ancho, alto, bytes, cambio, fuerza,
+    // FEAT-218 — Si el modelo lo eligió el refinador (`false` explícito: el de un intento anterior no sobrevive).
+    modeloAuto: modeloAuto === true,
     lorasUsadas: Array.isArray(lorasUsadas) ? lorasUsadas : [],
     lista: true, vista: null, vistaOrden: false, vistaEntregada: false, vistaEstado, vistaDesde: ahora.toISOString(),
     // La hora del archivo nuevo: un reintento de una imagen vieja no queda primero para la poda.

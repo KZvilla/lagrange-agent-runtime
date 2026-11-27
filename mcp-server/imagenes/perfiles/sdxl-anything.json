@@ -27,7 +27,8 @@
     "sampler": "euler_ancestral",
     "scheduler": "normal",
     "fuerza": 0.6,
-    "fuerzaRetoque": 0.9
+    "fuerzaRetoque": 0.9,
+    "hires": { "escala": 1.5, "fuerza": 0.5, "pasos": 15 }
   },
   "medidas": {
     "1:1": [1024, 1024],

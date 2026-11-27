@@ -18,10 +18,12 @@ const CASOS_PROPIOS = Object.freeze(['nueva', 'variacion', 'edicion']);
 const CONTROLES = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Los marcadores que se pueden usar en cualquier caso, y los que suma cada uno. */
-const COMUNES = Object.freeze(['semilla', 'ancho', 'alto', 'pasos', 'cfg', 'guia', 'fuerza', 'prompt', 'negativo', 'modelo', 'unet', 'clip_1', 'clip_2', 'vae', 'sampler', 'scheduler']);
+// FEAT-218 — `hires_*`: los números de la segunda pasada (los pone siempre `datosDe`; un flujo propio también los puede usar).
+const COMUNES = Object.freeze(['semilla', 'ancho', 'alto', 'pasos', 'cfg', 'guia', 'fuerza', 'prompt', 'negativo', 'modelo', 'unet', 'clip_1', 'clip_2', 'vae', 'sampler', 'scheduler', 'hires_escala', 'hires_pasos', 'hires_fuerza']);
 const DEL_CASO = Object.freeze({ nueva: [], variacion: ['foto'], retoque: ['foto', 'zona'], edicion: ['foto', 'instruccion'] });
-const ENTEROS = new Set(['semilla', 'ancho', 'alto', 'pasos']);
-const DECIMALES = new Set(['cfg', 'guia', 'fuerza', 'lora_1_fuerza', 'lora_2_fuerza', 'lora_3_fuerza', 'lora_4_fuerza']);
+const ENTEROS = new Set(['semilla', 'ancho', 'alto', 'pasos', 'hires_pasos']);
+// La escala y la fuerza de la segunda pasada van solo acá: en ENTEROS, 1,5 se redondearía a 2.
+const DECIMALES = new Set(['cfg', 'guia', 'fuerza', 'lora_1_fuerza', 'lora_2_fuerza', 'lora_3_fuerza', 'lora_4_fuerza', 'hires_escala', 'hires_fuerza']);
 const MAX_HUECOS = 4;
 /** La política de lectura (`permissions.deny_paths`) que acompaña a la sección normalizada: no viaja en JSON. */
 const DENY = Symbol('deny_paths');
@@ -75,6 +77,13 @@ function formaDeFlujo(ruta, { denyPaths = [] } = {}) {
   return { ok: true, ruta: conBarras(path.resolve(r)) };
 }
 
+/**
+ * FEAT-218 — Lo ya leído, por ruta, `mtime` y tamaño: con los candidatos, cada imagen resuelve los flujos de varios
+ * modelos dos veces. Guarda el texto (no el objeto: quien lo usa puede tocarlo) y se parsea en cada lectura.
+ */
+const CACHE_JSON = new Map();
+const TOPE_CACHE_JSON = 64;
+
 /** Lee un JSON de 2 MB como mucho, de un archivo regular. `{ ok, valor }` o `{ ok: false, motivo }`. */
 function leerJson(ruta, que) {
   let st;
@@ -82,7 +91,14 @@ function leerJson(ruta, que) {
   if (!st.isFile()) return { ok: false, motivo: `${que === 'del flujo' ? 'el flujo' : 'la ficha'} no es un archivo` };
   if (st.size > TOPE_FLUJO) return { ok: false, motivo: `${que === 'del flujo' ? 'el flujo' : 'la ficha'} pesa más de 2 MB` };
   let crudo;
-  try { crudo = fs.readFileSync(ruta, 'utf8'); } catch { return { ok: false, motivo: `el archivo ${que} no se puede leer` }; }
+  const visto = CACHE_JSON.get(ruta);
+  if (visto && visto.mtimeMs === st.mtimeMs && visto.size === st.size) crudo = visto.crudo;
+  else {
+    try { crudo = fs.readFileSync(ruta, 'utf8'); } catch { return { ok: false, motivo: `el archivo ${que} no se puede leer` }; }
+    CACHE_JSON.delete(ruta);
+    if (CACHE_JSON.size >= TOPE_CACHE_JSON) CACHE_JSON.delete(CACHE_JSON.keys().next().value);
+    CACHE_JSON.set(ruta, { mtimeMs: st.mtimeMs, size: st.size, crudo });
+  }
   try { return { ok: true, valor: JSON.parse(crudo.replace(/^\uFEFF/, '')) }; } catch { return { ok: false, motivo: `${que === 'del flujo' ? 'el flujo' : 'la ficha'} no es JSON` }; }
 }
 
@@ -218,8 +234,12 @@ function leerFlujo(ruta, { caso = 'nueva', denyPaths = null } = {}) {
   return { ok: true, ...parcial, ficha, conFicha };
 }
 
-/** El archivo de la plantilla del plugin para un perfil y un caso, o `{ ok: false, motivo }`. */
-function plantillaDe(imagenes, perfil, caso) {
+/**
+ * El archivo de la plantilla del plugin para un perfil y un caso, o `{ ok: false, motivo }`.
+ * FEAT-218 — Una nueva con la segunda pasada prendida usa `<familia>/nueva-hires`, si existe. `{ hires: false }` la apaga
+ * para un pedido (el tope de 4 MP de `armarPedido`).
+ */
+function plantillaDe(imagenes, perfil, caso, { hires = true } = {}) {
   // Con `fill`, el modelo de retoque tiene que ser un Fill: otro repintaría con Crop and Stitch sin que nadie lo pidiera.
   if (caso === 'retoque' && imagenes.comfyui.retoque === 'fill' && perfil.plantillas !== 'flux-fill') return { ok: false, motivo: 'el modelo de retoque no es un Fill' };
   const nombre = caso === 'retoque' ? `retoque-${imagenes.comfyui.mascara}` : caso;
@@ -227,6 +247,11 @@ function plantillaDe(imagenes, perfil, caso) {
   if (!fs.existsSync(ruta)) return { ok: false, motivo: 'no hay plantilla para este caso' };
   if (perfil.carga.tipo !== perfiles.CARGA_DE_FAMILIA[perfil.plantillas]) return { ok: false, motivo: 'no hay plantilla para esta carga' };
   if (perfil.carga.tipo === 'unet' && !(perfil.carga.clip1 && perfil.carga.clip2 && perfil.carga.vae)) return { ok: false, motivo: 'falta el clip o el vae' };
+  // FEAT-218 — Después de los chequeos de carga: un sdxl con carga unet sigue sin plantilla.
+  if (caso === 'nueva' && hires && perfiles.hiresActivo(imagenes, perfil)) {
+    const conHires = path.join(DIR_PLANTILLAS, perfil.plantillas, 'nueva-hires.json');
+    if (fs.existsSync(conHires)) return { ok: true, ruta: conHires, nombre: `${perfil.plantillas}/nueva-hires` };
+  }
   return { ok: true, ruta, nombre: `${perfil.plantillas}/${nombre}` };
 }
 
@@ -242,7 +267,7 @@ function flujoPropio(imagenes, perfilId, caso) {
  * Qué flujo usa un caso con un perfil.
  * `{ ok, flujo, ficha, salida, salidaMascara, huecos, marcadores, salidas, propio, archivo, nombre, conFicha, motivo }`.
  */
-function resolverFlujo(imagenes, perfil, caso) {
+function resolverFlujo(imagenes, perfil, caso, { hires = true } = {}) {
   const propio = flujoPropio(imagenes, perfil.id, caso);
   const base = propio
     ? { propio: true, archivo: propio.archivo, nombre: path.basename(propio.archivo), conFicha: false }
@@ -252,7 +277,7 @@ function resolverFlujo(imagenes, perfil, caso) {
   if (!perfil.casos.includes(caso)) return mal('el perfil no tiene este caso');
   let ruta = propio ? propio.archivo : null;
   if (!propio) {
-    const p = plantillaDe(imagenes, perfil, caso);
+    const p = plantillaDe(imagenes, perfil, caso, { hires });
     if (!p.ok) return mal(p.motivo);
     ruta = p.ruta;
     base.nombre = p.nombre;

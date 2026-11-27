@@ -20,7 +20,8 @@
     "sampler": "dpmpp_2m",
     "scheduler": "karras",
     "fuerza": 0.6,
-    "fuerzaRetoque": 0.9
+    "fuerzaRetoque": 0.9,
+    "hires": { "escala": 1.5, "fuerza": 0.5, "pasos": 15 }
   },
   "medidas": {
     "1:1": [

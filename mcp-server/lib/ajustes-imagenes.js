@@ -93,6 +93,8 @@ function defectos() {
     perfiles_propios: {},
     comfyui: {
       url: URL_COMFYUI, modelo: MODELO_POR_DEFECTO, modelo_edicion: null, modelo_retoque: null, perfil_de: {}, seguro_de: {}, flujos: {},
+      // FEAT-218 — Elegir el modelo según el pedido (solo actúa con 2 o más candidatos) y la segunda pasada por perfil.
+      modelo_automatico: true, candidatos: [], hires_de: {},
       mascara: 'florence2', retoque: 'crop-stitch', chequeo_zona: true, loras: [], loras_activos: true,
       tiempo_s: RANGOS.tiempo_s.defecto, liberar_gpu: true,
       arranque: { carpeta: null, automatico: true, apagar_min: RANGOS.apagar_min.defecto, espera_s: RANGOS.espera_s.defecto, flags: [] }
@@ -127,6 +129,31 @@ function formaDeClaveDeModelo(k) {
   return perfiles.formaDeArchivo(k, MAX_TEXTO);
 }
 
+/** FEAT-218 — Hasta cuántos modelos puede nombrar una LoRA en `modelos`, y cuántos candidatos hay. */
+const MAX_MODELOS_LORA = 10;
+const MAX_CANDIDATOS = 4;
+const MAX_PARA = 200;
+
+/** FEAT-218 — Valida `comfyui.candidatos`. `{ ok, candidatos }` o `{ ok: false, campo, motivo }`. */
+function validarCandidatos(v) {
+  const mal = (campo, motivo) => ({ ok: false, campo: `candidatos${campo}`, motivo });
+  if (!Array.isArray(v)) return mal('', 'tiene que ser una lista');
+  if (v.length > MAX_CANDIDATOS) return mal('', `tiene hasta ${MAX_CANDIDATOS}`);
+  const salida = [];
+  for (const [i, c] of v.entries()) {
+    if (!esObjeto(c)) return mal(`.${i}`, 'tiene que ser un objeto { archivo, para }');
+    for (const k of Object.keys(c)) if (!['archivo', 'para'].includes(k)) return mal(`.${i}.${k}`, 'no está permitido');
+    const m = formaDeClaveDeModelo(c.archivo);
+    if (m) return mal(`.${i}.archivo`, m);
+    const archivo = c.archivo.trim();
+    if (salida.some((x) => perfiles.mismoArchivo(x.archivo, archivo))) return mal(`.${i}.archivo`, 'está repetido');
+    const para = typeof c.para === 'string' ? c.para.trim() : '';
+    if (!para || para.length > MAX_PARA || CONTROLES.test(para)) return mal(`.${i}.para`, `tiene que ser un texto de una línea de 1 a ${MAX_PARA} caracteres`);
+    salida.push({ archivo, para });
+  }
+  return { ok: true, candidatos: salida };
+}
+
 /** Valida la lista de LoRAs. `{ ok, loras }` o `{ ok: false, campo, motivo }`. */
 function validarLoras(v) {
   const mal = (campo, motivo) => ({ ok: false, campo: `loras${campo}`, motivo });
@@ -136,7 +163,7 @@ function validarLoras(v) {
   const loras = [];
   for (const [i, l] of v.entries()) {
     if (!esObjeto(l)) return mal(`.${i}`, 'tiene que ser un objeto');
-    for (const k of Object.keys(l)) if (!['archivo', 'clave', 'familias', 'fuerza', 'activo'].includes(k)) return mal(`.${i}.${k}`, 'no está permitido');
+    for (const k of Object.keys(l)) if (!['archivo', 'clave', 'familias', 'fuerza', 'activo', 'modelos'].includes(k)) return mal(`.${i}.${k}`, 'no está permitido');
     const m = perfiles.formaDeArchivo(l.archivo);
     if (m) return mal(`.${i}.archivo`, m);
     const clave = typeof l.clave === 'string' ? l.clave.trim() : '';
@@ -146,7 +173,19 @@ function validarLoras(v) {
     if (!Array.isArray(l.familias) || !l.familias.length || !l.familias.every((f) => perfiles.FAMILIAS.includes(f)) || new Set(l.familias).size !== l.familias.length) return mal(`.${i}.familias`, `tiene que ser una lista de ${perfiles.FAMILIAS.join(', ')}`);
     if (!Number.isFinite(l.fuerza) || l.fuerza < 0 || l.fuerza > 2) return mal(`.${i}.fuerza`, 'tiene que ser un número de 0 a 2');
     if (typeof l.activo !== 'boolean') return mal(`.${i}.activo`, 'tiene que ser true o false');
-    loras.push({ archivo: l.archivo.trim(), clave, familias: [...l.familias], fuerza: l.fuerza, activo: l.activo });
+    // FEAT-218 — Con qué modelos va (opcional: sin ella, con todos los de sus familias). `null` es «sin restricción».
+    let modelos = null;
+    if (l.modelos !== undefined && l.modelos !== null) {
+      if (!Array.isArray(l.modelos) || !l.modelos.length || l.modelos.length > MAX_MODELOS_LORA) return mal(`.${i}.modelos`, `tiene que ser una lista de 1 a ${MAX_MODELOS_LORA} modelos, o null`);
+      modelos = [];
+      for (const [j, mod] of l.modelos.entries()) {
+        const mm = perfiles.formaDeArchivo(mod);
+        if (mm) return mal(`.${i}.modelos.${j}`, mm);
+        if (modelos.some((x) => perfiles.mismoArchivo(x, mod))) return mal(`.${i}.modelos.${j}`, 'está repetido');
+        modelos.push(mod.trim());
+      }
+    }
+    loras.push({ archivo: l.archivo.trim(), clave, familias: [...l.familias], fuerza: l.fuerza, activo: l.activo, ...(modelos ? { modelos } : {}) });
   }
   return { ok: true, loras };
 }
@@ -293,6 +332,25 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
           d.comfyui.seguro_de = Object.fromEntries(validos);
         }
       }
+      // FEAT-218 — La segunda pasada por perfil: { <perfil>: true } la prende (sin entrada, apagada).
+      if (c.hires_de !== undefined && c.hires_de !== null) {
+        if (!esObjeto(c.hires_de)) invalido('comfyui.hires_de', 'tiene que ser un objeto { perfil: true|false }');
+        else {
+          const validos = [];
+          for (const [k, v] of Object.entries(c.hires_de)) {
+            if (!perfiles.RE_ID.test(k) || reservada(k)) invalido(`comfyui.hires_de.${k}`, 'tiene que ser el id de un perfil');
+            else if (typeof v !== 'boolean') invalido(`comfyui.hires_de.${k}`, 'tiene que ser true o false');
+            else if (validos.length >= MAX_SEGURO_DE) invalido(`comfyui.hires_de.${k}`, `pasa las ${MAX_SEGURO_DE} entradas`);
+            else validos.push([k, v]);
+          }
+          d.comfyui.hires_de = Object.fromEntries(validos);
+        }
+      }
+      // FEAT-218 — Los modelos entre los que elige el refinador.
+      if (c.candidatos !== undefined && c.candidatos !== null) {
+        const v = validarCandidatos(c.candidatos);
+        if (v.ok) d.comfyui.candidatos = v.candidatos; else invalido(`comfyui.${v.campo}`, v.motivo);
+      }
       if (c.flujos !== undefined && c.flujos !== null) {
         if (!esObjeto(c.flujos)) invalido('comfyui.flujos', 'tiene que ser un objeto');
         else {
@@ -315,7 +373,7 @@ function normalizar(crudo, { almas = null, denyPaths = [] } = {}) {
         if (c[k] === undefined || c[k] === null) continue;
         if (lista.includes(c[k])) d.comfyui[k] = c[k]; else avisos.push(`imagenes.comfyui.${k} tiene que ser ${lista.join(', ')}; se usa ${d.comfyui[k]}`);
       }
-      for (const k of ['chequeo_zona', 'loras_activos']) {
+      for (const k of ['chequeo_zona', 'loras_activos', 'modelo_automatico']) {
         if (c[k] === undefined || c[k] === null) continue;
         if (typeof c[k] === 'boolean') d.comfyui[k] = c[k]; else avisos.push(`imagenes.comfyui.${k} tiene que ser true o false; se usa ${d.comfyui[k]}`);
       }
@@ -528,8 +586,18 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
     const p = pedido.perfiles_propios;
     if (p !== null && !esObjeto(p)) throw new ErrorAjuste('imagenes.perfiles_propios tiene que ser un objeto { id: perfil }', 'imagenes.perfiles_propios');
     let tabla = p === null ? {} : esObjeto(previo.perfiles_propios) ? previo.perfiles_propios : {};
-    for (const [id, v] of Object.entries(p || {})) {
-      if (v === null) { tabla = sinClave(tabla, id); continue; }
+    for (const [id, v0] of Object.entries(p || {})) {
+      if (v0 === null) { tabla = sinClave(tabla, id); continue; }
+      // FEAT-218 — `muestreo.hires`: sin la clave se conserva el que tenía (un Desktop que no la conoce no la borra); `null`
+      // la saca, antes de validar (`validarPerfil` no tiene por qué aceptar `null`).
+      let v = v0;
+      if (esObjeto(v0) && esObjeto(v0.muestreo)) {
+        const m = { ...v0.muestreo };
+        const antes = esObjeto(tabla[id]) && esObjeto(tabla[id].muestreo) ? tabla[id].muestreo.hires : undefined;
+        if (m.hires === null) delete m.hires;
+        else if (m.hires === undefined && esObjeto(antes) && v0.plantillas === 'sdxl') m.hires = antes;
+        v = { ...v0, muestreo: m };
+      }
       const r = perfiles.validarPerfil(id, esObjeto(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'id' && k !== 'origen')) : v);
       if (!r.ok) throw new ErrorAjuste(`El perfil ${id}: ${r.campo ? `${r.campo} ` : ''}${r.motivo}`, `imagenes.perfiles_propios.${id}${r.campo ? `.${r.campo}` : ''}`);
       const { id: _, ...resto } = r.perfil;
@@ -541,7 +609,8 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
   if (pedido.comfyui !== undefined) {
     const c = pedido.comfyui;
     if (!esObjeto(c)) throw new ErrorAjuste('imagenes.comfyui tiene que ser un objeto', 'imagenes.comfyui');
-    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'seguro_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque', ...migracion.LEGADAS];
+    const permitidos = ['url', 'modelo', 'modelo_edicion', 'modelo_retoque', 'perfil_de', 'seguro_de', 'flujos', 'mascara', 'retoque', 'chequeo_zona', 'loras', 'loras_activos', 'tiempo_s', 'liberar_gpu', 'arranque',
+      'modelo_automatico', 'candidatos', 'hires_de', ...migracion.LEGADAS];
     for (const k of Object.keys(c)) if (!permitidos.includes(k)) throw new ErrorAjuste(`imagenes.comfyui.${k} no está permitido`, `imagenes.comfyui.${k}`);
     let sal = esObjeto(previo.comfyui) ? { ...previo.comfyui } : {};
     const quitar = (k) => { delete sal[k]; };
@@ -565,7 +634,7 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       else if (!lista.includes(c[k])) throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser ${lista.join(', ')}`, `imagenes.comfyui.${k}`);
       else sal[k] = c[k];
     }
-    for (const k of ['chequeo_zona', 'loras_activos', 'liberar_gpu']) {
+    for (const k of ['chequeo_zona', 'loras_activos', 'liberar_gpu', 'modelo_automatico']) {
       if (c[k] === undefined) continue;
       if (c[k] === null || c[k] === '') { quitar(k); continue; }
       if (typeof c[k] !== 'boolean') throw new ErrorAjuste(`imagenes.comfyui.${k} tiene que ser true o false`, `imagenes.comfyui.${k}`);
@@ -576,7 +645,24 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       else {
         const v = validarLoras(c.loras);
         if (!v.ok) throw new ErrorAjuste(`imagenes.comfyui.${v.campo} ${v.motivo}`, `imagenes.comfyui.${v.campo}`);
-        if (v.loras.length) sal.loras = v.loras; else quitar('loras');
+        // FEAT-218 — Una LoRA que viene sin la clave `modelos` (un Desktop que no la conoce) conserva la de antes, si es la
+        // misma LoRA (mismo archivo y clave); `modelos: null` la saca.
+        const antes = Array.isArray(sal.loras) ? sal.loras : [];
+        const loras = v.loras.map((l, i) => {
+          if (Array.isArray(c.loras) && esObjeto(c.loras[i]) && c.loras[i].modelos !== undefined) return l;
+          const previa = antes.find((x) => esObjeto(x) && x.clave === l.clave && perfiles.mismoArchivo(x.archivo, l.archivo));
+          return previa && Array.isArray(previa.modelos) && previa.modelos.length ? { ...l, modelos: [...previa.modelos] } : l;
+        });
+        if (loras.length) sal.loras = loras; else quitar('loras');
+      }
+    }
+    // FEAT-218 — Los modelos entre los que elige el refinador.
+    if (c.candidatos !== undefined) {
+      if (c.candidatos === null || c.candidatos === '') quitar('candidatos');
+      else {
+        const v = validarCandidatos(c.candidatos);
+        if (!v.ok) throw new ErrorAjuste(`imagenes.comfyui.${v.campo} ${v.motivo}`, `imagenes.comfyui.${v.campo}`);
+        if (v.candidatos.length) sal.candidatos = v.candidatos; else quitar('candidatos');
       }
     }
     for (const k of NUMEROS) {
@@ -653,6 +739,24 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
       }
       if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con el modo seguro elegido`, 'imagenes.comfyui.seguro_de');
       if (Object.keys(tabla).length) sal.seguro_de = tabla; else quitar('seguro_de');
+    }
+    // FEAT-218 — La segunda pasada por perfil, solo en la familia sdxl (la única con plantilla hires).
+    if (c.hires_de !== undefined) {
+      if (c.hires_de !== null && !esObjeto(c.hires_de)) throw new ErrorAjuste('imagenes.comfyui.hires_de tiene que ser un objeto { perfil: true|false }', 'imagenes.comfyui.hires_de');
+      const e = efectiva();
+      let tabla = c.hires_de === null ? {} : esObjeto(sal.hires_de) ? sal.hires_de : {};
+      for (const [k, v] of Object.entries(c.hires_de || {})) {
+        const campo = `imagenes.comfyui.hires_de.${k}`;
+        if (v === null) { tabla = sinClave(tabla, k); continue; }
+        if (!perfiles.RE_ID.test(k) || reservada(k)) throw new ErrorAjuste(`hires_de: "${k}" no es el id de un perfil`, campo);
+        if (typeof v !== 'boolean') throw new ErrorAjuste('hires_de: tiene que ser true o false', campo);
+        const p = perfiles.perfil(e, k);
+        if (!p) throw new ErrorAjuste(`hires_de: "${k}" no es un perfil que exista`, campo);
+        if (v && p.plantillas !== 'sdxl') throw new ErrorAjuste(`hires_de: la segunda pasada es solo para los perfiles de la familia sdxl, y "${k}" es de ${p.plantillas}`, campo);
+        tabla = conClave(tabla, k, v);
+      }
+      if (Object.keys(tabla).length > MAX_SEGURO_DE) throw new ErrorAjuste(`Hasta ${MAX_SEGURO_DE} perfiles con la segunda pasada elegida`, 'imagenes.comfyui.hires_de');
+      if (Object.keys(tabla).length) sal.hires_de = tabla; else quitar('hires_de');
     }
     // Los campos de Desktop v0.21.1: se traducen con la misma función que la migración.
     const legado = Object.fromEntries(migracion.LEGADAS.filter((k) => c[k] !== undefined).map((k) => [k, c[k]]));
@@ -739,5 +843,6 @@ function aplicarImagenes(datos, pedido, { almas = [], denyPaths = [] } = {}) {
 module.exports = {
   PROVEEDORES, REMOTOS, BOOLEANOS, CAMPOS, TALLER_BOOLEANOS, AL_CERRAR, RANGOS, MASCARAS, RETOQUES, MAX_LORAS, URL_COMFYUI, MODELO_POR_DEFECTO,
   defectos, esLoopback, esHttps, formaDeCarpeta, formaDeFlujo: flujosLib.formaDeFlujo, leerFlujo: flujosLib.leerFlujo, marcadoresDe: flujosLib.marcadoresDe, resolverFlujo: flujosLib.resolverFlujo,
-  normalizar, denyDe, migrarDatos, leerSeccion, leerImagenes, crudoImagenes, aplicarImagenes
+  normalizar, denyDe, migrarDatos, leerSeccion, leerImagenes, crudoImagenes, aplicarImagenes,
+  MAX_CANDIDATOS, MAX_MODELOS_LORA, MAX_PARA, validarCandidatos, validarLoras
 };

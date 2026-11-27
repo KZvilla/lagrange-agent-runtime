@@ -236,7 +236,11 @@ function perfilImagenV2(id, p) {
       prefijo: texto(q.prefijo, 300) || '', negativoFijo: texto(q.negativoFijo, 300) || '',
       seguro: esObjeto(q.seguro) ? { positivo: texto(q.seguro.positivo, 200) || '', negativo: texto(q.seguro.negativo, 200) || '', quitar: texto(q.seguro.quitar, 200) || '' } : null
     },
-    muestreo: { pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza), fuerzaRetoque: numero(s.fuerzaRetoque) },
+    muestreo: {
+      pasos: numero(s.pasos), cfg: numero(s.cfg), guia: numero(s.guia), sampler: texto(s.sampler, 40), scheduler: texto(s.scheduler, 40), fuerza: numero(s.fuerza), fuerzaRetoque: numero(s.fuerzaRetoque),
+      // FEAT-218 — La segunda pasada del perfil, si la tiene.
+      ...(esObjeto(s.hires) ? { hires: { escala: numero(s.hires.escala), fuerza: numero(s.hires.fuerza), pasos: numero(s.hires.pasos) } } : {})
+    },
     medidas: Object.fromEntries(PROPORCIONES_IMAGEN.filter((k) => Array.isArray(m[k]) && m[k].length === 2).map((k) => [k, [numero(m[k][0]), numero(m[k][1])]])),
     casos: (Array.isArray(o.casos) ? o.casos : []).filter((x) => CASOS_IMAGEN.includes(x))
   };
@@ -258,16 +262,23 @@ const TOPE_PERFILES = 40;
 function comfyuiV2(c) {
   const perfilDe = Object.entries(esObjeto(c.perfil_de) ? c.perfil_de : {}).filter(([k, v]) => k.length <= 200 && typeof v === 'string' && RE_PERFIL.test(v)).slice(0, 50);
   const seguroDe = Object.entries(esObjeto(c.seguro_de) ? c.seguro_de : {}).filter(([k, v]) => RE_PERFIL.test(k) && typeof v === 'boolean').slice(0, TOPE_PERFILES);
+  // FEAT-218
+  const hiresDe = Object.entries(esObjeto(c.hires_de) ? c.hires_de : {}).filter(([k, v]) => RE_PERFIL.test(k) && typeof v === 'boolean').slice(0, TOPE_PERFILES);
+  const candidatos = (Array.isArray(c.candidatos) ? c.candidatos : []).filter((x) => esObjeto(x) && texto(x.archivo, 200) && texto(x.para, 200)).slice(0, 4).map((x) => ({ archivo: x.archivo, para: x.para }));
   const flujos = Object.entries(esObjeto(c.flujos) ? c.flujos : {}).filter(([id, v]) => RE_PERFIL.test(id) && esObjeto(v)).slice(0, TOPE_PERFILES).map(([id, porCaso]) => [
     id, Object.fromEntries(CASOS_IMAGEN.filter((k) => Object.hasOwn(porCaso, k) && esObjeto(porCaso[k]) && texto(porCaso[k].archivo, 500)).map((k) => [k, { archivo: porCaso[k].archivo, salida: texto(porCaso[k].salida, 40) }]))
   ]);
   return {
     modelo_edicion: texto(c.modelo_edicion, 200), modelo_retoque: texto(c.modelo_retoque, 200),
     perfil_de: Object.fromEntries(perfilDe), seguro_de: Object.fromEntries(seguroDe), flujos: Object.fromEntries(flujos),
+    // FEAT-218 — `modelo_automatico` es también la señal de que el plugin conoce lo nuevo (Desktop muestra los controles).
+    modelo_automatico: c.modelo_automatico !== false, candidatos, hires_de: Object.fromEntries(hiresDe),
     mascara: ['florence2', 'sam2', 'no'].includes(c.mascara) ? c.mascara : 'florence2', retoque: ['crop-stitch', 'fill', 'no'].includes(c.retoque) ? c.retoque : 'crop-stitch',
     chequeo_zona: c.chequeo_zona !== false, loras_activos: c.loras_activos !== false, arranque: arranqueV2(c.arranque),
     loras: (Array.isArray(c.loras) ? c.loras : []).filter((l) => esObjeto(l) && texto(l.archivo, 200) && texto(l.clave, 30)).slice(0, 20).map((l) => ({
-      archivo: l.archivo, clave: l.clave, familias: (Array.isArray(l.familias) ? l.familias : []).filter((f) => FAMILIAS_IMAGEN.includes(f)), fuerza: numero(l.fuerza), activo: l.activo === true
+      archivo: l.archivo, clave: l.clave, familias: (Array.isArray(l.familias) ? l.familias : []).filter((f) => FAMILIAS_IMAGEN.includes(f)), fuerza: numero(l.fuerza), activo: l.activo === true,
+      // FEAT-218 — Con qué modelos va (sin la clave: con todos).
+      ...(Array.isArray(l.modelos) && l.modelos.length ? { modelos: l.modelos.filter((m) => texto(m, 200)).slice(0, 10) } : {})
     }))
   };
 }

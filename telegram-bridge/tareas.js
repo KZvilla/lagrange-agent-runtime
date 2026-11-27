@@ -66,7 +66,9 @@ export const TOPE_IMAGENES_TURNO = 4;
 export const ESTADOS_IMAGEN = Object.freeze(['generando', 'lista', 'error', 'borrada']);
 const CAMPOS_IMAGEN = Object.freeze(['n', 'estado', 'pedido', 'prompt', 'negativo', 'desdeFoto', 'fotoIgnorada', 'intento', 'ancho', 'alto', 'tipo', 'proveedor', 'modelo', 'semilla', 'codigo', 'mensaje', 'creada', 'terminada', 'caso', 'casoPedido', 'zona', 'instruccion', 'loras', 'perfil', 'sinChequeoZona', 'cambio', 'fuerza',
   // FEAT-215 — Su número, de dónde salió y si es de la que se parte.
-  'num', 'origen', 'deNum', 'baseNum', 'elegida']);
+  'num', 'origen', 'deNum', 'baseNum', 'elegida',
+  // FEAT-218 — Si el modelo lo eligió el refinador.
+  'modeloAuto']);
 const TOPES_IMAGEN = Object.freeze({ pedido: 600, prompt: 2000, negativo: 500, mensaje: 200, tipo: 32, proveedor: 32, modelo: 200, codigo: 40, zona: 120, instruccion: 2000, perfil: 40 });
 // FEAT-212 — Los casos de una imagen y sus LoRAs.
 const CASOS_IMAGEN = Object.freeze(['nueva', 'variacion', 'retoque', 'edicion']);
@@ -85,7 +87,7 @@ export function normalizarImagen(e) {
     const v = e[k];
     if (v === undefined) continue;
     if (TOPES_IMAGEN[k]) salida[k] = typeof v === 'string' ? v.slice(0, TOPES_IMAGEN[k]) : null;
-    else if (['desdeFoto', 'fotoIgnorada', 'sinChequeoZona', 'elegida'].includes(k)) salida[k] = Boolean(v);
+    else if (['desdeFoto', 'fotoIgnorada', 'sinChequeoZona', 'elegida', 'modeloAuto'].includes(k)) salida[k] = Boolean(v);
     else if (k === 'caso' || k === 'casoPedido') { if (CASOS_IMAGEN.includes(v)) salida[k] = v; } else if (k === 'loras') { const l = lorasDe(v); if (l.length) salida.loras = l; }
     else if (k === 'cambio') { if (CAMBIOS_IMAGEN.includes(v)) salida.cambio = v; } else if (k === 'fuerza') { if (Number.isFinite(v) && v >= 0 && v <= 1) salida.fuerza = v; }
     else if (k === 'origen') { if (['alma', 'version', 'variante'].includes(v)) salida.origen = v; } else if (['num', 'deNum', 'baseNum'].includes(k)) { if (Number.isInteger(v) && v > 0) salida[k] = v; }
