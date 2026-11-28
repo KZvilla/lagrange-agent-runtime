@@ -339,6 +339,36 @@ async function main() {
     const o3 = cola3.otra(id, 1);
     await termina(id, o3.n);
     check('otra versión de una cuyo modelo ya no está: el fijo, sin modeloAuto, con su log', c3.vistos[0] && c3.vistos[0].modelo === BASE && entrada(id, o3.n).modeloAuto === false && logs.some((l) => /el modelo de antes ya no puede/.test(l)));
+    // «Variar esta» de una que eligió el refinador: el mismo modelo, sin volver a elegir (aunque el refinador diría otro).
+    // En tareas nuevas: el turno tiene un tope de imágenes.
+    const idV = nuevaTarea();
+    armar({ provs: { comfyui: prov('comfyui') }, cfg: () => conCandidatos(), ref: elige('ponydiffusionv6xl') }).encolar({ tareaId: idV, clave, pedido: 'un zorro furry' });
+    await termina(idV);
+    const c4 = prov('comfyui');
+    const vistos4 = [];
+    const ref4 = { async refinar(o) { vistos4.push(o.candidatos); return elige('wai-nsfw-illustrious-17').refinar(o); }, sinRefinar: R.sinRefinar };
+    const v = armar({ provs: { comfyui: c4 }, cfg: () => conCandidatos(), ref: ref4 }).variar(idV, 1);
+    check('variar se encola', v.ok, JSON.stringify(v));
+    await termina(idV, v.n);
+    check('variar de una elegida: el mismo modelo, con modeloAuto', c4.vistos[0] && c4.vistos[0].modelo === PONY && entrada(idV, v.n).modeloAuto === true, String(c4.vistos[0] && c4.vistos[0].modelo));
+    check('…y el refinador no recibe candidatos (no vuelve a elegir)', vistos4.length === 1 && vistos4[0] === null);
+    check('…y es una variación', entrada(idV, v.n).caso === 'variacion', String(entrada(idV, v.n).caso));
+    // El modelo de la base ya no está instalado: elige el refinador, con su log.
+    const c6 = prov('comfyui');
+    const logs6 = [];
+    const v6 = armar({ provs: { comfyui: c6 }, cfg: () => conCandidatos(), ref: elige('wai-nsfw-illustrious-17'), cat: catalogo([BASE, WAI]), logs: logs6 }).variar(idV, 1);
+    await termina(idV, v6.n);
+    check('variar de una cuyo modelo ya no está: elige el refinador, con su log', c6.vistos[0] && c6.vistos[0].modelo === WAI && logs6.some((l) => /el modelo de la base ya no puede/.test(l)), String(c6.vistos[0] && c6.vistos[0].modelo));
+    // «Variar esta» de una que salió con el fijo (sin modeloAuto): el refinador elige como siempre.
+    const idF = nuevaTarea();
+    armar({ provs: { comfyui: prov('comfyui') }, cfg: () => conCandidatos(), ref: elige(null) }).encolar({ tareaId: idF, clave, pedido: 'x' });
+    await termina(idF);
+    const c5 = prov('comfyui');
+    const vistos5 = [];
+    const ref5 = { async refinar(o) { vistos5.push(o.candidatos); return elige('wai-nsfw-illustrious-17').refinar(o); }, sinRefinar: R.sinRefinar };
+    const v5 = armar({ provs: { comfyui: c5 }, cfg: () => conCandidatos(), ref: ref5 }).variar(idF, 1);
+    await termina(idF, v5.n);
+    check('variar de una con el fijo: el refinador elige entre los candidatos', entrada(idF).modeloAuto === false && Array.isArray(vistos5[0]) && vistos5[0].length >= 2 && c5.vistos[0] && c5.vistos[0].modelo === WAI, String(c5.vistos[0] && c5.vistos[0].modelo));
   });
 
   await group('La cola: cuando el elegido no vale al generar', async () => {
