@@ -307,7 +307,7 @@ function soloLecturaImagenesV2(i) {
 function tallerV2(tl) {
   const o = esObjeto(tl) ? tl : {};
   const b = (v) => (typeof v === 'boolean' ? v : true);
-  return { activo: b(o.activo), abrir_en_taller: b(o.abrir_en_taller), prepara_alma: b(o.prepara_alma), mirar: b(o.mirar), disposicion_plugin: b(o.disposicion_plugin), al_cerrar: ['descartar', 'quedar'].includes(o.al_cerrar) ? o.al_cerrar : 'preguntar' };
+  return { activo: b(o.activo), abrir_en_taller: b(o.abrir_en_taller), prepara_alma: b(o.prepara_alma), mirar: b(o.mirar), disposicion_plugin: b(o.disposicion_plugin), limpiar_salida: b(o.limpiar_salida), al_cerrar: ['descartar', 'quedar'].includes(o.al_cerrar) ? o.al_cerrar : 'preguntar' };
 }
 
 /** FEAT-210 — La sección `imagenes`, campo por campo. Los flujos son rutas que eligió el usuario: salen como texto. */

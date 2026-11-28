@@ -628,7 +628,8 @@ export function crearTaller({
     const r = await pedir(config, `/view?${new URLSearchParams(consulta)}`);
     if (!r.ok) return null;
     const bytes = await leerHasta(r, TOPE_BYTES);
-    if (!bytes || !bytes.length) return null;
+    if (bytes === null) return { grande: true };
+    if (!bytes.length) return null;
     const ext = extDe(tipoDe(consulta.filename));
     const nombre = `${prefijo}-${id16()}.${ext}`;
     const ruta = rutaLocal(s, nombre);
@@ -647,7 +648,7 @@ export function crearTaller({
       if (!remoto) continue;
       try {
         const b = await bajar(config, { ...remoto, type: tipo ? tipo[1] : 'input' }, s, 'input');
-        if (b) s.entradas[nombre] = b.nombre;
+        if (b && !b.grande) s.entradas[nombre] = b.nombre;
       } catch {}
     }
   }
@@ -679,6 +680,7 @@ export function crearTaller({
         if (!remoto) continue;
         let b = null;
         try { b = await bajar(config, { ...remoto, type: img.type }, s, 'img'); } catch {}
+        if (b && b.grande) { anotarGrande(s, { pid, nodo: String(nodo).slice(0, 40), clave: `${remoto.subfolder}/${remoto.filename}` }); continue; }
         if (!b) continue;
         const id = `img-${b.nombre.slice(4, 20)}`;
         const m = medidasDe(b.bytes);
@@ -702,16 +704,33 @@ export function crearTaller({
     }
   }
 
+  /** La carpeta de salida de ComfyUI según su arranque (`--output-directory` o `output` junto a main.py), o `null`. */
+  function carpetaSalida(config) {
+    const a = (config && config.comfyui && config.comfyui.arranque) || {};
+    if (!a.carpeta) return null;
+    const inst = procesoLib.resolverInstalacion(a.carpeta);
+    if (!inst.ok) return null;
+    const flag = (Array.isArray(a.flags) ? a.flags : []).find((f) => f && f.flag === '--output-directory' && typeof f.valor === 'string' && f.valor);
+    return flag ? path.resolve(inst.cwd, flag.valor) : path.join(path.dirname(inst.main), 'output');
+  }
+
+  /** 2.26.3 — Lo que pesa más de TOPE_BYTES no se trae: queda en la tira como un fallo que dice dónde quedó. */
+  function anotarGrande(s, { pid = null, nodo = null, clave }) {
+    const id = `img-${id16()}`;
+    s.salidas.push(clave);
+    s.imagenes[id] = {
+      id, estado: 'error', promptId: pid, creada: ahora().toISOString(),
+      error: { codigo: 'grande', nodo, clase: null, mensaje: `Pesa más de ${Math.round(TOPE_BYTES / (1024 * 1024))} MB: no se trajo. Quedó en la salida de ComfyUI, en ${clave}.` }
+    };
+    publicar('salud', 'taller.imagen', { sesion: s.id, id, estado: 'error' });
+  }
+
   /** Si ComfyUI perdió su historial: lo que quedó en su carpeta de salida y no se bajó (más de un minuto atrás). */
   function leerDelDisco(config, abiertas) {
     if (ms() - ultimoDisco < T.disco) return;
     ultimoDisco = ms();
-    const a = config.comfyui.arranque || {};
-    if (!a.carpeta) return;
-    const inst = procesoLib.resolverInstalacion(a.carpeta);
-    if (!inst.ok) return;
-    const flag = (Array.isArray(a.flags) ? a.flags : []).find((f) => f && f.flag === '--output-directory' && typeof f.valor === 'string' && f.valor);
-    const salida = flag ? path.resolve(inst.cwd, flag.valor) : path.join(path.dirname(inst.main), 'output');
+    const salida = carpetaSalida(config);
+    if (!salida) return;
     for (const s of abiertas) {
       const carpeta = path.join(salida, 'lagrange-taller', s.id);
       let nombres = [];
@@ -722,7 +741,8 @@ export function crearTaller({
         const ruta = indice.rutaDentroDe(carpeta, path.join(carpeta, f));
         let st;
         try { st = ruta && fs.statSync(ruta); } catch { continue; }
-        if (!st || !st.isFile() || st.size > TOPE_BYTES || ms() - st.mtimeMs < DISCO_VIEJO_MS) continue;
+        if (!st || !st.isFile() || ms() - st.mtimeMs < DISCO_VIEJO_MS) continue;
+        if (st.size > TOPE_BYTES) { anotarGrande(s, { clave }); guardar(s); continue; }
         const bytes = fs.readFileSync(ruta);
         const tipo = tipoDe(f);
         const nombre = `img-${id16()}.${extDe(tipo)}`;
@@ -1185,11 +1205,38 @@ export function crearTaller({
   /** Cuántas sesiones vivas hay (Apagar y Reiniciar no tiran ComfyUI con el taller abierto). */
   const abiertas = () => vivas().length;
 
+  /**
+   * 2.26.3 — La carpeta de una sesión en la salida de ComfyUI (`output/lagrange-taller/s-…`): solo las del plugin, con
+   * `limpiar_salida` prendido. Las de la ventana (`v-…`) guardan donde diga el flujo del usuario: no se tocan.
+   */
+  function borrarSalida(salida, id) {
+    if (!salida || !RE_SESION.test(String(id))) return;
+    const base = path.join(salida, 'lagrange-taller');
+    const ruta = indice.rutaDentroDe(base, path.join(base, id));
+    if (ruta) { try { fs.rmSync(ruta, { recursive: true, force: true }); } catch {} }
+  }
+
   function barrer() {
+    let config = null;
+    try { config = leerConfig(); } catch {}
+    const salida = config && config.taller && config.taller.limpiar_salida !== false ? carpetaSalida(config) : null;
     for (const s of [...sesiones.values()]) {
       if (s.abierta || ms() - (s.ultimaSenal || 0) < CERRADA_MS) continue;
       try { fs.rmSync(dirDe(s.id), { recursive: true, force: true }); } catch {}
+      borrarSalida(salida, s.id);
       sesiones.delete(s.id);
+    }
+    // Las de sesiones que ya no están (borradas antes de 2.26.3): por su fecha.
+    if (salida) {
+      const base = path.join(salida, 'lagrange-taller');
+      let nombres = [];
+      try { nombres = fs.readdirSync(base); } catch {}
+      for (const id of nombres) {
+        if (!RE_SESION.test(id) || sesiones.has(id)) continue;
+        let st = null;
+        try { st = fs.statSync(path.join(base, id)); } catch {}
+        if (st && st.isDirectory() && ms() - st.mtimeMs >= CERRADA_MS) borrarSalida(salida, id);
+      }
     }
     for (const p of leerPreparados()) {
       if (ms() - Date.parse(p.creada || 0) < PREPARADO_MS) continue;
