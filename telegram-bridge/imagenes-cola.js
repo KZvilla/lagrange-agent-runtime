@@ -313,12 +313,21 @@ export function crearColaImagenes({
       if (!caso) return sinCaso(disponibles);
       r = { ...(casosLib.ajustarAlCaso(pedido, caso, disponibles[caso]) || pedido), caso, casoPedido: job.casoPedido || casoPedido, ...(modelo ? { modelo, modeloAuto: true } : {}) };
     } else {
+      // FEAT-218 — «Variar esta» de una que eligió el refinador trae su modelo: se queda con él, sin volver a elegir (el pedido
+      // de «Variar esta» es «el mismo estilo», y elegir mirando la base la cambiaba de modelo). Si ya no puede, elige el refinador.
+      let fijo = null;
+      if (job.modelo) {
+        fijo = modeloQuePuede(config, job.modelo, conFoto ? 'variacion' : 'nueva', await catalogoPara(config));
+        if (fijo) disponibles = await disponiblesDe(config, fijo);
+        else log(`[imagenes] ${job.tareaId}/${job.n}: el modelo de la base ya no puede este caso; elige el refinador.`);
+      }
       // FEAT-218 — Los modelos entre los que elige el refinador (o `null`: el fijo, como siempre).
-      const candidatos = config.refinar ? casosLib.candidatosDe(config, { desdeFoto: conFoto, catalogo: await catalogoPara(config), ...opcionesManual }) : null;
+      const candidatos = config.refinar && !fijo ? casosLib.candidatosDe(config, { desdeFoto: conFoto, catalogo: await catalogoPara(config), ...opcionesManual }) : null;
       r = config.refinar
         ? await refinador.refinar({ pedido: job.pedido, mensaje: job.mensaje, foto: job.foto, disponibles, candidatos, desdeFoto: conFoto, base, fuerzaAutomatica: config.fuerza_automatica !== false, signal, vision, registrarUso, clave: job.clave, origen: job.origen })
         : refinador.sinRefinar(job.pedido, { disponibles, desdeFoto: conFoto, base });
       if (r.cancelado || signal.aborted) return error(job, job.codigoCorte || 'cancelada');
+      if (fijo && !r.sinCaso) r = { ...r, modelo: fijo, modeloAuto: true };
       // Sin refinar cuando debía: que se vea por qué (el prompt sale en el idioma del alma y con el negativo del perfil).
       if (config.refinar && r.refinado === false) log(`[imagenes] ${job.tareaId}/${job.n}: sin refinar (${String(r.motivo || 'sin motivo').slice(0, 200)}); va el texto del alma`);
       if (r.modeloDescartado) log(`[imagenes] ${job.tareaId}/${job.n}: el refinador eligió "${String(r.modeloDescartado).slice(0, 60)}", que no puede este pedido; va el de siempre.`);
@@ -760,7 +769,9 @@ export function crearColaImagenes({
     const externo = indice.esExterna(priv);
     return encolar({
       tareaId, clave, hilo: priv.hilo || null, pedido: PEDIDO_VARIAR, mensaje: '', desdeFoto: true, baseFija: true, foto: { ruta, segura: !externo }, externo,
-      origenImagen: 'variante', deNum: priv.num || null, envio, crearEnvio, origen: 'usuario'
+      origenImagen: 'variante', deNum: priv.num || null, envio, crearEnvio, origen: 'usuario',
+      // FEAT-218 — La base la eligió el refinador: la variación sale con el mismo modelo.
+      ...(priv.modeloAuto === true && typeof priv.modelo === 'string' && priv.modelo ? { modelo: priv.modelo } : {})
     });
   }
 
