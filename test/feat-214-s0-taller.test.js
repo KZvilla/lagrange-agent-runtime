@@ -568,6 +568,90 @@ async function main() {
     t.parar(); t2.parar();
   });
 
+  await group('2.26.3 — Lo que pesa más de 20 MB queda como fallo, y la salida de ComfyUI se limpia', async () => {
+    const carpeta = path.join(raiz, 'ComfyUI_grandes');
+    for (const f of ['python_embeded/python.exe', 'ComfyUI/main.py']) { fs.mkdirSync(path.dirname(path.join(carpeta, f)), { recursive: true }); fs.writeFileSync(path.join(carpeta, f), ''); }
+    const salidaComfy = path.join(carpeta, 'ComfyUI', 'output', 'lagrange-taller');
+    cfg = config({}, { arranque: { ...A.defectos().comfyui.arranque, carpeta } });
+    const dir = path.join(raiz, 'taller-grandes');
+    const { t, comfy } = armar({ dir, tiempos: { disco: 0 } });
+    const r = await t.abrir({ alma: 'alya', ventana, plantilla: 'plugin:nueva' });
+    const grande = Buffer.alloc(20 * 1024 * 1024 + 1);
+    comfy.correr('g1', r.grafo, { salidas: [{ filename: 'g1.png', subfolder: `lagrange-taller/${r.sesion}`, bytes: grande }] });
+    await t._vuelta();
+    let imgs = t.estado(r.sesion).imagenes;
+    const e = imgs.length === 1 ? imgs[0] : null;
+    check('desde el historial: una tarjeta de fallo, no nada', !!e && e.estado === 'error' && !!e.error && e.error.codigo === 'grande');
+    check('el fallo dice el tope y dónde quedó', !!e && /20 MB/.test(e.error.mensaje) && e.error.mensaje.includes(`lagrange-taller/${r.sesion}/g1.png`));
+    check('no se copió nada a la sesión', fs.readdirSync(path.join(dir, 'sesiones', r.sesion)).every((f) => !/^img-.*\.png$/.test(f)));
+    // El mismo archivo en el disco de ComfyUI (más de un minuto atrás): no se anota dos veces.
+    fs.mkdirSync(path.join(salidaComfy, r.sesion), { recursive: true });
+    const viejo = new Date(Date.now() - 5 * 60 * 1000);
+    fs.writeFileSync(path.join(salidaComfy, r.sesion, 'g1.png'), grande);
+    fs.utimesSync(path.join(salidaComfy, r.sesion, 'g1.png'), viejo, viejo);
+    await t._vuelta();
+    check('la del historial no vuelve a anotarse desde el disco', t.estado(r.sesion).imagenes.length === 1);
+    // Uno grande que solo está en el disco: un fallo, una sola vez.
+    fs.writeFileSync(path.join(salidaComfy, r.sesion, 'solo-disco.png'), grande);
+    fs.utimesSync(path.join(salidaComfy, r.sesion, 'solo-disco.png'), viejo, viejo);
+    await t._vuelta();
+    await t._vuelta();
+    imgs = t.estado(r.sesion).imagenes;
+    check('desde el disco: un fallo grande, una sola vez', imgs.length === 2 && imgs.filter((i) => i.error && i.error.codigo === 'grande' && i.error.mensaje.includes('solo-disco.png')).length === 1);
+    const id = imgs[0].id;
+    check('el fallo se puede descartar', t.descartar(r.sesion, id).ok);
+    await t.cerrar(r.sesion, { resto: 'descartar' });
+    t.parar();
+
+    // Una sesión cerrada hace más de 7 días, una carpeta huérfana vieja, una reciente y una de ventana.
+    const viejaSesion = () => {
+      const f = path.join(dir, 'sesiones', r.sesion, 'sesion.json');
+      const s = JSON.parse(fs.readFileSync(f, 'utf8'));
+      s.abierta = false; s.ultimaSenal = Date.now() - 8 * 24 * 60 * 60 * 1000;
+      fs.writeFileSync(f, JSON.stringify(s));
+      fs.mkdirSync(path.join(salidaComfy, r.sesion), { recursive: true });
+    };
+    const huerfanaVieja = path.join(salidaComfy, 's-dddddddddddddddd');
+    const huerfanaNueva = path.join(salidaComfy, 's-eeeeeeeeeeeeeeee');
+    const deVentana = path.join(salidaComfy, 'v-ffffffffffffffff');
+    const otraCosa = path.join(salidaComfy, 'mis-cosas');
+    for (const d of [huerfanaVieja, huerfanaNueva, deVentana, otraCosa]) { fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'x.png'), png()); }
+    const hace8 = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    for (const d of [huerfanaVieja, deVentana, otraCosa]) fs.utimesSync(d, hace8, hace8);
+
+    // Apagado: no se toca nada de ComfyUI.
+    viejaSesion();
+    cfg = config({ limpiar_salida: false }, { arranque: { ...A.defectos().comfyui.arranque, carpeta } });
+    const apagado = crearTaller({ leerConfig: () => cfg, proceso: procesoFalso(), fetchImpl: comfy.fetch, catalogoDe: () => CATALOGO, dir, tiempos: { vuelta: 1e9 } });
+    check('apagado: la sesión vieja se borra del plugin', apagado.estado(r.sesion).status === 404 && !fs.existsSync(path.join(dir, 'sesiones', r.sesion)));
+    check('apagado: su carpeta en ComfyUI queda', fs.existsSync(path.join(salidaComfy, r.sesion)));
+    check('apagado: la huérfana vieja queda', fs.existsSync(huerfanaVieja));
+    apagado.parar();
+
+    // Prendido (por defecto): la de la sesión y la huérfana vieja; nada más.
+    fs.mkdirSync(path.join(dir, 'sesiones', r.sesion), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sesiones', r.sesion, 'sesion.json'), JSON.stringify({ id: r.sesion, ventana, alma: 'alya', imagenes: {}, abierta: false, ultimaSenal: Date.now() - 8 * 24 * 60 * 60 * 1000 }));
+    cfg = config({}, { arranque: { ...A.defectos().comfyui.arranque, carpeta } });
+    check('limpiar_salida viene prendido', cfg.taller.limpiar_salida === true);
+    const prendido = crearTaller({ leerConfig: () => cfg, proceso: procesoFalso(), fetchImpl: comfy.fetch, catalogoDe: () => CATALOGO, dir, tiempos: { vuelta: 1e9 } });
+    check('prendido: la carpeta de la sesión vieja se borra de ComfyUI', !fs.existsSync(path.join(salidaComfy, r.sesion)));
+    check('prendido: la huérfana de más de 7 días también', !fs.existsSync(huerfanaVieja));
+    check('prendido: la huérfana reciente queda', fs.existsSync(huerfanaNueva));
+    check('prendido: lo de la ventana (v-) y lo que no es una sesión no se tocan', fs.existsSync(deVentana) && fs.existsSync(otraCosa));
+    prendido.parar();
+    cfg = config();
+  });
+
+  await group('2.26.3 — limpiar_salida en los ajustes', async () => {
+    const { ajustesV2 } = await importar('telegram-bridge/web/v2/ajustes.js');
+    check('en los defectos, prendido', A.defectos().taller.limpiar_salida === true);
+    const r = A.normalizar({ taller: { limpiar_salida: false } });
+    check('se normaliza un false', r.imagenes.taller.limpiar_salida === false);
+    check('un valor que no es booleano avisa', A.normalizar({ taller: { limpiar_salida: 'si' } }).avisos.some((a) => /limpiar_salida/.test(a)));
+    check('el PATCH la guarda y rechaza lo que no es booleano', A.aplicarImagenes({ imagenes: {} }, { taller: { limpiar_salida: false } }).imagenes.taller.limpiar_salida === false && (() => { try { A.aplicarImagenes({}, { taller: { limpiar_salida: 'no' } }); return false; } catch (e) { return /true o false/.test(e.message); } })());
+    check('la vista v2: prendida si falta, y la guardada si está', ajustesV2({ imagenes: { taller: {} } }).imagenes.taller.limpiar_salida === true && ajustesV2({ imagenes: { taller: { limpiar_salida: false } } }).imagenes.taller.limpiar_salida === false);
+  });
+
   // ------------------------------------------------------------- ciclo de vida
   await group('Sigue, se cierra, se reabre y se cierra con resto', async () => {
     const dir = path.join(raiz, 'taller-ciclo');
@@ -680,7 +764,7 @@ async function main() {
   await group('Los ajustes del taller', async () => {
     const n = A.normalizar({ taller: { activo: false, mirar: 'si', al_cerrar: 'quedar' } });
     check('normalizar: lo que vale, y un aviso por lo que no', n.imagenes.taller.activo === false && n.imagenes.taller.mirar === true && n.imagenes.taller.al_cerrar === 'quedar' && n.avisos.some((x) => /taller\.mirar/.test(x)));
-    check('por defecto: todo prendido, al cerrar preguntar', JSON.stringify(A.defectos().taller) === JSON.stringify({ activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, al_cerrar: 'preguntar' }));
+    check('por defecto: todo prendido, al cerrar preguntar', JSON.stringify(A.defectos().taller) === JSON.stringify({ activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, limpiar_salida: true, al_cerrar: 'preguntar' }));
     const g = A.aplicarImagenes({ imagenes: { taller: { mirar: false } } }, { taller: { activo: false } });
     check('aplicar: campo por campo', g.imagenes.taller.mirar === false && g.imagenes.taller.activo === false);
     const mal = (p) => { try { A.aplicarImagenes({}, p); return null; } catch (err) { return err.message; } };

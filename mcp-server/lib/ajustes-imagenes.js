@@ -42,8 +42,10 @@ const CAMPOS = Object.freeze([...BOOLEANOS, 'varias_versiones', 'tope_por_alma',
 /**
  * FEAT-214 — El taller: los interruptores (prendidos) y qué pasa con lo que quedó en la tira al cerrarlo.
  * FEAT-217 — `disposicion_plugin`: acomodar las plantillas del plugin con la disposición que traen.
+ * 2.26.3 — `limpiar_salida`: al borrar una sesión vieja, borrar también su carpeta en la salida de ComfyUI
+ * (`output/lagrange-taller/<sesion>/`). Apagado, queda ahí.
  */
-const TALLER_BOOLEANOS = Object.freeze(['activo', 'abrir_en_taller', 'prepara_alma', 'mirar', 'disposicion_plugin']);
+const TALLER_BOOLEANOS = Object.freeze(['activo', 'abrir_en_taller', 'prepara_alma', 'mirar', 'disposicion_plugin', 'limpiar_salida']);
 const AL_CERRAR = Object.freeze(['preguntar', 'descartar', 'quedar']);
 const MASCARAS = Object.freeze(['florence2', 'sam2', 'no']);
 const RETOQUES = Object.freeze(['crop-stitch', 'fill', 'no']);
@@ -101,7 +103,7 @@ function defectos() {
     },
     openai_imagen: { url: null, modelo: null, key_env: null },
     gemini_imagen: { url: null, modelo: null, key_env: null },
-    taller: { activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, al_cerrar: 'preguntar' }
+    taller: { activo: true, abrir_en_taller: true, prepara_alma: true, mirar: true, disposicion_plugin: true, limpiar_salida: true, al_cerrar: 'preguntar' }
   };
 }
 
